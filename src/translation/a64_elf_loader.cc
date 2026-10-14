@@ -801,6 +801,35 @@ std::string ApplyDynamicMetadataAndRelocations(
     return "DT_RELA, DT_RELASZ and DT_RELAENT must be provided together";
   }
 
+  const bool any_android_rela =
+      metadata.android_rela_address.has_value() ||
+      metadata.android_rela_size.has_value();
+  if (any_android_rela &&
+      (!metadata.android_rela_address || !metadata.android_rela_size)) {
+    return "DT_ANDROID_RELA and DT_ANDROID_RELASZ must be provided together";
+  }
+  if (metadata.android_rela_size &&
+      (*metadata.android_rela_size < 4 ||
+       *metadata.android_rela_size > options.max_packed_relocation_bytes)) {
+    return "DT_ANDROID_RELASZ is empty or exceeds the configured limit";
+  }
+
+  const bool any_relr = metadata.relr_address.has_value() ||
+                        metadata.relr_size.has_value() ||
+                        metadata.relr_entry_size.has_value();
+  if (any_relr &&
+      (!metadata.relr_address || !metadata.relr_size ||
+       !metadata.relr_entry_size)) {
+    return "DT_RELR, DT_RELRSZ and DT_RELRENT must be provided together";
+  }
+  if (any_relr &&
+      (*metadata.relr_entry_size != sizeof(std::uint64_t) ||
+       *metadata.relr_size % sizeof(std::uint64_t) != 0 ||
+       *metadata.relr_size / sizeof(std::uint64_t) >
+           options.max_relocations)) {
+    return "DT_RELRENT/DT_RELRSZ do not describe a valid bounded RELR table";
+  }
+
   const bool has_dynamic_strings = !metadata.needed_offsets.empty() ||
                                    metadata.soname_offset.has_value();
   if (has_dynamic_strings) {
@@ -829,17 +858,24 @@ std::string ApplyDynamicMetadataAndRelocations(
     }
   }
 
+  const bool has_android_rela =
+      metadata.android_rela_address && metadata.android_rela_size &&
+      *metadata.android_rela_size != 0;
+  const bool has_relr =
+      metadata.relr_address && metadata.relr_size && *metadata.relr_size != 0;
   const bool has_plt_relocations =
       metadata.plt_relocation_size && *metadata.plt_relocation_size != 0;
   const bool has_main_relocations = any_rela_tag && *metadata.rela_size != 0;
-  if (!has_main_relocations && !has_plt_relocations) return {};
+  if (!has_android_rela && !has_relr &&
+      !has_main_relocations && !has_plt_relocations) return {};
 
   if (has_main_relocations &&
       (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
        *metadata.rela_size % sizeof(Elf64_Rela) != 0)) {
     return "DT_RELAENT/DT_RELASZ do not describe a valid Elf64_Rela table";
   }
-  if (has_plt_relocations && *metadata.plt_relocation_size % sizeof(Elf64_Rela) != 0) {
+  if (has_plt_relocations &&
+      *metadata.plt_relocation_size % sizeof(Elf64_Rela) != 0) {
     return "DT_PLTRELSZ does not describe a whole number of Elf64_Rela entries";
   }
   const auto main_relocation_count =
@@ -851,6 +887,57 @@ std::string ApplyDynamicMetadataAndRelocations(
       main_relocation_count > options.max_relocations - plt_relocation_count) {
     return "combined dynamic relocation count exceeds the configured limit";
   }
+
+  std::size_t applied_relocation_count = 0;
+  auto apply_relocation = [&](const Elf64_Rela& relocation,
+                              const char* table_name) -> std::string {
+    const auto type = ELF64_R_TYPE(relocation.r_info);
+    const auto symbol_index = ELF64_R_SYM(relocation.r_info);
+    if (type == R_AARCH64_NONE) return {};
+    if (applied_relocation_count >= options.max_relocations) {
+      return "combined dynamic relocation count exceeds the configured limit";
+    }
+
+    if (AddOverflows(image->load_bias, relocation.r_offset)) {
+      return "relocation target address overflows";
+    }
+    const auto target = image->load_bias + relocation.r_offset;
+
+    std::uint64_t relocated_value = 0;
+    if (type == R_AARCH64_RELATIVE) {
+      if (symbol_index != 0) {
+        return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
+      }
+      if (!AddSignedOffset(image->load_bias, relocation.r_addend,
+                           &relocated_value)) {
+        return "R_AARCH64_RELATIVE result address overflows";
+      }
+    } else if (type == R_AARCH64_ABS64 ||
+               type == R_AARCH64_GLOB_DAT ||
+               type == R_AARCH64_JUMP_SLOT) {
+      std::string symbol_error;
+      std::uint64_t symbol_value = 0;
+      if (!ResolveDynamicSymbol(*image, metadata, options, symbol_index,
+                                &symbol_value, &symbol_error)) {
+        return symbol_error;
+      }
+      if (type == R_AARCH64_JUMP_SLOT) {
+        relocated_value = symbol_value;
+      } else if (!AddSignedOffset(symbol_value, relocation.r_addend,
+                                  &relocated_value)) {
+        return "symbol relocation result overflows";
+      }
+    } else {
+      return std::string("unsupported AArch64 dynamic relocation type ") +
+             std::to_string(type) + " in " + table_name;
+    }
+
+    if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
+      return "relocation target is not contained in writable PT_LOAD memory";
+    }
+    ++applied_relocation_count;
+    return {};
+  };
 
   auto apply_rela_table = [&](std::uint64_t virtual_address,
                               std::uint64_t relocation_count,
@@ -871,53 +958,111 @@ std::string ApplyDynamicMetadataAndRelocations(
         return std::string(table_name) +
                " table is outside loaded PT_LOAD segments";
       }
-
-      const auto type = ELF64_R_TYPE(relocation.r_info);
-      const auto symbol_index = ELF64_R_SYM(relocation.r_info);
-      if (type == R_AARCH64_NONE) continue;
-
-      std::uint64_t target = 0;
-      if (AddOverflows(image->load_bias, relocation.r_offset)) {
-        return "relocation target address overflows";
-      }
-      target = image->load_bias + relocation.r_offset;
-
-      std::uint64_t relocated_value = 0;
-      if (type == R_AARCH64_RELATIVE) {
-        if (symbol_index != 0) {
-          return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
-        }
-        if (!AddSignedOffset(image->load_bias, relocation.r_addend,
-                             &relocated_value)) {
-          return "R_AARCH64_RELATIVE result address overflows";
-        }
-      } else if (type == R_AARCH64_ABS64 ||
-                 type == R_AARCH64_GLOB_DAT ||
-                 type == R_AARCH64_JUMP_SLOT) {
-        std::string symbol_error;
-        std::uint64_t symbol_value = 0;
-        if (!ResolveDynamicSymbol(*image, metadata, options, symbol_index,
-                                  &symbol_value, &symbol_error)) {
-          return symbol_error;
-        }
-        if (type == R_AARCH64_JUMP_SLOT) {
-          relocated_value = symbol_value;
-        } else if (!AddSignedOffset(symbol_value, relocation.r_addend,
-                                    &relocated_value)) {
-          return "symbol relocation result overflows";
-        }
-      } else {
-        return "unsupported AArch64 dynamic relocation type " +
-               std::to_string(type);
-      }
-
-      if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
-        return "relocation target is not contained in writable PT_LOAD memory";
-      }
+      const auto error = apply_relocation(relocation, table_name);
+      if (!error.empty()) return error;
     }
-
     return {};
   };
+
+  // Decode Android's APS2 stream before the standard RELR/RELA tables, matching
+  // the Android loader's separation of packed and ordinary relocation formats.
+  if (has_android_rela) {
+    std::vector<Elf64_Rela> packed_relocations;
+    std::string decode_error;
+    if (!DecodeAndroidPackedRela(*image, image->load_bias,
+                                 *metadata.android_rela_address,
+                                 *metadata.android_rela_size, options,
+                                 &packed_relocations, &decode_error)) {
+      return decode_error;
+    }
+    for (const auto& relocation : packed_relocations) {
+      const auto error = apply_relocation(relocation, "DT_ANDROID_RELA");
+      if (!error.empty()) return error;
+    }
+  }
+
+  if (has_relr) {
+    if (AddOverflows(image->load_bias, *metadata.relr_address)) {
+      return "relocated DT_RELR address overflows";
+    }
+    const auto relr_table = image->load_bias + *metadata.relr_address;
+    const auto relr_entry_count = *metadata.relr_size / sizeof(std::uint64_t);
+    std::uint64_t base = 0;
+    bool have_base = false;
+
+    auto apply_relr_offset = [&](std::uint64_t offset) -> std::string {
+      if (applied_relocation_count >= options.max_relocations) {
+        return "combined dynamic relocation count exceeds the configured limit";
+      }
+      if (AddOverflows(image->load_bias, offset)) {
+        return "DT_RELR relocation target address overflows";
+      }
+      const auto target = image->load_bias + offset;
+      std::uint64_t addend = 0;
+      if (!image->Read(target, &addend, sizeof(addend))) {
+        return "DT_RELR target is outside loaded PT_LOAD memory";
+      }
+      if (AddOverflows(addend, image->load_bias)) {
+        return "DT_RELR relocated pointer value overflows";
+      }
+      const auto relocated_value = addend + image->load_bias;
+      if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
+        return "DT_RELR target is not contained in writable PT_LOAD memory";
+      }
+      ++applied_relocation_count;
+      return {};
+    };
+
+    for (std::uint64_t index = 0; index < relr_entry_count; ++index) {
+      const auto byte_offset = index * sizeof(std::uint64_t);
+      if (AddOverflows(relr_table, byte_offset)) {
+        return "DT_RELR entry address overflows";
+      }
+      std::uint64_t entry = 0;
+      if (!image->Read(relr_table + byte_offset, &entry, sizeof(entry))) {
+        return "DT_RELR table is outside loaded PT_LOAD segments";
+      }
+
+      if ((entry & 1U) == 0) {
+        if ((entry % sizeof(std::uint64_t)) != 0) {
+          return "DT_RELR direct entry is not pointer-aligned";
+        }
+        const auto error = apply_relr_offset(entry);
+        if (!error.empty()) return error;
+        if (AddOverflows(entry, sizeof(std::uint64_t))) {
+          return "DT_RELR cursor overflows after a direct entry";
+        }
+        base = entry + sizeof(std::uint64_t);
+        have_base = true;
+      } else {
+        if (!have_base) return "DT_RELR bitmap precedes its first direct entry";
+        std::uint64_t bitmap = entry >> 1U;
+        std::uint64_t bit_index = 0;
+        while (bitmap != 0) {
+          if ((bitmap & 1U) != 0) {
+            if (bit_index > std::numeric_limits<std::uint64_t>::max() /
+                                sizeof(std::uint64_t)) {
+              return "DT_RELR bitmap cursor overflows";
+            }
+            const auto displacement = bit_index * sizeof(std::uint64_t);
+            if (AddOverflows(base, displacement)) {
+              return "DT_RELR bitmap target overflows";
+            }
+            const auto error = apply_relr_offset(base + displacement);
+            if (!error.empty()) return error;
+          }
+          bitmap >>= 1U;
+          ++bit_index;
+        }
+        constexpr std::uint64_t kRelrBitmapAdvance =
+            63U * sizeof(std::uint64_t);
+        if (AddOverflows(base, kRelrBitmapAdvance)) {
+          return "DT_RELR bitmap base overflows";
+        }
+        base += kRelrBitmapAdvance;
+      }
+    }
+  }
 
   if (has_main_relocations) {
     const auto error = apply_rela_table(
