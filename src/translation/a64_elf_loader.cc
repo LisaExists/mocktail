@@ -71,6 +71,11 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> strtab_address;
   std::optional<std::uint64_t> strtab_size;
   std::optional<std::uint64_t> soname_offset;
+  std::optional<std::uint64_t> symtab_address;
+  std::optional<std::uint64_t> symtab_entry_size;
+  std::optional<std::uint64_t> hash_address;
+  std::optional<std::uint64_t> gnu_hash_address;
+  std::optional<std::uint64_t> versym_address;
   std::vector<std::uint64_t> needed_offsets;
   std::optional<std::uint64_t> jmprel_address;
   std::optional<std::uint64_t> plt_relocation_size;
@@ -126,6 +131,253 @@ bool ReadDynamicString(const A64LoadedImage& image,
 
   *error = "dynamic string is unterminated or exceeds 4096 bytes";
   return false;
+}
+
+bool GetDynamicSymbolCount(const A64LoadedImage& image,
+                           const DynamicMetadata& metadata,
+                           const A64ElfLoadOptions& options,
+                           std::uint64_t* symbol_count,
+                           std::string* error) {
+  if (!metadata.hash_address && !metadata.gnu_hash_address) {
+    *error = "symbol relocations require DT_HASH or DT_GNU_HASH";
+    return false;
+  }
+
+  if (metadata.hash_address) {
+    if (AddOverflows(image.load_bias, *metadata.hash_address)) {
+      *error = "relocated DT_HASH address overflows";
+      return false;
+    }
+    const auto hash_address =
+        image.load_bias + *metadata.hash_address;
+    std::uint32_t header[2]{};
+    if (!image.Read(hash_address, header, sizeof(header))) {
+      *error = "DT_HASH header is outside loaded PT_LOAD segments";
+      return false;
+    }
+    if (header[0] > options.max_symbols ||
+        header[1] == 0 || header[1] > options.max_symbols) {
+      *error = "DT_HASH has an invalid or excessive symbol count";
+      return false;
+    }
+    *symbol_count = header[1];
+    return true;
+  }
+
+  if (AddOverflows(image.load_bias, *metadata.gnu_hash_address)) {
+    *error = "relocated DT_GNU_HASH address overflows";
+    return false;
+  }
+  const auto hash_address =
+      image.load_bias + *metadata.gnu_hash_address;
+  std::uint32_t header[4]{};
+  if (!image.Read(hash_address, header, sizeof(header))) {
+    *error = "DT_GNU_HASH header is outside loaded PT_LOAD segments";
+    return false;
+  }
+  const std::uint64_t bucket_count = header[0];
+  const std::uint64_t symbol_offset = header[1];
+  const std::uint64_t bloom_count = header[2];
+  if (bucket_count == 0 || bucket_count > options.max_symbols ||
+      bloom_count == 0 || bloom_count > options.max_symbols ||
+      symbol_offset > options.max_symbols) {
+    *error = "DT_GNU_HASH has invalid or excessive dimensions";
+    return false;
+  }
+
+  const std::uint64_t bloom_bytes = bloom_count * sizeof(std::uint64_t);
+  if (AddOverflows(hash_address, sizeof(header)) ||
+      AddOverflows(hash_address + sizeof(header), bloom_bytes)) {
+    *error = "DT_GNU_HASH bloom filter address overflows";
+    return false;
+  }
+  const auto buckets_address =
+      hash_address + sizeof(header) + bloom_bytes;
+  const std::uint64_t bucket_bytes = bucket_count * sizeof(std::uint32_t);
+  if (AddOverflows(buckets_address, bucket_bytes)) {
+    *error = "DT_GNU_HASH bucket table address overflows";
+    return false;
+  }
+  const auto chains_address = buckets_address + bucket_bytes;
+
+  std::uint64_t count = symbol_offset;
+  for (std::uint64_t bucket_index = 0; bucket_index < bucket_count;
+       ++bucket_index) {
+    const auto bucket_offset = bucket_index * sizeof(std::uint32_t);
+    if (AddOverflows(buckets_address, bucket_offset)) {
+      *error = "DT_GNU_HASH bucket address overflows";
+      return false;
+    }
+    std::uint32_t symbol_index = 0;
+    if (!image.Read(buckets_address + bucket_offset, &symbol_index,
+                    sizeof(symbol_index))) {
+      *error = "DT_GNU_HASH bucket table is outside loaded PT_LOAD segments";
+      return false;
+    }
+    if (symbol_index == 0) continue;
+    if (symbol_index < symbol_offset ||
+        symbol_index >= options.max_symbols) {
+      *error = "DT_GNU_HASH contains an invalid symbol index";
+      return false;
+    }
+
+    bool chain_terminated = false;
+    std::uint64_t index = symbol_index;
+    while (index < options.max_symbols) {
+      const auto chain_offset =
+          (index - symbol_offset) * sizeof(std::uint32_t);
+      if (AddOverflows(chains_address, chain_offset)) {
+        *error = "DT_GNU_HASH chain address overflows";
+        return false;
+      }
+      std::uint32_t hash_value = 0;
+      if (!image.Read(chains_address + chain_offset, &hash_value,
+                      sizeof(hash_value))) {
+        *error = "DT_GNU_HASH chain is outside loaded PT_LOAD segments";
+        return false;
+      }
+      count = std::max(count, index + 1);
+      if ((hash_value & 1U) != 0) {
+        chain_terminated = true;
+        break;
+      }
+      ++index;
+    }
+    if (!chain_terminated) {
+      *error = "DT_GNU_HASH chain exceeds the configured symbol limit";
+      return false;
+    }
+  }
+
+  if (count == 0 || count > options.max_symbols) {
+    *error = "DT_GNU_HASH yielded an invalid symbol count";
+    return false;
+  }
+  *symbol_count = count;
+  return true;
+}
+
+bool ResolveDynamicSymbol(const A64LoadedImage& image,
+                          const DynamicMetadata& metadata,
+                          const A64ElfLoadOptions& options,
+                          std::uint64_t symbol_index,
+                          std::uint64_t* symbol_value,
+                          std::string* error) {
+  if (!metadata.symtab_address || !metadata.symtab_entry_size ||
+      *metadata.symtab_entry_size != sizeof(Elf64_Sym)) {
+    *error = "symbol relocation requires DT_SYMTAB and a valid DT_SYMENT";
+    return false;
+  }
+
+  std::uint64_t symbol_count = 0;
+  if (!GetDynamicSymbolCount(image, metadata, options, &symbol_count, error)) {
+    return false;
+  }
+  if (symbol_index >= symbol_count || symbol_index >= options.max_symbols) {
+    *error = "relocation symbol index is outside the dynamic symbol table";
+    return false;
+  }
+
+  const auto symbol_offset = symbol_index * sizeof(Elf64_Sym);
+  if (AddOverflows(*metadata.symtab_address, symbol_offset) ||
+      AddOverflows(image.load_bias,
+                   *metadata.symtab_address + symbol_offset)) {
+    *error = "relocated dynamic symbol address overflows";
+    return false;
+  }
+  const auto guest_symbol_address =
+      image.load_bias + *metadata.symtab_address + symbol_offset;
+  Elf64_Sym symbol{};
+  if (!image.Read(guest_symbol_address, &symbol, sizeof(symbol))) {
+    *error = "dynamic symbol entry is outside loaded PT_LOAD segments";
+    return false;
+  }
+
+  if (metadata.versym_address) {
+    const auto version_offset = symbol_index * sizeof(Elf64_Half);
+    if (AddOverflows(*metadata.versym_address, version_offset) ||
+        AddOverflows(image.load_bias,
+                     *metadata.versym_address + version_offset)) {
+      *error = "dynamic symbol-version address overflows";
+      return false;
+    }
+    Elf64_Half version_index = 0;
+    const auto guest_version_address =
+        image.load_bias + *metadata.versym_address + version_offset;
+    if (!image.Read(guest_version_address, &version_index,
+                    sizeof(version_index))) {
+      *error = "DT_VERSYM entry is outside loaded PT_LOAD segments";
+      return false;
+    }
+    version_index &= 0x7fffU;
+    if (version_index > 1) {
+      *error = "versioned dynamic symbols are not supported yet";
+      return false;
+    }
+  }
+
+  const auto binding = ELF64_ST_BIND(symbol.st_info);
+  const auto type = ELF64_ST_TYPE(symbol.st_info);
+  if (type == STT_TLS) {
+    *error = "TLS symbols require guest TLS support, not implemented yet";
+    return false;
+  }
+#ifdef STT_GNU_IFUNC
+  if (type == STT_GNU_IFUNC) {
+    *error = "GNU IFUNC symbols require executing a guest resolver";
+    return false;
+  }
+#endif
+
+  if (symbol.st_shndx == SHN_UNDEF) {
+    if (binding != STB_GLOBAL && binding != STB_WEAK) {
+      *error = "undefined dynamic symbol is not global or weak";
+      return false;
+    }
+    if (!metadata.strtab_address || !metadata.strtab_size ||
+        symbol.st_name >= *metadata.strtab_size) {
+      *error = "undefined dynamic symbol requires a valid DT_STRTAB entry";
+      return false;
+    }
+    std::string name;
+    if (!ReadDynamicString(image, image.load_bias, *metadata.strtab_address,
+                           *metadata.strtab_size, symbol.st_name, &name,
+                           error)) {
+      return false;
+    }
+    if (name.empty()) {
+      *error = "undefined dynamic symbol has an empty name";
+      return false;
+    }
+    if (options.resolve_symbol) {
+      const auto resolved = options.resolve_symbol(name);
+      if (resolved) {
+        *symbol_value = *resolved;
+        return true;
+      }
+    }
+    if (binding == STB_WEAK) {
+      *symbol_value = 0;
+      return true;
+    }
+    *error = "unresolved AArch64 symbol: " + name;
+    return false;
+  }
+
+  if (symbol.st_shndx == SHN_COMMON || symbol.st_shndx == SHN_XINDEX) {
+    *error = "common/extended-index dynamic symbols are unsupported";
+    return false;
+  }
+  if (symbol.st_shndx == SHN_ABS) {
+    *symbol_value = symbol.st_value;
+    return true;
+  }
+  if (AddOverflows(image.load_bias, symbol.st_value)) {
+    *error = "relocated dynamic symbol value overflows";
+    return false;
+  }
+  *symbol_value = image.load_bias + symbol.st_value;
+  return true;
 }
 
 std::string ApplyDynamicMetadataAndRelocations(
@@ -190,6 +442,26 @@ std::string ApplyDynamicMetadataAndRelocations(
       case DT_SONAME:
         if (metadata.soname_offset) return "duplicate DT_SONAME tag";
         metadata.soname_offset = value;
+        break;
+      case DT_SYMTAB:
+        if (metadata.symtab_address) return "duplicate DT_SYMTAB tag";
+        metadata.symtab_address = entry.d_un.d_ptr;
+        break;
+      case DT_SYMENT:
+        if (metadata.symtab_entry_size) return "duplicate DT_SYMENT tag";
+        metadata.symtab_entry_size = value;
+        break;
+      case DT_HASH:
+        if (metadata.hash_address) return "duplicate DT_HASH tag";
+        metadata.hash_address = entry.d_un.d_ptr;
+        break;
+      case DT_GNU_HASH:
+        if (metadata.gnu_hash_address) return "duplicate DT_GNU_HASH tag";
+        metadata.gnu_hash_address = entry.d_un.d_ptr;
+        break;
+      case DT_VERSYM:
+        if (metadata.versym_address) return "duplicate DT_VERSYM tag";
+        metadata.versym_address = entry.d_un.d_ptr;
         break;
       case DT_NEEDED:
         metadata.needed_offsets.push_back(value);
@@ -264,8 +536,9 @@ std::string ApplyDynamicMetadataAndRelocations(
     return "DT_JMPREL, DT_PLTRELSZ and DT_PLTREL must be provided together";
   }
   if (metadata.plt_relocation_size &&
-      *metadata.plt_relocation_size != 0) {
-    return "DT_JMPREL/PLT relocations require symbol resolution, not implemented yet";
+      *metadata.plt_relocation_size != 0 &&
+      metadata.plt_relocation_type && *metadata.plt_relocation_type != DT_RELA) {
+    return "DT_JMPREL uses DT_REL; only Elf64_Rela PLT tables are supported";
   }
 
   const bool any_rela_tag = metadata.rela_address.has_value() ||
@@ -305,55 +578,111 @@ std::string ApplyDynamicMetadataAndRelocations(
     }
   }
 
-  if (!any_rela_tag) return {};
-  if (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
-      *metadata.rela_size % sizeof(Elf64_Rela) != 0) {
+  const bool has_plt_relocations =
+      metadata.plt_relocation_size && *metadata.plt_relocation_size != 0;
+  const bool has_main_relocations = any_rela_tag && *metadata.rela_size != 0;
+  if (!has_main_relocations && !has_plt_relocations) return {};
+
+  if (has_main_relocations &&
+      (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
+       *metadata.rela_size % sizeof(Elf64_Rela) != 0)) {
     return "DT_RELAENT/DT_RELASZ do not describe a valid Elf64_Rela table";
   }
-  if (*metadata.rela_size == 0) return {};
-  const auto relocation_count = *metadata.rela_size / sizeof(Elf64_Rela);
-  if (relocation_count > options.max_relocations) {
-    return "dynamic relocation count exceeds the configured limit";
+  if (has_plt_relocations && *metadata.plt_relocation_size % sizeof(Elf64_Rela) != 0) {
+    return "DT_PLTRELSZ does not describe a whole number of Elf64_Rela entries";
   }
-  if (AddOverflows(image->load_bias, *metadata.rela_address)) {
-    return "relocated DT_RELA address overflows";
+  const auto main_relocation_count =
+      has_main_relocations ? *metadata.rela_size / sizeof(Elf64_Rela) : 0;
+  const auto plt_relocation_count =
+      has_plt_relocations ? *metadata.plt_relocation_size / sizeof(Elf64_Rela) : 0;
+  if (main_relocation_count > options.max_relocations ||
+      plt_relocation_count > options.max_relocations ||
+      main_relocation_count > options.max_relocations - plt_relocation_count) {
+    return "combined dynamic relocation count exceeds the configured limit";
   }
-  const auto relocation_table = image->load_bias + *metadata.rela_address;
 
-  for (std::uint64_t index = 0; index < relocation_count; ++index) {
-    const auto offset = index * sizeof(Elf64_Rela);
-    if (AddOverflows(relocation_table, offset)) {
-      return "DT_RELA entry address overflows";
+  auto apply_rela_table = [&](std::uint64_t virtual_address,
+                              std::uint64_t relocation_count,
+                              const char* table_name) -> std::string {
+    if (AddOverflows(image->load_bias, virtual_address)) {
+      return std::string("relocated ") + table_name + " address overflows";
     }
-    Elf64_Rela relocation{};
-    if (!image->Read(relocation_table + offset, &relocation,
-                     sizeof(relocation))) {
-      return "DT_RELA table is outside loaded PT_LOAD segments";
+    const auto relocation_table = image->load_bias + virtual_address;
+
+    for (std::uint64_t index = 0; index < relocation_count; ++index) {
+      const auto offset = index * sizeof(Elf64_Rela);
+      if (AddOverflows(relocation_table, offset)) {
+        return std::string(table_name) + " entry address overflows";
+      }
+      Elf64_Rela relocation{};
+      if (!image->Read(relocation_table + offset, &relocation,
+                       sizeof(relocation))) {
+        return std::string(table_name) +
+               " table is outside loaded PT_LOAD segments";
+      }
+
+      const auto type = ELF64_R_TYPE(relocation.r_info);
+      const auto symbol_index = ELF64_R_SYM(relocation.r_info);
+      if (type == R_AARCH64_NONE) continue;
+
+      std::uint64_t target = 0;
+      if (AddOverflows(image->load_bias, relocation.r_offset)) {
+        return "relocation target address overflows";
+      }
+      target = image->load_bias + relocation.r_offset;
+
+      std::uint64_t relocated_value = 0;
+      if (type == R_AARCH64_RELATIVE) {
+        if (symbol_index != 0) {
+          return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
+        }
+        if (!AddSignedOffset(image->load_bias, relocation.r_addend,
+                             &relocated_value)) {
+          return "R_AARCH64_RELATIVE result address overflows";
+        }
+      } else if (type == R_AARCH64_ABS64 ||
+                 type == R_AARCH64_GLOB_DAT ||
+                 type == R_AARCH64_JUMP_SLOT) {
+        std::string symbol_error;
+        std::uint64_t symbol_value = 0;
+        if (!ResolveDynamicSymbol(*image, metadata, options, symbol_index,
+                                  &symbol_value, &symbol_error)) {
+          return symbol_error;
+        }
+        if (type == R_AARCH64_JUMP_SLOT) {
+          relocated_value = symbol_value;
+        } else if (!AddSignedOffset(symbol_value, relocation.r_addend,
+                                    &relocated_value)) {
+          return "symbol relocation result overflows";
+        }
+      } else {
+        return "unsupported AArch64 dynamic relocation type " +
+               std::to_string(type);
+      }
+
+      if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
+        return "relocation target is not contained in writable PT_LOAD memory";
+      }
     }
 
-    const auto type = ELF64_R_TYPE(relocation.r_info);
-    const auto symbol = ELF64_R_SYM(relocation.r_info);
-    if (type == R_AARCH64_NONE) continue;
-    if (type != R_AARCH64_RELATIVE) {
-      return "unsupported AArch64 dynamic relocation type " +
-             std::to_string(type);
-    }
-    if (symbol != 0) {
-      return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
-    }
+    return {};
+  };
 
-    if (AddOverflows(image->load_bias, relocation.r_offset)) {
-      return "relocation target address overflows";
+  if (has_main_relocations) {
+    const auto error = apply_rela_table(
+        *metadata.rela_address, main_relocation_count, "DT_RELA");
+    if (!error.empty()) return error;
+  }
+  if (has_plt_relocations) {
+    if (!metadata.jmprel_address || !metadata.plt_relocation_type) {
+      return "DT_JMPREL, DT_PLTRELSZ and DT_PLTREL must be provided together";
     }
-    const auto target = image->load_bias + relocation.r_offset;
-    std::uint64_t relocated_value = 0;
-    if (!AddSignedOffset(image->load_bias, relocation.r_addend,
-                         &relocated_value)) {
-      return "R_AARCH64_RELATIVE result address overflows";
+    if (*metadata.plt_relocation_type != DT_RELA) {
+      return "DT_JMPREL uses DT_REL; only Elf64_Rela PLT tables are supported";
     }
-    if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
-      return "relocation target is not contained in writable PT_LOAD memory";
-    }
+    const auto error = apply_rela_table(
+        *metadata.jmprel_address, plt_relocation_count, "DT_JMPREL");
+    if (!error.empty()) return error;
   }
 
   return {};
