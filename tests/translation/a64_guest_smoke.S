@@ -9,6 +9,10 @@
 .type _start, %function
 _start:
     mov x0, #42
+    sub sp, sp, #16
+    str x0, [sp]
+    ldr x1, [sp]
+    add sp, sp, #16
     brk #0
 .size _start, .-_start
 
