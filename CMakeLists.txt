@@ -225,27 +225,6 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_guest_memory
   )
 
-  add_library(mocktail_a64_guest_module_set STATIC
-    src/translation/a64_guest_module_set.cc
-  )
-  target_include_directories(mocktail_a64_guest_module_set PUBLIC
-    "${CMAKE_SOURCE_DIR}/include"
-  )
-  target_link_libraries(mocktail_a64_guest_module_set PUBLIC
-    mocktail_a64_guest_memory
-  )
-  target_compile_features(mocktail_a64_guest_module_set PUBLIC cxx_std_17)
-
-  add_executable(mocktail_a64_guest_module_set_test
-    tests/translation/a64_guest_module_set_test.cc
-  )
-  target_include_directories(mocktail_a64_guest_module_set_test PRIVATE
-    "${CMAKE_SOURCE_DIR}/tests/translation"
-  )
-  target_link_libraries(mocktail_a64_guest_module_set_test PRIVATE
-    mocktail_a64_guest_module_set
-  )
-
   add_executable(mocktail_a64_elf_loader_test
     tests/translation/a64_elf_loader_test.cc
   )
@@ -356,8 +335,6 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
     add_test(NAME RobloxArmTranslation.GuestMemory
       COMMAND $<TARGET_FILE:mocktail_a64_guest_memory_test>)
-    add_test(NAME RobloxArmTranslation.GuestModuleSet
-      COMMAND $<TARGET_FILE:mocktail_a64_guest_module_set_test>)
     add_test(NAME RobloxArmTranslation.GuestModuleLoader
       COMMAND $<TARGET_FILE:mocktail_a64_guest_module_loader_test>)
     if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
