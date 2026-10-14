@@ -121,14 +121,71 @@ int main() {
           "collects DT_NEEDED dependencies for later resolution");
   }
 
+  auto defined_symbol_relocation =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
+          R_AARCH64_ABS64, 0x1500, 0x10, 1);
+  auto loaded_defined_symbol = LoadA64Elf(defined_symbol_relocation);
+  Check(static_cast<bool>(loaded_defined_symbol),
+        "applies an absolute relocation against a defined dynamic symbol");
+  if (loaded_defined_symbol) {
+    std::uint64_t actual = 0;
+    Check(loaded_defined_symbol.image->Read(
+              loaded_defined_symbol.image->load_bias + 0x1500,
+              &actual, sizeof(actual)) &&
+              actual == 0x123456799ULL,
+          "computes R_AARCH64_ABS64 as symbol value plus addend");
+  }
+
+  auto imported_symbol_relocation =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
+          R_AARCH64_GLOB_DAT, 0x1500, 0, 1, true);
+  A64ElfLoadOptions symbol_options;
+  symbol_options.resolve_symbol = [](const std::string& name)
+      -> std::optional<std::uint64_t> {
+    if (name == "test_symbol") return 0x70000000ULL;
+    return std::nullopt;
+  };
+  auto loaded_import = LoadA64Elf(imported_symbol_relocation, symbol_options);
+  Check(static_cast<bool>(loaded_import),
+        "resolves an undefined global symbol through the explicit resolver");
+  if (loaded_import) {
+    std::uint64_t actual = 0;
+    Check(loaded_import.image->Read(
+              loaded_import.image->load_bias + 0x1500,
+              &actual, sizeof(actual)) &&
+              actual == 0x70000000ULL,
+          "writes the resolved GLOB_DAT address into guest memory");
+  }
+
+  auto unresolved_result = LoadA64Elf(imported_symbol_relocation);
+  Check(!unresolved_result &&
+            unresolved_result.error.find("unresolved AArch64 symbol: test_symbol") !=
+                std::string::npos,
+        "rejects unresolved strong symbols when no resolver is supplied");
+
+  auto plt_symbol_relocation =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
+          R_AARCH64_JUMP_SLOT, 0x1500, 0, 1, true, true);
+  auto loaded_plt = LoadA64Elf(plt_symbol_relocation, symbol_options);
+  Check(static_cast<bool>(loaded_plt),
+        "applies an AArch64 JUMP_SLOT from DT_JMPREL");
+  if (loaded_plt) {
+    std::uint64_t actual = 0;
+    Check(loaded_plt.image->Read(
+              loaded_plt.image->load_bias + 0x1500,
+              &actual, sizeof(actual)) &&
+              actual == 0x70000000ULL,
+          "writes the resolved PLT target into guest memory");
+  }
+
   auto unsupported_relocation =
       mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
-          R_AARCH64_GLOB_DAT);
+          R_AARCH64_IRELATIVE);
   const auto unsupported_result = LoadA64Elf(unsupported_relocation);
   Check(!unsupported_result &&
             unsupported_result.error.find("unsupported AArch64 dynamic relocation") !=
                 std::string::npos,
-        "fails closed for symbol relocations that need a resolver");
+        "fails closed for IRELATIVE relocations requiring guest execution");
 
   auto bad_relocation_target =
       mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
@@ -151,7 +208,7 @@ int main() {
   auto unterminated_dynamic =
       mocktail::translation::test::BuildA64ElfWithRelativeRelocation();
   auto last_dynamic = mocktail::translation::test::ReadDynamicEntry(
-      unterminated_dynamic, 7);
+      unterminated_dynamic, 10);
   last_dynamic.d_tag = DT_DEBUG;
   mocktail::translation::test::WriteDynamicEntry(
       unterminated_dynamic, 7, last_dynamic);
