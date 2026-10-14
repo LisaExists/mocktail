@@ -321,9 +321,28 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
+    set(MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-a64-module-function-root.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-module-function-root.so
+              -Wl,--no-as-needed
+              -L"${CMAKE_CURRENT_BINARY_DIR}"
+              -o "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_function_root.S"
+              -lmocktail-a64-module-dependency
+      DEPENDS
+        "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_function_root.S"
+        "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+      VERBATIM
+    )
     add_custom_target(mocktail_a64_guest_module_fixtures
       DEPENDS
         "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+        "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
         "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     add_dependencies(mocktail_a64_translation_smoke
       mocktail_a64_guest_elf_fixture
@@ -348,6 +367,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       add_test(NAME RobloxArmTranslation.RealElfModuleSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+                "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.RealElfExportedFunctionSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                --symbol guest_exported_entry
+                "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
                 "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     endif()
   endif()
