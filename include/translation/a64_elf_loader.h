@@ -24,6 +24,17 @@ struct A64LoadSegment final {
 
 // A validated ELF image backed by ordinary host-owned memory. Guest addresses
 // are numeric AArch64 addresses and must never be cast to host pointers.
+struct A64ExportedSymbol final {
+  std::string name;
+  std::uint64_t guest_address = 0;
+  std::uint64_t size = 0;
+  std::uint8_t binding = 0;
+  std::uint8_t type = 0;
+  std::uint8_t visibility = 0;
+};
+
+// A validated ELF image backed by ordinary host-owned memory. Guest addresses
+// are numeric AArch64 addresses and must never be cast to host pointers.
 struct A64LoadedImage final {
   std::uint64_t load_bias = 0;
   std::uint64_t entry_point = 0;
@@ -31,6 +42,10 @@ struct A64LoadedImage final {
   std::uint64_t image_size = 0;
   std::string soname;
   std::vector<std::string> dependencies;
+  // Unversioned, externally visible dynamic definitions only. Versioned
+  // symbols are intentionally omitted until Android symbol-version semantics
+  // are implemented by the guest linker.
+  std::vector<A64ExportedSymbol> exported_symbols;
   std::vector<A64LoadSegment> segments;
 
   // Reads loaded segments, including across adjacent segments. Returns false
