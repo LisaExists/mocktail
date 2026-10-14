@@ -168,6 +168,12 @@ inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
   return file;
 }
 
+inline Elf64_Dyn ReadDynamicEntry(
+    const std::vector<std::uint8_t>& file, std::size_t index);
+inline void WriteDynamicEntry(std::vector<std::uint8_t>& file,
+                              std::size_t index,
+                              const Elf64_Dyn& entry);
+
 inline std::vector<std::uint8_t> BuildA64ElfWithAndroidPackedRela() {
   auto file = BuildA64ElfWithRelativeRelocation();
   constexpr std::size_t kPackedRelaOffset = 0x1100;
