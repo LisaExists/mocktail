@@ -21,6 +21,7 @@ namespace {
 
 using Address = Dynarmic::A64::VAddr;
 using mocktail::translation::A64LoadedImage;
+using mocktail::translation::A64GuestMemory;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
