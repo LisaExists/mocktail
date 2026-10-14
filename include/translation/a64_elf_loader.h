@@ -77,6 +77,8 @@ struct A64ElfLoadOptions final {
   // Resolves undefined guest symbols to guest addresses in already-loaded
   // modules or explicit host-call thunks. No implicit host pointer conversion.
   A64SymbolResolver resolve_symbol;
+  // Defer unresolved strong imports for a later multi-image link pass.
+  bool defer_unresolved_symbols = false;
 };
 
 struct A64ElfLoadResult final {
@@ -95,6 +97,12 @@ struct A64ElfLoadResult final {
 // separate responsibilities. Unsupported relocation formats fail closed.
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options = {});
+
+// Applies the deferred symbol relocations after the complete guest module set
+// has been loaded. Returns false without clearing pending entries on failure.
+bool ResolveA64ElfPendingRelocations(A64LoadedImage& image,
+                                     const A64SymbolResolver& resolver,
+                                     std::string* error);
 
 }  // namespace mocktail::translation
 
