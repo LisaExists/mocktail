@@ -1025,6 +1025,7 @@ std::string ApplyDynamicMetadataAndRelocations(
     const auto target = image->load_bias + relocation.r_offset;
 
     std::uint64_t relocated_value = 0;
+    std::string pending_symbol;
     if (type == R_AARCH64_RELATIVE) {
       if (symbol_index != 0) {
         return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
@@ -1038,14 +1039,11 @@ std::string ApplyDynamicMetadataAndRelocations(
                type == R_AARCH64_JUMP_SLOT) {
       std::string symbol_error;
       std::uint64_t symbol_value = 0;
-      bool deferred = false;
-      std::string pending_symbol;
       if (!ResolveDynamicSymbol(*image, metadata, options, symbol_index,
                                 &symbol_value, &symbol_error)) {
         constexpr const char* kUnresolvedPrefix = "unresolved AArch64 symbol: ";
         if (options.defer_unresolved_symbols &&
             symbol_error.rfind(kUnresolvedPrefix, 0) == 0) {
-          deferred = true;
           pending_symbol = symbol_error.substr(std::strlen(kUnresolvedPrefix));
           relocated_value = 0;
         } else {
