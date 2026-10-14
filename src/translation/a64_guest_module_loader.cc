@@ -124,8 +124,9 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
         return "guest dependency graph exceeds the configured module limit";
       }
 
+      const auto preferred_base = next_preferred_base;
       A64ElfLoadOptions preflight_options = options.elf;
-      preflight_options.preferred_base = next_preferred_base;
+      preflight_options.preferred_base = preferred_base;
       // The metadata pass must be able to enumerate dependencies and exports
       // before the complete module set exists. Zero is a temporary placeholder
       // only: all modules are loaded again and all relocations are recomputed
@@ -162,12 +163,7 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
       const auto module_index = discovered.size();
       source_to_module.emplace(source_index, module_index);
       discovered.push_back(DiscoveredModule{
-          source_index, options.elf.preferred_base, std::move(*loaded.image)});
-      discovered.back().preferred_base =
-          discovered.back().metadata_image.base_address;
-      // The loader accepts a desired image origin, not a raw load bias. The
-      // image base is the closest stable origin for the second deterministic
-      // load and avoids placing guest images in the same address range.
+          source_index, preferred_base, std::move(*loaded.image)});
       if (!discovered.back().metadata_image.soname.empty()) {
         std::string alias_error;
         if (!AddAlias(&aliases, discovered.back().metadata_image.soname,
