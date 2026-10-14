@@ -72,8 +72,12 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> strtab_size;
   std::optional<std::uint64_t> soname_offset;
   std::vector<std::uint64_t> needed_offsets;
-  std::uint64_t plt_relocation_size = 0;
-  std::uint64_t rel_size = 0;
+  std::optional<std::uint64_t> jmprel_address;
+  std::optional<std::uint64_t> plt_relocation_size;
+  std::optional<std::uint64_t> plt_relocation_type;
+  std::optional<std::uint64_t> rel_address;
+  std::optional<std::uint64_t> rel_size;
+  std::optional<std::uint64_t> rel_entry_size;
   bool text_relocations = false;
   bool packed_relocations = false;
 };
@@ -190,11 +194,29 @@ std::string ApplyDynamicMetadataAndRelocations(
       case DT_NEEDED:
         metadata.needed_offsets.push_back(value);
         break;
+      case DT_JMPREL:
+        if (metadata.jmprel_address) return "duplicate DT_JMPREL tag";
+        metadata.jmprel_address = entry.d_un.d_ptr;
+        break;
       case DT_PLTRELSZ:
+        if (metadata.plt_relocation_size) return "duplicate DT_PLTRELSZ tag";
         metadata.plt_relocation_size = value;
         break;
+      case DT_PLTREL:
+        if (metadata.plt_relocation_type) return "duplicate DT_PLTREL tag";
+        metadata.plt_relocation_type = value;
+        break;
+      case DT_REL:
+        if (metadata.rel_address) return "duplicate DT_REL tag";
+        metadata.rel_address = entry.d_un.d_ptr;
+        break;
       case DT_RELSZ:
+        if (metadata.rel_size) return "duplicate DT_RELSZ tag";
         metadata.rel_size = value;
+        break;
+      case DT_RELENT:
+        if (metadata.rel_entry_size) return "duplicate DT_RELENT tag";
+        metadata.rel_entry_size = value;
         break;
       case DT_TEXTREL:
         metadata.text_relocations = true;
@@ -221,10 +243,28 @@ std::string ApplyDynamicMetadataAndRelocations(
   if (metadata.packed_relocations) {
     return "packed DT_RELR/Android relocations are not supported yet";
   }
-  if (metadata.rel_size != 0) {
+  const bool any_rel_tag = metadata.rel_address.has_value() ||
+                           metadata.rel_size.has_value() ||
+                           metadata.rel_entry_size.has_value();
+  if (any_rel_tag &&
+      (!metadata.rel_address || !metadata.rel_size ||
+       !metadata.rel_entry_size)) {
+    return "DT_REL, DT_RELSZ and DT_RELENT must be provided together";
+  }
+  if (metadata.rel_size && *metadata.rel_size != 0) {
     return "AArch64 DT_REL relocations are unsupported; DT_RELA is required";
   }
-  if (metadata.plt_relocation_size != 0) {
+
+  const bool any_plt_tag = metadata.jmprel_address.has_value() ||
+                           metadata.plt_relocation_size.has_value() ||
+                           metadata.plt_relocation_type.has_value();
+  if (any_plt_tag &&
+      (!metadata.jmprel_address || !metadata.plt_relocation_size ||
+       !metadata.plt_relocation_type)) {
+    return "DT_JMPREL, DT_PLTRELSZ and DT_PLTREL must be provided together";
+  }
+  if (metadata.plt_relocation_size &&
+      *metadata.plt_relocation_size != 0) {
     return "DT_JMPREL/PLT relocations require symbol resolution, not implemented yet";
   }
 
@@ -265,12 +305,12 @@ std::string ApplyDynamicMetadataAndRelocations(
     }
   }
 
-  if (!any_rela_tag || *metadata.rela_size == 0) return {};
-
+  if (!any_rela_tag) return {};
   if (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
       *metadata.rela_size % sizeof(Elf64_Rela) != 0) {
     return "DT_RELAENT/DT_RELASZ do not describe a valid Elf64_Rela table";
   }
+  if (*metadata.rela_size == 0) return {};
   const auto relocation_count = *metadata.rela_size / sizeof(Elf64_Rela);
   if (relocation_count > options.max_relocations) {
     return "dynamic relocation count exceeds the configured limit";
