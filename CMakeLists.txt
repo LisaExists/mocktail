@@ -203,11 +203,40 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_elf_loader
   )
 
+  # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
+  # and execute its instructions through the same loader/JIT path.
+  find_program(MOCKTAIL_AARCH64_GCC_EXECUTABLE NAMES aarch64-linux-gnu-gcc)
+  if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
+    set(MOCKTAIL_A64_REAL_ELF_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/mocktail-a64-guest-smoke.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_REAL_ELF_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,-e,_start
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-smoke.so
+              -o "${MOCKTAIL_A64_REAL_ELF_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_smoke.S"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_smoke.S"
+      VERBATIM
+    )
+    add_custom_target(mocktail_a64_guest_elf_fixture
+      DEPENDS "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+    add_dependencies(mocktail_a64_translation_smoke
+      mocktail_a64_guest_elf_fixture)
+  endif()
+
   if(BUILD_TESTING)
     add_test(NAME RobloxArmTranslation.CpuSmoke
       COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
     add_test(NAME RobloxArmTranslation.ElfLoader
       COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
+    if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
+      add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+    endif()
   endif()
 endif()
 
