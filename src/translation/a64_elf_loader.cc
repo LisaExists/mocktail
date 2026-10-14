@@ -445,7 +445,13 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
     return false;
   }
 
-  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(byte_size));
+  std::vector<std::uint8_t> bytes;
+  try {
+    bytes.resize(static_cast<std::size_t>(byte_size));
+  } catch (const std::bad_alloc&) {
+    *error = "not enough memory to read the bounded DT_ANDROID_RELA table";
+    return false;
+  }
   if (!image.Read(load_bias + virtual_address, bytes.data(), bytes.size())) {
     *error = "DT_ANDROID_RELA table is outside loaded PT_LOAD segments";
     return false;
@@ -530,12 +536,14 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
     } else if ((flags & kGroupedByAddend) != 0) {
       std::int64_t addend_delta = 0;
       if (!decoder.Read(&addend_delta) ||
-          !AddSignedOffset(static_cast<std::uint64_t>(running_addend),
-                           addend_delta,
-                           reinterpret_cast<std::uint64_t*>(&running_addend))) {
+          (addend_delta > 0 &&
+           running_addend > std::numeric_limits<std::int64_t>::max() - addend_delta) ||
+          (addend_delta < 0 &&
+           running_addend < std::numeric_limits<std::int64_t>::min() - addend_delta)) {
         *error = "DT_ANDROID_RELA has an invalid grouped addend delta";
         return false;
       }
+      running_addend += addend_delta;
     }
 
     for (std::uint64_t index = 0; index < group_size; ++index) {
@@ -575,14 +583,14 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
           *error = "DT_ANDROID_RELA has a truncated relocation addend";
           return false;
         }
-        const std::uint64_t current_bits =
-            static_cast<std::uint64_t>(running_addend);
-        std::uint64_t next_bits = 0;
-        if (!AddSignedOffset(current_bits, addend_delta, &next_bits)) {
+        if ((addend_delta > 0 &&
+             running_addend > std::numeric_limits<std::int64_t>::max() - addend_delta) ||
+            (addend_delta < 0 &&
+             running_addend < std::numeric_limits<std::int64_t>::min() - addend_delta)) {
           *error = "DT_ANDROID_RELA relocation addend overflows";
           return false;
         }
-        std::memcpy(&running_addend, &next_bits, sizeof(running_addend));
+        running_addend += addend_delta;
       }
 
       Elf64_Rela relocation{};
@@ -710,6 +718,36 @@ std::string ApplyDynamicMetadataAndRelocations(
         if (metadata.rel_entry_size) return "duplicate DT_RELENT tag";
         metadata.rel_entry_size = value;
         break;
+      case 0x6000000f:  // DT_ANDROID_REL
+      case 0x60000010:  // DT_ANDROID_RELSZ
+        metadata.unsupported_android_rel = true;
+        break;
+      case 0x60000011:  // DT_ANDROID_RELA
+        if (metadata.android_rela_address) return "duplicate DT_ANDROID_RELA tag";
+        metadata.android_rela_address = entry.d_un.d_ptr;
+        break;
+      case 0x60000012:  // DT_ANDROID_RELASZ
+        if (metadata.android_rela_size) return "duplicate DT_ANDROID_RELASZ tag";
+        metadata.android_rela_size = value;
+        break;
+      case 35:  // DT_RELRSZ
+      case 0x6fffe001:  // DT_ANDROID_RELRSZ
+        if (metadata.relr_size) return "duplicate DT_RELRSZ/DT_ANDROID_RELRSZ tag";
+        metadata.relr_size = value;
+        break;
+      case 36:  // DT_RELR
+      case 0x6fffe000:  // DT_ANDROID_RELR
+        if (metadata.relr_address) return "duplicate DT_RELR/DT_ANDROID_RELR tag";
+        metadata.relr_address = entry.d_un.d_ptr;
+        break;
+      case 37:  // DT_RELRENT
+      case 0x6fffe003:  // DT_ANDROID_RELRENT
+        if (metadata.relr_entry_size) return "duplicate DT_RELRENT/DT_ANDROID_RELRENT tag";
+        metadata.relr_entry_size = value;
+        break;
+      case 0x6fffe002:  // DT_ANDROID_RELRCOUNT
+      case 0x6fffe004:  // Some toolchains' optional RELR-count tag
+        break;
       case DT_TEXTREL:
         metadata.text_relocations = true;
         break;
@@ -717,13 +755,6 @@ std::string ApplyDynamicMetadataAndRelocations(
         if ((value & DF_TEXTREL) != 0) metadata.text_relocations = true;
         break;
       default:
-        // DT_RELR and Android's packed relocation tags cannot be ignored:
-        // doing so would leave pointers in the guest image unrelocated.
-        if (entry.d_tag == 35 || entry.d_tag == 36 || entry.d_tag == 37 ||
-            (entry.d_tag >= 0x6000000f && entry.d_tag <= 0x60000012) ||
-            (entry.d_tag >= 0x6fffe000 && entry.d_tag <= 0x6fffe003)) {
-          metadata.packed_relocations = true;
-        }
         break;
     }
   }
@@ -732,8 +763,8 @@ std::string ApplyDynamicMetadataAndRelocations(
   if (metadata.text_relocations) {
     return "ELF requires text relocations, which this loader does not permit";
   }
-  if (metadata.packed_relocations) {
-    return "packed DT_RELR/Android relocations are not supported yet";
+  if (metadata.unsupported_android_rel) {
+    return "DT_ANDROID_REL packed relocations are unsupported; AArch64 RELA is required";
   }
   const bool any_rel_tag = metadata.rel_address.has_value() ||
                            metadata.rel_size.has_value() ||
