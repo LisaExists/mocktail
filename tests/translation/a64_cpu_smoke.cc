@@ -162,9 +162,9 @@ int main(int argc, char** argv) {
       std::cerr << "cannot open AArch64 ELF fixture: " << argv[1] << '\n';
       return 2;
     }
-    const std::vector<char> raw_bytes{
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>()};
+    std::vector<char> raw_bytes;
+    raw_bytes.assign(std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>());
     elf_bytes.assign(raw_bytes.begin(), raw_bytes.end());
   } else {
     elf_bytes = mocktail::translation::test::BuildMinimalA64Elf();
