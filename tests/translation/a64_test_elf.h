@@ -59,6 +59,14 @@ inline std::vector<std::uint8_t> BuildMinimalA64Elf(
   return file;
 }
 
+inline Elf64_Ehdr ReadElfHeader(const std::vector<std::uint8_t>& file);
+inline void WriteElfHeader(std::vector<std::uint8_t>& file,
+                           const Elf64_Ehdr& header);
+inline Elf64_Phdr ReadProgramHeader(
+    const std::vector<std::uint8_t>& file);
+inline void WriteProgramHeader(std::vector<std::uint8_t>& file,
+                               const Elf64_Phdr& program_header);
+
 inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
     std::uint32_t relocation_type = R_AARCH64_RELATIVE,
     std::uint64_t relocation_target = 0x1500,
