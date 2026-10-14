@@ -6,6 +6,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
 #include "translation/a64_elf_loader.h"
+#include "translation/a64_guest_memory.h"
 #include "a64_test_elf.h"
 
 namespace {
@@ -22,16 +24,24 @@ using mocktail::translation::A64LoadedImage;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
-  explicit SmokeMemory(A64LoadedImage& image) : image_(image) {}
+  explicit SmokeMemory(A64GuestMemory& memory) : memory_(memory) {}
 
   void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
 
   bool saw_breakpoint() const { return saw_breakpoint_; }
   const std::string& failure() const { return failure_; }
 
+  std::optional<std::uint32_t> MemoryReadCode(Address address) override {
+    if (!memory_.IsExecutable(address, sizeof(std::uint32_t))) {
+      Fail("guest instruction fetch outside executable memory");
+      return std::nullopt;
+    }
+    return MemoryRead32(address);
+  }
+
   std::uint8_t MemoryRead8(Address address) override {
     std::uint8_t value = 0;
-    if (!image_.Read(address, &value, sizeof(value))) {
+    if (!memory_.Read(address, &value, sizeof(value))) {
       Fail("guest instruction/data read outside a loaded PT_LOAD segment");
     }
     return value;
@@ -57,7 +67,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   }
 
   void MemoryWrite8(Address address, std::uint8_t value) override {
-    if (!image_.Write(address, &value, sizeof(value))) {
+    if (!memory_.Write(address, &value, sizeof(value))) {
       Fail("guest write was outside a writable PT_LOAD segment");
     }
   }
@@ -140,7 +150,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
     if (jit_ != nullptr) jit_->HaltExecution();
   }
 
-  A64LoadedImage& image_;
+  A64GuestMemory& memory_;
   Dynarmic::A64::Jit* jit_ = nullptr;
   std::uint64_t ticks_ = 0;
   bool saw_breakpoint_ = false;
@@ -177,14 +187,30 @@ int main(int argc, char** argv) {
   }
 
   auto& image = *load_result.image;
-  SmokeMemory memory(image);
+  A64GuestMemory memory;
+  std::string memory_error;
+  if (!memory.MapImage(image, &memory_error)) {
+    std::cerr << "guest ELF mapping failed: " << memory_error << '\n';
+    return 1;
+  }
+  constexpr std::uint64_t kStackBase = 0x7000000000ULL;
+  constexpr std::uint64_t kStackSize = 2U * 1024U * 1024U;
+  if (!memory.Map(kStackBase, kStackSize,
+                  A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                  &memory_error)) {
+    std::cerr << "guest stack mapping failed: " << memory_error << '\n';
+    return 1;
+  }
+  SmokeMemory callbacks(memory);
 
   Dynarmic::A64::UserConfig config{};
-  config.callbacks = &memory;
+  config.callbacks = &callbacks;
   config.enable_cycle_counting = false;
   config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
-  memory.Attach(&cpu);
+  callbacks.Attach(&cpu);
+  cpu.SetSP(kStackBase + kStackSize - 16);
+  const auto initial_stack_pointer = cpu.GetSP();
   cpu.SetPC(image.entry_point);
 
   static_cast<void>(cpu.Run());
@@ -204,6 +230,16 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "AArch64 ELF/JIT smoke test passed (X0=42)\n";
+  if (cpu.GetRegister(1) != 42) {
+    std::cerr << "AArch64 guest stack round-trip failed: X1 was "
+              << cpu.GetRegister(1) << ", expected 42\n";
+    return 1;
+  }
+  if (cpu.GetSP() != initial_stack_pointer) {
+    std::cerr << "AArch64 guest stack pointer was not restored\n";
+    return 1;
+  }
+
+  std::cout << "AArch64 ELF/JIT smoke test passed (X0=X1=42; guest stack works)\n";
   return 0;
 }
