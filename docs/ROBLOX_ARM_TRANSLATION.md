@@ -20,7 +20,7 @@ The tool lists native libraries, checks their ELF machine fields, and reports AB
 
 When configured with `-DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON`, CMake fetches a pinned Dynarmic revision and builds an isolated AArch64 CPU smoke-test target. The option is off by default so ordinary Mocktail builds do not gain the extra dependency or network fetch.
 
-On x86-64 Linux, Dynarmic requires Boost and uses its pinned bundled external projects for other dependencies. The smoke target executes a tiny in-memory instruction sequence; it does not load Roblox code.
+On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target. The smoke target executes a tiny in-memory instruction sequence; it does not load Roblox code.
 
 ## Architecture options to evaluate
 
