@@ -193,6 +193,28 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   )
   target_compile_features(mocktail_a64_guest_memory PUBLIC cxx_std_17)
 
+  add_library(mocktail_a64_guest_module_loader STATIC
+    src/translation/a64_guest_module_loader.cc
+  )
+  target_include_directories(mocktail_a64_guest_module_loader PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  target_link_libraries(mocktail_a64_guest_module_loader PUBLIC
+    mocktail_a64_elf_loader
+  )
+  target_compile_features(mocktail_a64_guest_module_loader PUBLIC cxx_std_17)
+
+  add_executable(mocktail_a64_guest_module_loader_test
+    tests/translation/a64_guest_module_loader_test.cc
+  )
+  target_include_directories(mocktail_a64_guest_module_loader_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/translation"
+  )
+  target_link_libraries(mocktail_a64_guest_module_loader_test PRIVATE
+    mocktail_a64_guest_module_loader
+    mocktail_a64_guest_memory
+  )
+
   add_executable(mocktail_a64_guest_memory_test
     tests/translation/a64_guest_memory_test.cc
   )
@@ -222,6 +244,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   target_link_libraries(mocktail_a64_translation_smoke PRIVATE
     dynarmic
     mocktail_a64_guest_memory
+    mocktail_a64_guest_module_loader
   )
 
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
@@ -255,6 +278,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
     add_test(NAME RobloxArmTranslation.GuestMemory
       COMMAND $<TARGET_FILE:mocktail_a64_guest_memory_test>)
+    add_test(NAME RobloxArmTranslation.GuestModuleLoader
+      COMMAND $<TARGET_FILE:mocktail_a64_guest_module_loader_test>)
     if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
       add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
