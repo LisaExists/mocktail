@@ -18,10 +18,10 @@ inline std::vector<std::uint8_t> BuildMinimalA64Elf(
     std::uint32_t segment_flags = PF_R | PF_X,
     std::uint64_t entry_point = 0x1000,
     std::uint64_t virtual_address = 0x1000,
-    std::uint64_t memory_size = 16,
+    std::uint64_t memory_size = 32,
     std::uint64_t alignment = 0x1000) {
   constexpr std::size_t kCodeOffset = 0x1000;
-  constexpr std::uint64_t kFileCodeSize = 8;
+  constexpr std::uint64_t kFileCodeSize = 24;
   std::vector<std::uint8_t> file(kCodeOffset + kFileCodeSize, 0);
 
   Elf64_Ehdr header{};
@@ -50,10 +50,15 @@ inline std::vector<std::uint8_t> BuildMinimalA64Elf(
   std::memcpy(file.data() + header.e_phoff, &program_header,
               sizeof(program_header));
 
-  // MOVZ X0, #42; BRK #0. Instructions are encoded in little-endian order.
+  // MOVZ X0, #42; SUB SP, SP, #16; STR X0, [SP]; LDR X1, [SP];
+  // ADD SP, SP, #16; BRK #0. Encoded little-endian.
   const std::uint8_t code[] = {
-      0x40, 0x05, 0x80, 0xD2,
-      0x00, 0x00, 0x20, 0xD4,
+      0x40, 0x05, 0x80, 0xD2,  // mov x0, #42
+      0xFF, 0x43, 0x00, 0xD1,  // sub sp, sp, #16
+      0xE0, 0x03, 0x00, 0xF9,  // str x0, [sp]
+      0xE1, 0x03, 0x40, 0xF9,  // ldr x1, [sp]
+      0xFF, 0x43, 0x00, 0x91,  // add sp, sp, #16
+      0x00, 0x00, 0x20, 0xD4,  // brk #0
   };
   std::memcpy(file.data() + kCodeOffset, code, sizeof(code));
   return file;
