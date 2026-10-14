@@ -168,6 +168,102 @@ inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
   return file;
 }
 
+inline std::vector<std::uint8_t> BuildA64ElfWithAndroidPackedRela() {
+  auto file = BuildA64ElfWithRelativeRelocation();
+  constexpr std::size_t kPackedRelaOffset = 0x1100;
+
+  // APS2 stream: one R_AARCH64_RELATIVE at 0x1500, addend 0x1000.
+  // The group shares its offset delta and addend; relocation info is per-entry.
+  const std::uint8_t packed[] = {
+      'A', 'P', 'S', '2',
+      0x01,             // relocation count = 1
+      0x80, 0x2A,       // initial offset = 0x1500 (SLEB128)
+      0x01,             // group size = 1
+      0x0E,             // grouped offset + grouped addend + has addend
+      0x00,             // offset delta = 0
+      0x80, 0x20,       // addend delta = 0x1000
+      0x83, 0x08,       // R_AARCH64_RELATIVE (SLEB128)
+  };
+  std::memcpy(file.data() + kPackedRelaOffset, packed, sizeof(packed));
+
+  auto rela_size = ReadDynamicEntry(file, 1);
+  rela_size.d_un.d_val = 0;
+  WriteDynamicEntry(file, 1, rela_size);
+
+  Elf64_Dyn android_rela{};
+  android_rela.d_tag = 0x60000011;  // DT_ANDROID_RELA
+  android_rela.d_un.d_ptr = kPackedRelaOffset;
+  WriteDynamicEntry(file, 10, android_rela);
+
+  Elf64_Dyn android_rela_size{};
+  android_rela_size.d_tag = 0x60000012;  // DT_ANDROID_RELASZ
+  android_rela_size.d_un.d_val = sizeof(packed);
+  WriteDynamicEntry(file, 11, android_rela_size);
+
+  Elf64_Dyn terminator{};
+  terminator.d_tag = DT_NULL;
+  WriteDynamicEntry(file, 12, terminator);
+
+  const auto header = ReadElfHeader(file);
+  Elf64_Phdr dynamic_header{};
+  const std::size_t dynamic_phdr_offset =
+      static_cast<std::size_t>(header.e_phoff) + sizeof(Elf64_Phdr);
+  std::memcpy(&dynamic_header, file.data() + dynamic_phdr_offset,
+              sizeof(dynamic_header));
+  dynamic_header.p_filesz = 13 * sizeof(Elf64_Dyn);
+  dynamic_header.p_memsz = dynamic_header.p_filesz;
+  std::memcpy(file.data() + dynamic_phdr_offset, &dynamic_header,
+              sizeof(dynamic_header));
+  return file;
+}
+
+inline std::vector<std::uint8_t> BuildA64ElfWithRelrRelocation() {
+  auto file = BuildA64ElfWithRelativeRelocation();
+  constexpr std::size_t kRelrOffset = 0x1100;
+  constexpr std::size_t kRelocationTargetOffset = 0x1500;
+  constexpr std::uint64_t kRelocationTarget = 0x1500;
+  constexpr std::uint64_t kAddend = 0x1000;
+
+  std::memcpy(file.data() + kRelrOffset, &kRelocationTarget,
+              sizeof(kRelocationTarget));
+  std::memcpy(file.data() + kRelocationTargetOffset, &kAddend, sizeof(kAddend));
+
+  auto rela_size = ReadDynamicEntry(file, 1);
+  rela_size.d_un.d_val = 0;
+  WriteDynamicEntry(file, 1, rela_size);
+
+  Elf64_Dyn relr{};
+  relr.d_tag = 36;  // DT_RELR
+  relr.d_un.d_ptr = kRelrOffset;
+  WriteDynamicEntry(file, 10, relr);
+
+  Elf64_Dyn relr_size{};
+  relr_size.d_tag = 35;  // DT_RELRSZ
+  relr_size.d_un.d_val = sizeof(std::uint64_t);
+  WriteDynamicEntry(file, 11, relr_size);
+
+  Elf64_Dyn relr_entry_size{};
+  relr_entry_size.d_tag = 37;  // DT_RELRENT
+  relr_entry_size.d_un.d_val = sizeof(std::uint64_t);
+  WriteDynamicEntry(file, 12, relr_entry_size);
+
+  Elf64_Dyn terminator{};
+  terminator.d_tag = DT_NULL;
+  WriteDynamicEntry(file, 13, terminator);
+
+  const auto header = ReadElfHeader(file);
+  Elf64_Phdr dynamic_header{};
+  const std::size_t dynamic_phdr_offset =
+      static_cast<std::size_t>(header.e_phoff) + sizeof(Elf64_Phdr);
+  std::memcpy(&dynamic_header, file.data() + dynamic_phdr_offset,
+              sizeof(dynamic_header));
+  dynamic_header.p_filesz = 14 * sizeof(Elf64_Dyn);
+  dynamic_header.p_memsz = dynamic_header.p_filesz;
+  std::memcpy(file.data() + dynamic_phdr_offset, &dynamic_header,
+              sizeof(dynamic_header));
+  return file;
+}
+
 inline Elf64_Dyn ReadDynamicEntry(
     const std::vector<std::uint8_t>& file, std::size_t index) {
   Elf64_Dyn entry{};
