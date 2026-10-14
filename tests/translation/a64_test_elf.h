@@ -70,11 +70,16 @@ inline void WriteProgramHeader(std::vector<std::uint8_t>& file,
 inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
     std::uint32_t relocation_type = R_AARCH64_RELATIVE,
     std::uint64_t relocation_target = 0x1500,
-    std::int64_t relocation_addend = 0x1000) {
+    std::int64_t relocation_addend = 0x1000,
+    std::uint64_t relocation_symbol = 0,
+    bool undefined_symbol = false,
+    bool use_plt_relocation = false) {
   constexpr std::size_t kLoadOffset = 0x1000;
   constexpr std::size_t kRelaOffset = 0x1100;
   constexpr std::size_t kDynamicOffset = 0x1140;
-  constexpr std::size_t kStringOffset = 0x1200;
+  constexpr std::size_t kStringOffset = 0x1300;
+  constexpr std::size_t kHashOffset = 0x1340;
+  constexpr std::size_t kSymbolOffset = 0x1380;
   auto file = BuildMinimalA64Elf(
       ET_DYN, PF_R | PF_W | PF_X, 0x1000, 0x1000, 0x1000, 0x1000);
   file.resize(kLoadOffset + 0x1000, 0);
@@ -97,7 +102,7 @@ inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
   dynamic_header.p_flags = PF_R | PF_W;
   dynamic_header.p_offset = kDynamicOffset;
   dynamic_header.p_vaddr = kDynamicOffset;
-  dynamic_header.p_filesz = 8 * sizeof(Elf64_Dyn);
+  dynamic_header.p_filesz = (use_plt_relocation ? 14 : 11) * sizeof(Elf64_Dyn);
   dynamic_header.p_memsz = dynamic_header.p_filesz;
   dynamic_header.p_align = alignof(Elf64_Dyn);
   std::memcpy(file.data() + header.e_phoff + sizeof(Elf64_Phdr),
@@ -105,29 +110,56 @@ inline std::vector<std::uint8_t> BuildA64ElfWithRelativeRelocation(
 
   Elf64_Rela relocation{};
   relocation.r_offset = relocation_target;
-  relocation.r_info = ELF64_R_INFO(0, relocation_type);
+  relocation.r_info = ELF64_R_INFO(relocation_symbol, relocation_type);
   relocation.r_addend = relocation_addend;
   std::memcpy(file.data() + kRelaOffset, &relocation, sizeof(relocation));
 
-  Elf64_Dyn dynamic[8]{};
+  Elf64_Dyn dynamic[14]{};
   dynamic[0].d_tag = DT_RELA;
   dynamic[0].d_un.d_ptr = kRelaOffset;
   dynamic[1].d_tag = DT_RELASZ;
-  dynamic[1].d_un.d_val = sizeof(Elf64_Rela);
+  dynamic[1].d_un.d_val =
+      use_plt_relocation ? 0 : sizeof(Elf64_Rela);
   dynamic[2].d_tag = DT_RELAENT;
   dynamic[2].d_un.d_val = sizeof(Elf64_Rela);
   dynamic[3].d_tag = DT_STRTAB;
   dynamic[3].d_un.d_ptr = kStringOffset;
   dynamic[4].d_tag = DT_STRSZ;
-  const char strings[] = "\0libc.so\0libmock.so";
+  const char strings[] = "\0libc.so\0libmock.so\0test_symbol";
   dynamic[4].d_un.d_val = sizeof(strings);
   dynamic[5].d_tag = DT_NEEDED;
   dynamic[5].d_un.d_val = 1;
   dynamic[6].d_tag = DT_SONAME;
   dynamic[6].d_un.d_val = 9;
-  dynamic[7].d_tag = DT_NULL;
-  std::memcpy(file.data() + kDynamicOffset, dynamic, sizeof(dynamic));
+  dynamic[7].d_tag = DT_SYMTAB;
+  dynamic[7].d_un.d_ptr = kSymbolOffset;
+  dynamic[8].d_tag = DT_SYMENT;
+  dynamic[8].d_un.d_val = sizeof(Elf64_Sym);
+  dynamic[9].d_tag = DT_HASH;
+  dynamic[9].d_un.d_ptr = kHashOffset;
+  std::size_t dynamic_count = 11;
+  if (use_plt_relocation) {
+    dynamic[10].d_tag = DT_JMPREL;
+    dynamic[10].d_un.d_ptr = kRelaOffset;
+    dynamic[11].d_tag = DT_PLTRELSZ;
+    dynamic[11].d_un.d_val = sizeof(Elf64_Rela);
+    dynamic[12].d_tag = DT_PLTREL;
+    dynamic[12].d_un.d_val = DT_RELA;
+    dynamic_count = 14;
+  }
+  dynamic[dynamic_count - 1].d_tag = DT_NULL;
+  std::memcpy(file.data() + kDynamicOffset, dynamic,
+              dynamic_count * sizeof(Elf64_Dyn));
   std::memcpy(file.data() + kStringOffset, strings, sizeof(strings));
+
+  const std::uint32_t hash[] = {1, 2, 1, 0, 0};
+  std::memcpy(file.data() + kHashOffset, hash, sizeof(hash));
+  Elf64_Sym symbols[2]{};
+  symbols[1].st_name = 20;
+  symbols[1].st_info = ELF64_ST_INFO(STB_GLOBAL, STT_OBJECT);
+  symbols[1].st_shndx = undefined_symbol ? SHN_UNDEF : SHN_ABS;
+  symbols[1].st_value = 0x123456789ULL;
+  std::memcpy(file.data() + kSymbolOffset, symbols, sizeof(symbols));
   return file;
 }
 
