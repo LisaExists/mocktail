@@ -35,13 +35,6 @@ struct A64ExportedSymbol final {
 
 // A validated ELF image backed by ordinary host-owned memory. Guest addresses
 // are numeric AArch64 addresses and must never be cast to host pointers.
-struct A64PendingRelocation final {
-  std::uint64_t target_address = 0;
-  std::uint32_t type = 0;
-  std::int64_t addend = 0;
-  std::string symbol_name;
-};
-
 struct A64LoadedImage final {
   std::uint64_t load_bias = 0;
   std::uint64_t entry_point = 0;
@@ -53,7 +46,6 @@ struct A64LoadedImage final {
   // symbols are intentionally omitted until Android symbol-version semantics
   // are implemented by the guest linker.
   std::vector<A64ExportedSymbol> exported_symbols;
-  std::vector<A64PendingRelocation> pending_relocations;
   std::vector<A64LoadSegment> segments;
 
   // Reads loaded segments, including across adjacent segments. Returns false
@@ -85,8 +77,6 @@ struct A64ElfLoadOptions final {
   // Resolves undefined guest symbols to guest addresses in already-loaded
   // modules or explicit host-call thunks. No implicit host pointer conversion.
   A64SymbolResolver resolve_symbol;
-  // Defer unresolved strong imports for a later multi-image link pass.
-  bool defer_unresolved_symbols = false;
 };
 
 struct A64ElfLoadResult final {
@@ -106,11 +96,6 @@ struct A64ElfLoadResult final {
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options = {});
 
-// Applies the deferred symbol relocations after the complete guest module set
-// has been loaded. Returns false without clearing pending entries on failure.
-bool ResolveA64ElfPendingRelocations(A64LoadedImage& image,
-                                     const A64SymbolResolver& resolver,
-                                     std::string* error);
 
 }  // namespace mocktail::translation
 
