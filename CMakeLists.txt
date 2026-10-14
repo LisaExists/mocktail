@@ -174,14 +174,40 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     message(FATAL_ERROR "Dynarmic was fetched but did not define target 'dynarmic'")
   endif()
 
+  add_library(mocktail_a64_elf_loader STATIC
+    src/translation/a64_elf_loader.cc
+  )
+  target_include_directories(mocktail_a64_elf_loader PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  target_compile_features(mocktail_a64_elf_loader PUBLIC cxx_std_17)
+
+  add_executable(mocktail_a64_elf_loader_test
+    tests/translation/a64_elf_loader_test.cc
+  )
+  target_include_directories(mocktail_a64_elf_loader_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/translation"
+  )
+  target_link_libraries(mocktail_a64_elf_loader_test PRIVATE
+    mocktail_a64_elf_loader
+  )
+
   add_executable(mocktail_a64_translation_smoke
     tests/translation/a64_cpu_smoke.cc
   )
-  target_link_libraries(mocktail_a64_translation_smoke PRIVATE dynarmic)
+  target_include_directories(mocktail_a64_translation_smoke PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/translation"
+  )
+  target_link_libraries(mocktail_a64_translation_smoke PRIVATE
+    dynarmic
+    mocktail_a64_elf_loader
+  )
 
   if(BUILD_TESTING)
     add_test(NAME RobloxArmTranslation.CpuSmoke
       COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
+    add_test(NAME RobloxArmTranslation.ElfLoader
+      COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
   endif()
 endif()
 

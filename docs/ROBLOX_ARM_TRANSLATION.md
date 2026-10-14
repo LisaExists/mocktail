@@ -34,12 +34,14 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add an APK native-ABI/ELF preflight tool.
 - [x] Add tests for ELF identification, ABI mismatch reporting and split-package detection.
 - [x] Add an optional, pinned Dynarmic dependency and an isolated AArch64 CPU smoke target.
-- [ ] Build and run the smoke target on a clean x86-64 Linux host.
-- [ ] Select and implement the guest memory/address-space model.
-- [ ] Implement AArch64 ELF loading and relocations.
-- [ ] Add explicit guest-to-host calling conventions, syscalls, TLS and threading support.
+- [x] Add a bounded ELF64 little-endian AArch64 loader for PT_LOAD segments, including BSS zero-fill, ET_DYN load bias, entry-point validation and read/write bounds checks.
+- [x] Run the Dynarmic smoke instructions from a synthetic ELF image instead of a raw byte array.
+- [ ] Run the new loader/JIT integration tests in branch CI and on a clean x86-64 Linux host.
+- [ ] Implement AArch64 dynamic relocations and guest-side symbol/dependency resolution.
+- [ ] Select and implement a full guest address-space model for stacks, heaps, TLS, guard pages and permissions.
+- [ ] Add explicit guest-to-host calling conventions, syscalls, TLS and guest-thread scheduling.
 - [ ] Integrate and test the Android/Bionic and graphics boundaries.
-- [ ] Validate the integration against a minimal ARM64 test library before attempting full Roblox startup.
+- [ ] Validate the integration against a minimal ARM64 shared library and ordinary JNI/native calls before attempting full Roblox startup.
 
 ## Scope and trust
 
