@@ -68,6 +68,11 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> rela_address;
   std::optional<std::uint64_t> rela_size;
   std::optional<std::uint64_t> rela_entry_size;
+  std::optional<std::uint64_t> android_rela_address;
+  std::optional<std::uint64_t> android_rela_size;
+  std::optional<std::uint64_t> relr_address;
+  std::optional<std::uint64_t> relr_size;
+  std::optional<std::uint64_t> relr_entry_size;
   std::optional<std::uint64_t> strtab_address;
   std::optional<std::uint64_t> strtab_size;
   std::optional<std::uint64_t> soname_offset;
@@ -84,7 +89,7 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> rel_size;
   std::optional<std::uint64_t> rel_entry_size;
   bool text_relocations = false;
-  bool packed_relocations = false;
+  bool unsupported_android_rel = false;
 };
 
 bool ReadDynamicString(const A64LoadedImage& image,
@@ -377,6 +382,221 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
     return false;
   }
   *symbol_value = image.load_bias + symbol.st_value;
+  return true;
+}
+
+class Sleb128Decoder final {
+ public:
+  Sleb128Decoder(const std::uint8_t* bytes, std::size_t size)
+      : bytes_(bytes), size_(size) {}
+
+  bool Read(std::int64_t* output) noexcept {
+    std::uint64_t value = 0;
+    unsigned shift = 0;
+    std::uint8_t byte = 0;
+
+    for (unsigned index = 0; index < 10; ++index) {
+      if (position_ >= size_) return false;
+      byte = bytes_[position_++];
+      const auto payload = static_cast<std::uint8_t>(byte & 0x7fU);
+
+      if (shift == 63U) {
+        if (payload != 0 && payload != 0x7fU) return false;
+        value |= static_cast<std::uint64_t>(payload & 1U) << 63U;
+      } else if (shift < 63U) {
+        value |= static_cast<std::uint64_t>(payload) << shift;
+      }
+
+      if ((byte & 0x80U) == 0) {
+        const unsigned total_shift = shift + 7U;
+        if (total_shift < 64U && (byte & 0x40U) != 0) {
+          value |= (~std::uint64_t{0}) << total_shift;
+        }
+        std::memcpy(output, &value, sizeof(value));
+        return true;
+      }
+      shift += 7U;
+    }
+    return false;
+  }
+
+  std::size_t position() const noexcept { return position_; }
+
+ private:
+  const std::uint8_t* bytes_;
+  std::size_t size_;
+  std::size_t position_ = 0;
+};
+
+bool DecodeAndroidPackedRela(const A64LoadedImage& image,
+                             std::uint64_t load_bias,
+                             std::uint64_t virtual_address,
+                             std::uint64_t byte_size,
+                             const A64ElfLoadOptions& options,
+                             std::vector<Elf64_Rela>* relocations,
+                             std::string* error) {
+  if (byte_size < 4 || byte_size > options.max_packed_relocation_bytes ||
+      byte_size > std::numeric_limits<std::size_t>::max()) {
+    *error = "DT_ANDROID_RELA size is empty or exceeds the configured limit";
+    return false;
+  }
+  if (AddOverflows(load_bias, virtual_address)) {
+    *error = "relocated DT_ANDROID_RELA address overflows";
+    return false;
+  }
+
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(byte_size));
+  if (!image.Read(load_bias + virtual_address, bytes.data(), bytes.size())) {
+    *error = "DT_ANDROID_RELA table is outside loaded PT_LOAD segments";
+    return false;
+  }
+  if (bytes[0] != 'A' || bytes[1] != 'P' ||
+      bytes[2] != 'S' || bytes[3] != '2') {
+    *error = "DT_ANDROID_RELA has an invalid APS2 signature";
+    return false;
+  }
+
+  Sleb128Decoder decoder(bytes.data() + 4, bytes.size() - 4);
+  std::int64_t encoded_count = 0;
+  std::int64_t encoded_offset = 0;
+  if (!decoder.Read(&encoded_count) || !decoder.Read(&encoded_offset) ||
+      encoded_count < 0 || encoded_offset < 0 ||
+      static_cast<std::uint64_t>(encoded_count) > options.max_relocations) {
+    *error = "DT_ANDROID_RELA has invalid relocation count or initial offset";
+    return false;
+  }
+
+  try {
+    relocations->clear();
+    relocations->reserve(static_cast<std::size_t>(encoded_count));
+  } catch (const std::bad_alloc&) {
+    *error = "not enough memory to decode the bounded DT_ANDROID_RELA table";
+    return false;
+  }
+
+  std::uint64_t running_offset = static_cast<std::uint64_t>(encoded_offset);
+  std::int64_t running_addend = 0;
+  const std::uint64_t relocation_count =
+      static_cast<std::uint64_t>(encoded_count);
+
+  while (relocations->size() < relocation_count) {
+    std::int64_t encoded_group_size = 0;
+    std::int64_t encoded_flags = 0;
+    if (!decoder.Read(&encoded_group_size) || !decoder.Read(&encoded_flags) ||
+        encoded_group_size <= 0 || encoded_flags < 0 ||
+        (static_cast<std::uint64_t>(encoded_flags) & ~0xFULL) != 0) {
+      *error = "DT_ANDROID_RELA contains an invalid relocation group";
+      return false;
+    }
+
+    const auto group_size = static_cast<std::uint64_t>(encoded_group_size);
+    const auto flags = static_cast<std::uint64_t>(encoded_flags);
+    if (group_size > relocation_count - relocations->size()) {
+      *error = "DT_ANDROID_RELA group exceeds the declared relocation count";
+      return false;
+    }
+
+    constexpr std::uint64_t kGroupedByInfo = 1U;
+    constexpr std::uint64_t kGroupedByOffsetDelta = 2U;
+    constexpr std::uint64_t kGroupedByAddend = 4U;
+    constexpr std::uint64_t kHasAddend = 8U;
+    if ((flags & kGroupedByAddend) != 0 &&
+        (flags & kHasAddend) == 0) {
+      *error = "DT_ANDROID_RELA groups addends without declaring them";
+      return false;
+    }
+
+    std::uint64_t group_offset_delta = 0;
+    std::uint64_t group_info = 0;
+    if ((flags & kGroupedByOffsetDelta) != 0) {
+      std::int64_t delta = 0;
+      if (!decoder.Read(&delta) || delta < 0) {
+        *error = "DT_ANDROID_RELA has an invalid grouped offset delta";
+        return false;
+      }
+      group_offset_delta = static_cast<std::uint64_t>(delta);
+    }
+    if ((flags & kGroupedByInfo) != 0) {
+      std::int64_t info = 0;
+      if (!decoder.Read(&info) || info < 0) {
+        *error = "DT_ANDROID_RELA has invalid grouped relocation info";
+        return false;
+      }
+      group_info = static_cast<std::uint64_t>(info);
+    }
+
+    if ((flags & kHasAddend) == 0) {
+      running_addend = 0;
+    } else if ((flags & kGroupedByAddend) != 0) {
+      std::int64_t addend_delta = 0;
+      if (!decoder.Read(&addend_delta) ||
+          !AddSignedOffset(static_cast<std::uint64_t>(running_addend),
+                           addend_delta,
+                           reinterpret_cast<std::uint64_t*>(&running_addend))) {
+        *error = "DT_ANDROID_RELA has an invalid grouped addend delta";
+        return false;
+      }
+    }
+
+    for (std::uint64_t index = 0; index < group_size; ++index) {
+      if ((flags & kGroupedByOffsetDelta) == 0) {
+        std::int64_t delta = 0;
+        if (!decoder.Read(&delta) || delta < 0) {
+          *error = "DT_ANDROID_RELA has an invalid relocation offset delta";
+          return false;
+        }
+        if (AddOverflows(running_offset, static_cast<std::uint64_t>(delta))) {
+          *error = "DT_ANDROID_RELA relocation offset overflows";
+          return false;
+        }
+        running_offset += static_cast<std::uint64_t>(delta);
+      } else {
+        if (AddOverflows(running_offset, group_offset_delta)) {
+          *error = "DT_ANDROID_RELA relocation offset overflows";
+          return false;
+        }
+        running_offset += group_offset_delta;
+      }
+
+      std::uint64_t info = group_info;
+      if ((flags & kGroupedByInfo) == 0) {
+        std::int64_t decoded_info = 0;
+        if (!decoder.Read(&decoded_info) || decoded_info < 0) {
+          *error = "DT_ANDROID_RELA has invalid relocation info";
+          return false;
+        }
+        info = static_cast<std::uint64_t>(decoded_info);
+      }
+
+      if ((flags & kHasAddend) != 0 &&
+          (flags & kGroupedByAddend) == 0) {
+        std::int64_t addend_delta = 0;
+        if (!decoder.Read(&addend_delta)) {
+          *error = "DT_ANDROID_RELA has a truncated relocation addend";
+          return false;
+        }
+        const std::uint64_t current_bits =
+            static_cast<std::uint64_t>(running_addend);
+        std::uint64_t next_bits = 0;
+        if (!AddSignedOffset(current_bits, addend_delta, &next_bits)) {
+          *error = "DT_ANDROID_RELA relocation addend overflows";
+          return false;
+        }
+        std::memcpy(&running_addend, &next_bits, sizeof(running_addend));
+      }
+
+      Elf64_Rela relocation{};
+      relocation.r_offset = running_offset;
+      relocation.r_info = info;
+      relocation.r_addend = running_addend;
+      relocations->push_back(relocation);
+    }
+  }
+
+  if (decoder.position() != bytes.size() - 4) {
+    *error = "DT_ANDROID_RELA has trailing or unconsumed APS2 data";
+    return false;
+  }
   return true;
 }
 
