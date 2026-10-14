@@ -732,6 +732,93 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
   return true;
 }
 
+std::string CollectDynamicInitializersAndFinalizers(
+    A64LoadedImage* image, const DynamicMetadata& metadata,
+    const A64ElfLoadOptions& options) {
+  auto append_function = [&](const std::optional<std::uint64_t>& virtual_address,
+                             const char* tag,
+                             std::vector<std::uint64_t>* destination)
+      -> std::string {
+    if (!virtual_address || *virtual_address == 0) return {};
+    if (AddOverflows(image->load_bias, *virtual_address)) {
+      return std::string("relocated ") + tag + " address overflows";
+    }
+    const auto address = image->load_bias + *virtual_address;
+    if (!image->IsExecutable(address, sizeof(std::uint32_t))) {
+      return std::string(tag) + " does not point into executable PT_LOAD memory";
+    }
+    destination->push_back(address);
+    return {};
+  };
+
+  auto collect_array = [&](const std::optional<std::uint64_t>& virtual_address,
+                           const std::optional<std::uint64_t>& byte_size,
+                           const char* tag,
+                           std::vector<std::uint64_t>* destination,
+                           bool reverse) -> std::string {
+    if (virtual_address.has_value() != byte_size.has_value()) {
+      return std::string(tag) + " and its size tag must be provided together";
+    }
+    if (!virtual_address || *byte_size == 0) return {};
+    if ((*byte_size % sizeof(std::uint64_t)) != 0 ||
+        *byte_size / sizeof(std::uint64_t) > options.max_relocations) {
+      return std::string(tag) + " size is not a valid bounded pointer array";
+    }
+    if (AddOverflows(image->load_bias, *virtual_address)) {
+      return std::string("relocated ") + tag + " address overflows";
+    }
+
+    const auto guest_array = image->load_bias + *virtual_address;
+    const auto count = *byte_size / sizeof(std::uint64_t);
+    std::vector<std::uint64_t> entries;
+    try {
+      entries.reserve(static_cast<std::size_t>(count));
+    } catch (const std::bad_alloc&) {
+      return std::string("not enough memory to collect ") + tag;
+    }
+    for (std::uint64_t index = 0; index < count; ++index) {
+      const auto offset = index * sizeof(std::uint64_t);
+      if (AddOverflows(guest_array, offset)) {
+        return std::string(tag) + " element address overflows";
+      }
+      std::uint64_t address = 0;
+      if (!image->Read(guest_array + offset, &address, sizeof(address))) {
+        return std::string(tag) +
+               " is outside loaded PT_LOAD memory";
+      }
+      // Toolchains may leave empty/sentinel entries in the array. Ignore them,
+      // but require every actual function pointer to name guest executable code.
+      if (address == 0 || address == std::numeric_limits<std::uint64_t>::max()) {
+        continue;
+      }
+      if (!image->IsExecutable(address, sizeof(std::uint32_t))) {
+        return std::string(tag) +
+               " contains an entry outside executable PT_LOAD memory";
+      }
+      entries.push_back(address);
+    }
+    if (reverse) std::reverse(entries.begin(), entries.end());
+    try {
+      destination->insert(destination->end(), entries.begin(), entries.end());
+    } catch (const std::bad_alloc&) {
+      return std::string("not enough memory to append ") + tag;
+    }
+    return {};
+  };
+
+  auto error = append_function(metadata.init_address, "DT_INIT",
+                               &image->initializers);
+  if (!error.empty()) return error;
+  error = collect_array(metadata.init_array_address, metadata.init_array_size,
+                        "DT_INIT_ARRAY", &image->initializers, false);
+  if (!error.empty()) return error;
+
+  error = collect_array(metadata.fini_array_address, metadata.fini_array_size,
+                        "DT_FINI_ARRAY", &image->finalizers, true);
+  if (!error.empty()) return error;
+  return append_function(metadata.fini_address, "DT_FINI", &image->finalizers);
+}
+
 std::string ApplyDynamicMetadataAndRelocations(
     A64LoadedImage* image, const Elf64_Phdr& dynamic_header,
     const A64ElfLoadOptions& options) {
