@@ -95,8 +95,12 @@ bool ReadDynamicString(const A64LoadedImage& image,
   }
 
   const std::uint64_t available = strtab_size - string_offset;
-  const std::uint64_t string_address =
-      load_bias + strtab_address + string_offset;
+  const std::uint64_t relocated_strtab = load_bias + strtab_address;
+  if (AddOverflows(relocated_strtab, string_offset)) {
+    *error = "dynamic string address overflows";
+    return false;
+  }
+  const std::uint64_t string_address = relocated_strtab + string_offset;
   constexpr std::uint64_t kMaximumDynamicStringLength = 4096;
   const auto limit = std::min(available, kMaximumDynamicStringLength);
   result->clear();
