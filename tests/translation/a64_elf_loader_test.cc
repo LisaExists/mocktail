@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -31,6 +32,53 @@ void ExpectRejected(const std::vector<std::uint8_t>& file,
                     mocktail::translation::A64ElfLoadOptions options = {}) {
   const auto result = mocktail::translation::LoadA64Elf(file, options);
   Check(!result && !result.error.empty(), name);
+}
+
+std::vector<std::uint8_t> BuildElfWithInitializers() {
+  using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
+  using mocktail::translation::test::ReadDynamicEntry;
+  using mocktail::translation::test::WriteDynamicEntry;
+
+  auto file = BuildA64ElfWithRelativeRelocation(
+      R_AARCH64_RELATIVE, 0x1600, 0x1008);
+  Elf64_Rela first{};
+  std::memcpy(&first, file.data() + 0x1100, sizeof(first));
+  Elf64_Rela second = first;
+  second.r_offset = 0x1608;
+  second.r_addend = 0x1010;
+  std::memcpy(file.data() + 0x1118, &second, sizeof(second));
+
+  auto rela_size = ReadDynamicEntry(file, 1);
+  rela_size.d_un.d_val = 2 * sizeof(Elf64_Rela);
+  WriteDynamicEntry(file, 1, rela_size);
+
+  auto header = mocktail::translation::test::ReadElfHeader(file);
+  Elf64_Phdr dynamic_header{};
+  const auto dynamic_header_offset =
+      header.e_phoff + header.e_phentsize;
+  std::memcpy(&dynamic_header, file.data() + dynamic_header_offset,
+              sizeof(dynamic_header));
+  dynamic_header.p_filesz = 17 * sizeof(Elf64_Dyn);
+  dynamic_header.p_memsz = dynamic_header.p_filesz;
+  std::memcpy(file.data() + dynamic_header_offset, &dynamic_header,
+              sizeof(dynamic_header));
+
+  auto write_dynamic = [&](std::size_t index, std::int64_t tag,
+                           std::uint64_t value) {
+    Elf64_Dyn entry{};
+    entry.d_tag = tag;
+    entry.d_un.d_val = value;
+    std::memcpy(file.data() + 0x1140 + index * sizeof(entry),
+                &entry, sizeof(entry));
+  };
+  write_dynamic(10, DT_INIT, 0x1004);
+  write_dynamic(11, DT_INIT_ARRAY, 0x1600);
+  write_dynamic(12, DT_INIT_ARRAYSZ, sizeof(std::uint64_t));
+  write_dynamic(13, DT_FINI_ARRAY, 0x1608);
+  write_dynamic(14, DT_FINI_ARRAYSZ, sizeof(std::uint64_t));
+  write_dynamic(15, DT_FINI, 0x1014);
+  write_dynamic(16, DT_NULL, 0);
+  return file;
 }
 
 }  // namespace
@@ -207,6 +255,50 @@ int main() {
               actual == 0x70000000ULL,
           "writes the resolved PLT target into guest memory");
   }
+
+  auto init_fini = BuildElfWithInitializers();
+  const auto loaded_init_fini = LoadA64Elf(init_fini);
+  Check(static_cast<bool>(loaded_init_fini),
+        "loads dynamic initializer/finalizer metadata");
+  if (loaded_init_fini) {
+    const auto& image = *loaded_init_fini.image;
+    Check(image.initializers ==
+              std::vector<std::uint64_t>{image.load_bias + 0x1004,
+                                         image.load_bias + 0x1008},
+          "collects DT_INIT before relocated DT_INIT_ARRAY entries");
+    Check(image.finalizers ==
+              std::vector<std::uint64_t>{image.load_bias + 0x1010,
+                                         image.load_bias + 0x1014},
+          "reverses DT_FINI_ARRAY entries before DT_FINI");
+  }
+
+  auto malformed_init_array = init_fini;
+  auto init_array_size = mocktail::translation::test::ReadDynamicEntry(
+      malformed_init_array, 12);
+  init_array_size.d_tag = DT_DEBUG;
+  mocktail::translation::test::WriteDynamicEntry(
+      malformed_init_array, 12, init_array_size);
+  const auto malformed_init_result = LoadA64Elf(malformed_init_array);
+  Check(!malformed_init_result &&
+            malformed_init_result.error.find(
+                "DT_INIT_ARRAY and its size tag must be provided together") !=
+                std::string::npos,
+        "rejects an initializer array missing its size tag");
+
+  auto invalid_init_pointer = init_fini;
+  Elf64_Rela invalid_fini_relocation{};
+  std::memcpy(&invalid_fini_relocation,
+              invalid_init_pointer.data() + 0x1118,
+              sizeof(invalid_fini_relocation));
+  invalid_fini_relocation.r_addend = 0x3000;
+  std::memcpy(invalid_init_pointer.data() + 0x1118,
+              &invalid_fini_relocation, sizeof(invalid_fini_relocation));
+  const auto invalid_init_result = LoadA64Elf(invalid_init_pointer);
+  Check(!invalid_init_result &&
+            invalid_init_result.error.find(
+                "DT_FINI_ARRAY contains an entry outside executable") !=
+                std::string::npos,
+        "rejects initializer/finalizer pointers outside executable memory");
 
   auto unsupported_relocation =
       mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
