@@ -101,6 +101,66 @@ int main() {
           "reads back writable guest memory");
   }
 
+  auto relocatable =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation();
+  auto loaded_relocatable = LoadA64Elf(relocatable);
+  Check(static_cast<bool>(loaded_relocatable),
+        "loads a PT_DYNAMIC image with an AArch64 RELATIVE relocation");
+  if (loaded_relocatable) {
+    auto& image = *loaded_relocatable.image;
+    std::uint64_t relocated_value = 0;
+    const auto relocation_slot = image.load_bias + 0x1500;
+    Check(image.Read(relocation_slot, &relocated_value,
+                     sizeof(relocated_value)),
+          "reads a relocated guest pointer");
+    Check(relocated_value == image.load_bias + 0x1000,
+          "applies R_AARCH64_RELATIVE as load-bias plus addend");
+    Check(image.soname == "libmock.so",
+          "extracts DT_SONAME from the guest string table");
+    Check(image.dependencies == std::vector<std::string>{"libc.so"},
+          "collects DT_NEEDED dependencies for later resolution");
+  }
+
+  auto unsupported_relocation =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
+          R_AARCH64_GLOB_DAT);
+  const auto unsupported_result = LoadA64Elf(unsupported_relocation);
+  Check(!unsupported_result &&
+            unsupported_result.error.find("unsupported AArch64 dynamic relocation") !=
+                std::string::npos,
+        "fails closed for symbol relocations that need a resolver");
+
+  auto bad_relocation_target =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
+          R_AARCH64_RELATIVE, 0x3000);
+  const auto bad_target_result = LoadA64Elf(bad_relocation_target);
+  Check(!bad_target_result &&
+            bad_target_result.error.find("writable PT_LOAD") != std::string::npos,
+        "rejects relocations targeting unmapped guest memory");
+
+  auto invalid_rela_entry_size =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation();
+  auto relaent = mocktail::translation::test::ReadDynamicEntry(
+      invalid_rela_entry_size, 2);
+  relaent.d_un.d_val = 1;
+  mocktail::translation::test::WriteDynamicEntry(
+      invalid_rela_entry_size, 2, relaent);
+  ExpectRejected(invalid_rela_entry_size,
+                 "rejects malformed DT_RELAENT metadata");
+
+  auto unterminated_dynamic =
+      mocktail::translation::test::BuildA64ElfWithRelativeRelocation();
+  auto last_dynamic = mocktail::translation::test::ReadDynamicEntry(
+      unterminated_dynamic, 7);
+  last_dynamic.d_tag = DT_DEBUG;
+  mocktail::translation::test::WriteDynamicEntry(
+      unterminated_dynamic, 7, last_dynamic);
+  const auto unterminated_result = LoadA64Elf(unterminated_dynamic);
+  Check(!unterminated_result &&
+            unterminated_result.error.find("does not end with DT_NULL") !=
+                std::string::npos,
+        "rejects a dynamic table without DT_NULL");
+
   ExpectRejected({}, "rejects a truncated ELF header");
   auto wrong_machine = valid;
   auto header = ReadElfHeader(wrong_machine);
