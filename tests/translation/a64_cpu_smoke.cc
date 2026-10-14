@@ -32,6 +32,10 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
   bool saw_breakpoint() const { return saw_breakpoint_; }
   const std::string& failure() const { return failure_; }
+  void SetReturnTrap(Address address, bool allow_any_breakpoint) {
+    return_trap_ = address;
+    allow_any_breakpoint_ = allow_any_breakpoint;
+  }
 
   std::optional<std::uint32_t> MemoryReadCode(Address address) override {
     if (!memory_.IsExecutable(address, sizeof(std::uint32_t))) {
@@ -125,10 +129,15 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
     Fail("unexpected SVC in the smoke program");
   }
 
-  void ExceptionRaised(Address, Dynarmic::A64::Exception exception) override {
+  void ExceptionRaised(Address address,
+                       Dynarmic::A64::Exception exception) override {
     if (exception == Dynarmic::A64::Exception::Breakpoint) {
-      saw_breakpoint_ = true;
-      Stop();
+      if (allow_any_breakpoint_ || address == return_trap_) {
+        saw_breakpoint_ = true;
+        Stop();
+      } else {
+        Fail("guest hit BRK before returning through the call trap");
+      }
       return;
     }
     Fail("unexpected guest CPU exception");
@@ -155,6 +164,8 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   A64GuestMemory& memory_;
   Dynarmic::A64::Jit* jit_ = nullptr;
   std::uint64_t ticks_ = 0;
+  Address return_trap_ = 0;
+  bool allow_any_breakpoint_ = true;
   bool saw_breakpoint_ = false;
   std::string failure_;
 };
@@ -166,12 +177,26 @@ int main(int argc, char** argv) {
   using mocktail::translation::LoadA64GuestModuleSet;
   using mocktail::translation::test::BuildMinimalA64Elf;
 
+  bool call_export = false;
+  std::string export_name;
+  int first_path = 1;
+  if (argc >= 2 && std::string(argv[1]) == "--symbol") {
+    if (argc < 4) {
+      std::cerr << "usage: mocktail_a64_translation_smoke [--symbol name] "
+                   "[root-aarch64-elf [dependency-elf ...]]\n";
+      return 2;
+    }
+    call_export = true;
+    export_name = argv[2];
+    first_path = 3;
+  }
+
   std::vector<A64GuestModuleSource> sources;
   if (argc == 1) {
     sources.push_back(
         {"libmocktail-a64-synthetic.so", BuildMinimalA64Elf()});
   } else {
-    for (int index = 1; index < argc; ++index) {
+    for (int index = first_path; index < argc; ++index) {
       const std::string path = argv[index];
       std::ifstream input(path, std::ios::binary);
       if (!input) {
@@ -192,6 +217,10 @@ int main(int argc, char** argv) {
       std::vector<std::uint8_t> bytes(raw_bytes.begin(), raw_bytes.end());
       sources.push_back({name, std::move(bytes)});
     }
+    if (sources.empty()) {
+      std::cerr << "no AArch64 ELF files were supplied\n";
+      return 2;
+    }
   }
 
   const auto loaded = LoadA64GuestModuleSet(sources, sources.front().name);
@@ -206,9 +235,33 @@ int main(int argc, char** argv) {
     return 1;
   }
   const auto& image = modules.modules[modules.root_index].image;
-  if (image.entry_point == 0) {
-    std::cerr << "AArch64 root module has no executable entry point\n";
+  Address start_address = image.entry_point;
+  if (call_export) {
+    const auto address = modules.ResolveExportedSymbol(export_name);
+    if (!address) {
+      std::cerr << "AArch64 guest export was not found: " << export_name
+                << '\n';
+      return 1;
+    }
+    start_address = *address;
+  } else if (start_address == 0) {
+    std::cerr << "AArch64 root module has no executable entry point; "
+                 "use --symbol to call an exported function\n";
     return 1;
+  }
+  if (!modules.modules[modules.root_index].image.IsExecutable(
+          start_address, sizeof(std::uint32_t))) {
+    bool in_other_module = false;
+    for (const auto& module : modules.modules) {
+      if (module.image.IsExecutable(start_address, sizeof(std::uint32_t))) {
+        in_other_module = true;
+        break;
+      }
+    }
+    if (!in_other_module) {
+      std::cerr << "AArch64 start address is not executable guest memory\n";
+      return 1;
+    }
   }
 
   A64GuestMemory memory;
@@ -230,7 +283,23 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  constexpr std::uint64_t kReturnTrap = 0x7FFF000000ULL;
+  if (call_export) {
+    if (!memory.Map(kReturnTrap, A64GuestMemory::kPageSize,
+                    A64GuestMemory::kRead | A64GuestMemory::kExecute,
+                    &memory_error)) {
+      std::cerr << "guest return-trap mapping failed: " << memory_error << '\n';
+      return 1;
+    }
+    const std::uint8_t trap[] = {0x00, 0x00, 0x20, 0xD4};  // brk #0
+    if (!memory.Initialize(kReturnTrap, trap, sizeof(trap))) {
+      std::cerr << "guest return-trap initialization failed\n";
+      return 1;
+    }
+  }
+
   SmokeMemory callbacks(memory);
+  callbacks.SetReturnTrap(kReturnTrap, !call_export);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
   config.enable_cycle_counting = false;
@@ -239,26 +308,30 @@ int main(int argc, char** argv) {
   callbacks.Attach(&cpu);
   cpu.SetSP(kStackBase + kStackSize - 16);
   const auto initial_stack_pointer = cpu.GetSP();
-  cpu.SetPC(image.entry_point);
+  if (call_export) {
+    cpu.SetRegister(0, 41);
+    cpu.SetRegister(30, kReturnTrap);
+  }
+  cpu.SetPC(start_address);
 
   static_cast<void>(cpu.Run());
-  if (!memory.failure().empty()) {
+  if (!callbacks.failure().empty()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-              << memory.failure() << '\n';
+              << callbacks.failure() << '\n';
     return 1;
   }
   if (!callbacks.saw_breakpoint()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-                 "BRK was not observed\n";
+                 "the stop breakpoint was not observed\n";
     return 1;
   }
   if (cpu.GetRegister(0) != 42) {
-    std::cerr << "AArch64 ELF/JIT integration smoke test failed: X0 was "
-              << cpu.GetRegister(0) << ", expected 42\n";
+    std::cerr << "AArch64 guest result register X0 was " << cpu.GetRegister(0)
+              << ", expected 42\n";
     return 1;
   }
-  if (cpu.GetRegister(1) != 42) {
-    std::cerr << "AArch64 guest result register was " << cpu.GetRegister(1)
+  if (!call_export && cpu.GetRegister(1) != 42) {
+    std::cerr << "AArch64 guest result register X1 was " << cpu.GetRegister(1)
               << ", expected 42\n";
     return 1;
   }
@@ -268,7 +341,8 @@ int main(int argc, char** argv) {
   }
 
   std::cout << "AArch64 guest module/JIT smoke test passed (modules="
-            << modules.modules.size()
-            << "; X0=X1=42; stack preserved)\n";
+            << modules.modules.size() << "; mode="
+            << (call_export ? "export" : "entry")
+            << "; X0=42; stack preserved)\n";
   return 0;
 }
