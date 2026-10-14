@@ -10,6 +10,7 @@
 #include <limits>
 #include <new>
 #include <utility>
+#include <vector>
 
 namespace mocktail::translation {
 namespace {
