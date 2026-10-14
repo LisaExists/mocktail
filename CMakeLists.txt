@@ -126,6 +126,52 @@ set(VULKAN_HEADERS_ENABLE_INSTALL OFF CACHE BOOL
 add_subdirectory(third_party/Vulkan-Headers EXCLUDE_FROM_ALL)
 
 include(CTest)
+
+# Experimental AArch64-on-x86 CPU translation prototype. Kept opt-in so the
+# normal Mocktail build remains unchanged and does not fetch extra sources.
+option(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION
+  "Build the experimental Dynarmic AArch64 CPU translation prototype" OFF)
+if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    message(FATAL_ERROR
+      "MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION currently requires an x86-64 host")
+  endif()
+
+  include(FetchContent)
+  set(DYNARMIC_TESTS OFF CACHE BOOL "Disable Dynarmic's own tests" FORCE)
+  set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL
+    "Disable Dynarmic Unicorn-based tests" FORCE)
+  set(DYNARMIC_FRONTENDS "A64" CACHE STRING
+    "Build only Dynarmic's AArch64 frontend" FORCE)
+  set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL
+    "Use Dynarmic's pinned external projects" FORCE)
+  set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL
+    "Avoid Dynarmic precompiled headers in the prototype build" FORCE)
+  set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL
+    "Do not promote upstream warnings to errors" FORCE)
+
+  FetchContent_Declare(mocktail_dynarmic
+    GIT_REPOSITORY https://github.com/azahar-emu/dynarmic.git
+    GIT_TAG        a46601580d5512d324104f985b5f0209dc980ddc
+    GIT_SUBMODULES_RECURSE TRUE
+  )
+  FetchContent_MakeAvailable(mocktail_dynarmic)
+
+  if(NOT TARGET dynarmic)
+    message(FATAL_ERROR "Dynarmic was fetched but did not define target 'dynarmic'")
+  endif()
+
+  add_executable(mocktail_a64_translation_smoke
+    tests/translation/a64_cpu_smoke.cc
+  )
+  target_link_libraries(mocktail_a64_translation_smoke PRIVATE dynarmic)
+
+  if(BUILD_TESTING)
+    add_test(NAME RobloxArmTranslation.CpuSmoke
+      COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
+  endif()
+endif()
+
 if(BUILD_TESTING)
   # Package builds disable tests and do not fetch Google Test.
   include(FetchContent)
