@@ -77,7 +77,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value),
         static_cast<std::uint8_t>(value >> 8U),
     };
-    if (!image_.Write(address, bytes, sizeof(bytes))) {
+    if (!memory_.Write(address, bytes, sizeof(bytes))) {
       Fail("guest write was outside a writable PT_LOAD segment");
     }
   }
@@ -89,7 +89,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value >> 16U),
         static_cast<std::uint8_t>(value >> 24U),
     };
-    if (!image_.Write(address, bytes, sizeof(bytes))) {
+    if (!memory_.Write(address, bytes, sizeof(bytes))) {
       Fail("guest write was outside a writable PT_LOAD segment");
     }
   }
@@ -105,7 +105,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value >> 48U),
         static_cast<std::uint8_t>(value >> 56U),
     };
-    if (!image_.Write(address, bytes, sizeof(bytes))) {
+    if (!memory_.Write(address, bytes, sizeof(bytes))) {
       Fail("guest write was outside a writable PT_LOAD segment");
     }
   }
