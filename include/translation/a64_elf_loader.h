@@ -28,6 +28,8 @@ struct A64LoadedImage final {
   std::uint64_t entry_point = 0;
   std::uint64_t base_address = 0;
   std::uint64_t image_size = 0;
+  std::string soname;
+  std::vector<std::string> dependencies;
   std::vector<A64LoadSegment> segments;
 
   // Reads loaded segments, including across adjacent segments. Returns false
@@ -49,6 +51,8 @@ struct A64ElfLoadOptions final {
   // Bounds the total image span and aggregate mapped segment bytes.
   std::size_t max_image_size = 512U * 1024U * 1024U;
   std::size_t max_program_headers = 4096;
+  std::size_t max_dynamic_entries = 1U * 1024U * 1024U;
+  std::size_t max_relocations = 4U * 1024U * 1024U;
 };
 
 struct A64ElfLoadResult final {
@@ -60,9 +64,10 @@ struct A64ElfLoadResult final {
   }
 };
 
-// Loads ELF64 little-endian AArch64 ET_DYN/ET_EXEC files from bytes. This maps
-// PT_LOAD data and BSS only; dynamic relocations, dependencies, TLS and full
-// process setup are not implemented by this first loader milestone.
+// Loads ELF64 little-endian AArch64 ET_DYN/ET_EXEC images. Maps PT_LOAD data
+// and BSS, collects DT_NEEDED/DT_SONAME metadata, and applies R_AARCH64_RELATIVE
+// relocations. Symbol-based relocations, dependency loading, TLS and full
+// process setup are not implemented yet. Unsupported relocations fail closed.
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options = {});
 
