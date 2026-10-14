@@ -35,6 +35,14 @@ if(MOCKTAIL_TEST_PYTHON AND MOCKTAIL_TEST_OPENSSL)
   set_tests_properties(FleasionIntegrationTest.ProxyAndTrust PROPERTIES TIMEOUT 45)
 endif()
 
+if(MOCKTAIL_TEST_PYTHON)
+  add_test(
+    NAME RobloxArmTranslation.Preflight
+    COMMAND ${MOCKTAIL_TEST_PYTHON}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_roblox_arm_preflight.py
+  )
+endif()
+
 add_executable(runtime_config_file_test runtime_config_file_test.cc)
 target_link_libraries(runtime_config_file_test PRIVATE
   Mocktail::Runtime
