@@ -291,7 +291,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,--hash-style=both
               -Wl,-soname,libmocktail-a64-module-root.so
               -Wl,--no-as-needed
-              -L"${CMAKE_CURRENT_BINARY_DIR}"
+              "-L${CMAKE_CURRENT_BINARY_DIR}"
               -o "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_module_root.S"
               -lmocktail-a64-module-dependency
@@ -309,7 +309,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,--hash-style=both
               -Wl,-soname,libmocktail-a64-module-function-root.so
               -Wl,--no-as-needed
-              -L"${CMAKE_CURRENT_BINARY_DIR}"
+              "-L${CMAKE_CURRENT_BINARY_DIR}"
               -o "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_function_root.S"
               -lmocktail-a64-module-dependency
