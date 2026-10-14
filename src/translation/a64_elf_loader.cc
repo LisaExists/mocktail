@@ -47,6 +47,274 @@ bool FileRangeWithin(std::uint64_t offset, std::uint64_t length,
   return length <= static_cast<std::uint64_t>(file_size) - offset;
 }
 
+bool AddSignedOffset(std::uint64_t base, std::int64_t offset,
+                     std::uint64_t* result) noexcept {
+  if (offset >= 0) {
+    const auto positive = static_cast<std::uint64_t>(offset);
+    if (AddOverflows(base, positive)) return false;
+    *result = base + positive;
+    return true;
+  }
+
+  // Avoid negating INT64_MIN directly.
+  const auto magnitude =
+      static_cast<std::uint64_t>(-(offset + 1)) + 1U;
+  if (base < magnitude) return false;
+  *result = base - magnitude;
+  return true;
+}
+
+struct DynamicMetadata final {
+  std::optional<std::uint64_t> rela_address;
+  std::optional<std::uint64_t> rela_size;
+  std::optional<std::uint64_t> rela_entry_size;
+  std::optional<std::uint64_t> strtab_address;
+  std::optional<std::uint64_t> strtab_size;
+  std::optional<std::uint64_t> soname_offset;
+  std::vector<std::uint64_t> needed_offsets;
+  std::uint64_t plt_relocation_size = 0;
+  std::uint64_t rel_size = 0;
+  bool text_relocations = false;
+  bool packed_relocations = false;
+};
+
+bool ReadDynamicString(const A64LoadedImage& image,
+                       std::uint64_t load_bias,
+                       std::uint64_t strtab_address,
+                       std::uint64_t strtab_size,
+                       std::uint64_t string_offset,
+                       std::string* result,
+                       std::string* error) {
+  if (string_offset >= strtab_size) {
+    *error = "dynamic string offset is outside DT_STRTAB";
+    return false;
+  }
+  if (AddOverflows(load_bias, strtab_address)) {
+    *error = "relocated DT_STRTAB address overflows";
+    return false;
+  }
+
+  const std::uint64_t available = strtab_size - string_offset;
+  const std::uint64_t string_address =
+      load_bias + strtab_address + string_offset;
+  constexpr std::uint64_t kMaximumDynamicStringLength = 4096;
+  const auto limit = std::min(available, kMaximumDynamicStringLength);
+  result->clear();
+  result->reserve(static_cast<std::size_t>(std::min<std::uint64_t>(limit, 256)));
+
+  for (std::uint64_t index = 0; index < limit; ++index) {
+    if (AddOverflows(string_address, index)) {
+      *error = "dynamic string address overflows";
+      return false;
+    }
+    char character = '\0';
+    if (!image.Read(string_address + index, &character, sizeof(character))) {
+      *error = "DT_STRTAB points outside loaded PT_LOAD segments";
+      return false;
+    }
+    if (character == '\0') return true;
+    result->push_back(character);
+  }
+
+  *error = "dynamic string is unterminated or exceeds 4096 bytes";
+  return false;
+}
+
+std::string ApplyDynamicMetadataAndRelocations(
+    A64LoadedImage* image, const Elf64_Phdr& dynamic_header,
+    const A64ElfLoadOptions& options) {
+  if (dynamic_header.p_filesz == 0 ||
+      dynamic_header.p_filesz % sizeof(Elf64_Dyn) != 0) {
+    return "PT_DYNAMIC has an empty or mis-sized dynamic table";
+  }
+  const auto entry_count = dynamic_header.p_filesz / sizeof(Elf64_Dyn);
+  if (entry_count > options.max_dynamic_entries) {
+    return "PT_DYNAMIC entry count exceeds the configured limit";
+  }
+  if (AddOverflows(dynamic_header.p_vaddr, image->load_bias)) {
+    return "relocated PT_DYNAMIC address overflows";
+  }
+
+  const auto dynamic_address = dynamic_header.p_vaddr + image->load_bias;
+  DynamicMetadata metadata;
+  bool terminated = false;
+
+  for (std::uint64_t index = 0; index < entry_count; ++index) {
+    if (index > std::numeric_limits<std::uint64_t>::max() /
+                    sizeof(Elf64_Dyn)) {
+      return "PT_DYNAMIC entry offset overflows";
+    }
+    const auto entry_offset = index * sizeof(Elf64_Dyn);
+    if (AddOverflows(dynamic_address, entry_offset)) {
+      return "PT_DYNAMIC guest address overflows";
+    }
+    Elf64_Dyn entry{};
+    if (!image->Read(dynamic_address + entry_offset, &entry, sizeof(entry))) {
+      return "PT_DYNAMIC is not fully contained in loaded PT_LOAD memory";
+    }
+    if (entry.d_tag == DT_NULL) {
+      terminated = true;
+      break;
+    }
+
+    const auto value = entry.d_un.d_val;
+    switch (entry.d_tag) {
+      case DT_RELA:
+        if (metadata.rela_address) return "duplicate DT_RELA tag";
+        metadata.rela_address = entry.d_un.d_ptr;
+        break;
+      case DT_RELASZ:
+        if (metadata.rela_size) return "duplicate DT_RELASZ tag";
+        metadata.rela_size = value;
+        break;
+      case DT_RELAENT:
+        if (metadata.rela_entry_size) return "duplicate DT_RELAENT tag";
+        metadata.rela_entry_size = value;
+        break;
+      case DT_STRTAB:
+        if (metadata.strtab_address) return "duplicate DT_STRTAB tag";
+        metadata.strtab_address = entry.d_un.d_ptr;
+        break;
+      case DT_STRSZ:
+        if (metadata.strtab_size) return "duplicate DT_STRSZ tag";
+        metadata.strtab_size = value;
+        break;
+      case DT_SONAME:
+        if (metadata.soname_offset) return "duplicate DT_SONAME tag";
+        metadata.soname_offset = value;
+        break;
+      case DT_NEEDED:
+        metadata.needed_offsets.push_back(value);
+        break;
+      case DT_PLTRELSZ:
+        metadata.plt_relocation_size = value;
+        break;
+      case DT_RELSZ:
+        metadata.rel_size = value;
+        break;
+      case DT_TEXTREL:
+        metadata.text_relocations = true;
+        break;
+      case DT_FLAGS:
+        if ((value & DF_TEXTREL) != 0) metadata.text_relocations = true;
+        break;
+      default:
+        // DT_RELR and Android's packed relocation tags cannot be ignored:
+        // doing so would leave pointers in the guest image unrelocated.
+        if (entry.d_tag == 35 || entry.d_tag == 36 || entry.d_tag == 37 ||
+            (entry.d_tag >= 0x6000000f && entry.d_tag <= 0x60000012) ||
+            (entry.d_tag >= 0x6fffe000 && entry.d_tag <= 0x6fffe003)) {
+          metadata.packed_relocations = true;
+        }
+        break;
+    }
+  }
+
+  if (!terminated) return "PT_DYNAMIC does not end with DT_NULL";
+  if (metadata.text_relocations) {
+    return "ELF requires text relocations, which this loader does not permit";
+  }
+  if (metadata.packed_relocations) {
+    return "packed DT_RELR/Android relocations are not supported yet";
+  }
+  if (metadata.rel_size != 0) {
+    return "AArch64 DT_REL relocations are unsupported; DT_RELA is required";
+  }
+  if (metadata.plt_relocation_size != 0) {
+    return "DT_JMPREL/PLT relocations require symbol resolution, not implemented yet";
+  }
+
+  const bool any_rela_tag = metadata.rela_address.has_value() ||
+                            metadata.rela_size.has_value() ||
+                            metadata.rela_entry_size.has_value();
+  if (any_rela_tag &&
+      (!metadata.rela_address || !metadata.rela_size ||
+       !metadata.rela_entry_size)) {
+    return "DT_RELA, DT_RELASZ and DT_RELAENT must be provided together";
+  }
+
+  const bool has_dynamic_strings = !metadata.needed_offsets.empty() ||
+                                   metadata.soname_offset.has_value();
+  if (has_dynamic_strings) {
+    if (!metadata.strtab_address || !metadata.strtab_size ||
+        *metadata.strtab_size == 0) {
+      return "DT_NEEDED/DT_SONAME metadata requires DT_STRTAB and DT_STRSZ";
+    }
+    std::string string_error;
+    if (metadata.soname_offset) {
+      if (!ReadDynamicString(*image, image->load_bias,
+                             *metadata.strtab_address, *metadata.strtab_size,
+                             *metadata.soname_offset, &image->soname,
+                             &string_error)) {
+        return string_error;
+      }
+    }
+    for (const auto offset : metadata.needed_offsets) {
+      std::string dependency;
+      if (!ReadDynamicString(*image, image->load_bias,
+                             *metadata.strtab_address, *metadata.strtab_size,
+                             offset, &dependency, &string_error)) {
+        return string_error;
+      }
+      if (dependency.empty()) return "DT_NEEDED contains an empty dependency name";
+      image->dependencies.push_back(std::move(dependency));
+    }
+  }
+
+  if (!any_rela_tag || *metadata.rela_size == 0) return {};
+
+  if (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
+      *metadata.rela_size % sizeof(Elf64_Rela) != 0) {
+    return "DT_RELAENT/DT_RELASZ do not describe a valid Elf64_Rela table";
+  }
+  const auto relocation_count = *metadata.rela_size / sizeof(Elf64_Rela);
+  if (relocation_count > options.max_relocations) {
+    return "dynamic relocation count exceeds the configured limit";
+  }
+  if (AddOverflows(image->load_bias, *metadata.rela_address)) {
+    return "relocated DT_RELA address overflows";
+  }
+  const auto relocation_table = image->load_bias + *metadata.rela_address;
+
+  for (std::uint64_t index = 0; index < relocation_count; ++index) {
+    const auto offset = index * sizeof(Elf64_Rela);
+    if (AddOverflows(relocation_table, offset)) {
+      return "DT_RELA entry address overflows";
+    }
+    Elf64_Rela relocation{};
+    if (!image->Read(relocation_table + offset, &relocation,
+                     sizeof(relocation))) {
+      return "DT_RELA table is outside loaded PT_LOAD segments";
+    }
+
+    const auto type = ELF64_R_TYPE(relocation.r_info);
+    const auto symbol = ELF64_R_SYM(relocation.r_info);
+    if (type == R_AARCH64_NONE) continue;
+    if (type != R_AARCH64_RELATIVE) {
+      return "unsupported AArch64 dynamic relocation type " +
+             std::to_string(type);
+    }
+    if (symbol != 0) {
+      return "R_AARCH64_RELATIVE relocation unexpectedly references a symbol";
+    }
+
+    if (AddOverflows(image->load_bias, relocation.r_offset)) {
+      return "relocation target address overflows";
+    }
+    const auto target = image->load_bias + relocation.r_offset;
+    std::uint64_t relocated_value = 0;
+    if (!AddSignedOffset(image->load_bias, relocation.r_addend,
+                         &relocated_value)) {
+      return "R_AARCH64_RELATIVE result address overflows";
+    }
+    if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
+      return "relocation target is not contained in writable PT_LOAD memory";
+    }
+  }
+
+  return {};
+}
+
 }  // namespace
 
 bool A64LoadedImage::Read(std::uint64_t address, void* destination,
@@ -126,7 +394,8 @@ bool A64LoadedImage::IsExecutable(std::uint64_t address,
 
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options) {
-  if (options.max_image_size == 0 || options.max_program_headers == 0) {
+  if (options.max_image_size == 0 || options.max_program_headers == 0 ||
+      options.max_dynamic_entries == 0 || options.max_relocations == 0) {
     return Failure("ELF load limits must be greater than zero");
   }
   if (file.size() < sizeof(Elf64_Ehdr)) {
@@ -175,6 +444,7 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
 
   std::vector<Elf64_Phdr> load_headers;
   load_headers.reserve(header.e_phnum);
+  std::optional<Elf64_Phdr> dynamic_header;
   std::uint64_t minimum_virtual_address =
       std::numeric_limits<std::uint64_t>::max();
   std::uint64_t maximum_virtual_end = 0;
@@ -188,6 +458,28 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
     Elf64_Phdr program_header{};
     std::memcpy(&program_header, file.data() + offset,
                 sizeof(program_header));
+    if (program_header.p_type == PT_DYNAMIC) {
+      if (dynamic_header) return Failure("ELF contains multiple PT_DYNAMIC segments");
+      if (program_header.p_filesz == 0 ||
+          program_header.p_filesz > program_header.p_memsz) {
+        return Failure("PT_DYNAMIC has invalid file/memory sizes");
+      }
+      if (!FileRangeWithin(program_header.p_offset, program_header.p_filesz,
+                           file.size())) {
+        return Failure("PT_DYNAMIC file range is out of bounds");
+      }
+      if (program_header.p_filesz % sizeof(Elf64_Dyn) != 0) {
+        return Failure("PT_DYNAMIC size is not a whole number of dynamic entries");
+      }
+      if (program_header.p_filesz / sizeof(Elf64_Dyn) >
+          options.max_dynamic_entries) {
+        return Failure("PT_DYNAMIC entry count exceeds the configured limit");
+      }
+      if (AddOverflows(program_header.p_vaddr, program_header.p_memsz)) {
+        return Failure("PT_DYNAMIC virtual-address range overflows");
+      }
+      dynamic_header = program_header;
+    }
     if (program_header.p_type != PT_LOAD) continue;
 
     if (program_header.p_memsz == 0) {
@@ -325,6 +617,12 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
     if (!image.IsExecutable(image.entry_point, sizeof(std::uint32_t))) {
       return Failure("ELF entry point is outside an executable PT_LOAD segment");
     }
+  }
+
+  if (dynamic_header) {
+    const auto dynamic_error =
+        ApplyDynamicMetadataAndRelocations(&image, *dynamic_header, options);
+    if (!dynamic_error.empty()) return Failure(dynamic_error);
   }
 
   return A64ElfLoadResult{std::move(image), {}};
