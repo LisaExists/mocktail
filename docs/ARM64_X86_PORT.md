@@ -23,6 +23,7 @@ A CPU translator alone solves none of the JNI, Bionic, Android API, or graphics 
 - [x] Add a dependency-free tool to inspect packaged native ABIs and verify each library's ELF machine field.
 - [ ] Capture preflight output for the exact Delta package and identify whether it is monolithic or split.
 - [ ] Build this fork unchanged on x86-64 and save configure/build logs.
+- [ ] Integrate Dynarmic as an optional development dependency and wire `tests/translation/a64_cpu_smoke.cc` into CMake; the source-level smoke test is not built or verified yet.
 - [ ] Select an execution model and prove it with a small, non-Roblox AArch64 ELF.
 - [ ] Add guest-memory, loader, and calling-convention support; don't enable ARM64 payload selection before this exists.
 - [ ] Integrate and test JNI, Android ABI, thread/TLS, and graphics bridges.
