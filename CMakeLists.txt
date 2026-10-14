@@ -267,11 +267,68 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     )
     add_custom_target(mocktail_a64_guest_elf_fixture
       DEPENDS "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+
+    set(MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-a64-module-dependency.so")
+    set(MOCKTAIL_A64_MODULE_ROOT_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-a64-module-root.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-module-dependency.so
+              -o "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_module_dependency.S"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_module_dependency.S"
+      VERBATIM
+    )
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,-e,_start
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-module-root.so
+              -Wl,--no-as-needed
+              -L"${CMAKE_CURRENT_BINARY_DIR}"
+              -o "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_module_root.S"
+              -lmocktail-a64-module-dependency
+      DEPENDS
+        "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_module_root.S"
+        "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+      VERBATIM
+    )
+    add_custom_target(mocktail_a64_guest_module_fixtures
+      DEPENDS
+        "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+        "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     add_dependencies(mocktail_a64_translation_smoke
-      mocktail_a64_guest_elf_fixture)
+      mocktail_a64_guest_elf_fixture
+      mocktail_a64_guest_module_fixtures)
   endif()
 
   if(BUILD_TESTING)
+    add_test(NAME RobloxArmTranslation.CpuSmoke
+      COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
+    add_test(NAME RobloxArmTranslation.ElfLoader
+      COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
+    add_test(NAME RobloxArmTranslation.GuestMemory
+      COMMAND $<TARGET_FILE:mocktail_a64_guest_memory_test>)
+    add_test(NAME RobloxArmTranslation.GuestModuleLoader
+      COMMAND $<TARGET_FILE:mocktail_a64_guest_module_loader_test>)
+    if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
+      add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.RealElfModuleSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
+                "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+    endif()
+  endif()
+
     add_test(NAME RobloxArmTranslation.CpuSmoke
       COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
     add_test(NAME RobloxArmTranslation.ElfLoader
