@@ -500,8 +500,10 @@ std::string CollectDynamicExports(
       }
 
       image->exported_symbols.push_back(A64ExportedSymbol{
-          std::move(name), guest_address, symbol.st_size, binding, type,
-          visibility});
+          std::move(name), guest_address, symbol.st_size,
+          static_cast<std::uint8_t>(binding),
+          static_cast<std::uint8_t>(type),
+          static_cast<std::uint8_t>(visibility)});
     }
   } catch (const std::bad_alloc&) {
     return "not enough memory to collect bounded dynamic symbols";
