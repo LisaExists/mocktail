@@ -385,6 +385,124 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
   return true;
 }
 
+std::string CollectDynamicExports(
+    A64LoadedImage* image, const DynamicMetadata& metadata,
+    const A64ElfLoadOptions& options) {
+  const bool any_symbol_table = metadata.symtab_address.has_value() ||
+                                metadata.symtab_entry_size.has_value() ||
+                                metadata.hash_address.has_value() ||
+                                metadata.gnu_hash_address.has_value();
+  if (!any_symbol_table) return {};
+
+  if (!metadata.symtab_address || !metadata.symtab_entry_size ||
+      *metadata.symtab_entry_size != sizeof(Elf64_Sym) ||
+      !metadata.strtab_address || !metadata.strtab_size ||
+      *metadata.strtab_size == 0) {
+    return "dynamic symbol exports require valid DT_SYMTAB/DT_SYMENT/"
+           "DT_STRTAB/DT_STRSZ metadata";
+  }
+
+  std::uint64_t symbol_count = 0;
+  std::string error;
+  if (!GetDynamicSymbolCount(*image, metadata, options, &symbol_count,
+                             &error)) {
+    return error;
+  }
+
+  try {
+    image->exported_symbols.clear();
+    image->exported_symbols.reserve(
+        static_cast<std::size_t>(symbol_count));
+    for (std::uint64_t index = 0; index < symbol_count; ++index) {
+      if (index > std::numeric_limits<std::uint64_t>::max() /
+                      sizeof(Elf64_Sym)) {
+        return "dynamic symbol table entry offset overflows";
+      }
+      const auto symbol_offset = index * sizeof(Elf64_Sym);
+      if (AddOverflows(*metadata.symtab_address, symbol_offset) ||
+          AddOverflows(image->load_bias,
+                       *metadata.symtab_address + symbol_offset)) {
+        return "dynamic symbol table address overflows";
+      }
+      Elf64_Sym symbol{};
+      const auto symbol_address =
+          image->load_bias + *metadata.symtab_address + symbol_offset;
+      if (!image->Read(symbol_address, &symbol, sizeof(symbol))) {
+        return "dynamic symbol table entry is outside loaded PT_LOAD segments";
+      }
+
+      if (symbol.st_shndx == SHN_UNDEF || symbol.st_shndx == SHN_COMMON ||
+          symbol.st_shndx == SHN_XINDEX) {
+        continue;
+      }
+      const auto binding = ELF64_ST_BIND(symbol.st_info);
+      if (binding != STB_GLOBAL && binding != STB_WEAK
+#ifdef STB_GNU_UNIQUE
+          && binding != STB_GNU_UNIQUE
+#endif
+      ) {
+        continue;
+      }
+      const auto visibility = ELF64_ST_VISIBILITY(symbol.st_other);
+      if (visibility != STV_DEFAULT && visibility != STV_PROTECTED) continue;
+
+      const auto type = ELF64_ST_TYPE(symbol.st_info);
+      if (type == STT_TLS) continue;
+#ifdef STT_GNU_IFUNC
+      if (type == STT_GNU_IFUNC) continue;
+#endif
+
+      if (metadata.versym_address) {
+        if (index > std::numeric_limits<std::uint64_t>::max() /
+                        sizeof(Elf64_Half)) {
+          return "dynamic symbol-version offset overflows";
+        }
+        const auto version_offset = index * sizeof(Elf64_Half);
+        if (AddOverflows(*metadata.versym_address, version_offset) ||
+            AddOverflows(image->load_bias,
+                         *metadata.versym_address + version_offset)) {
+          return "dynamic symbol-version address overflows";
+        }
+        Elf64_Half version_index = 0;
+        if (!image->Read(image->load_bias + *metadata.versym_address +
+                             version_offset,
+                         &version_index, sizeof(version_index))) {
+          return "DT_VERSYM entry is outside loaded PT_LOAD segments";
+        }
+        if ((version_index & 0x7fffU) > 1) continue;
+      }
+
+      std::string name;
+      if (!ReadDynamicString(*image, image->load_bias,
+                             *metadata.strtab_address, *metadata.strtab_size,
+                             symbol.st_name, &name, &error)) {
+        return error;
+      }
+      if (name.empty()) continue;
+
+      std::uint64_t guest_address = symbol.st_value;
+      if (symbol.st_shndx != SHN_ABS) {
+        if (AddOverflows(image->load_bias, symbol.st_value)) {
+          return "dynamic symbol guest address overflows";
+        }
+        guest_address = image->load_bias + symbol.st_value;
+      }
+      if (type == STT_FUNC &&
+          !image->IsExecutable(guest_address, sizeof(std::uint32_t))) {
+        return "exported function '" + name +
+               "' does not point into executable PT_LOAD memory";
+      }
+
+      image->exported_symbols.push_back(A64ExportedSymbol{
+          std::move(name), guest_address, symbol.st_size, binding, type,
+          visibility});
+    }
+  } catch (const std::bad_alloc&) {
+    return "not enough memory to collect bounded dynamic symbols";
+  }
+  return {};
+}
+
 class Sleb128Decoder final {
  public:
   Sleb128Decoder(const std::uint8_t* bytes, std::size_t size)
@@ -857,6 +975,9 @@ std::string ApplyDynamicMetadataAndRelocations(
       image->dependencies.push_back(std::move(dependency));
     }
   }
+
+  const auto exports_error = CollectDynamicExports(image, metadata, options);
+  if (!exports_error.empty()) return exports_error;
 
   const bool has_android_rela =
       metadata.android_rela_address && metadata.android_rela_size &&
