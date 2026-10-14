@@ -329,20 +329,6 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     endif()
   endif()
 
-    add_test(NAME RobloxArmTranslation.CpuSmoke
-      COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>)
-    add_test(NAME RobloxArmTranslation.ElfLoader
-      COMMAND $<TARGET_FILE:mocktail_a64_elf_loader_test>)
-    add_test(NAME RobloxArmTranslation.GuestMemory
-      COMMAND $<TARGET_FILE:mocktail_a64_guest_memory_test>)
-    add_test(NAME RobloxArmTranslation.GuestModuleLoader
-      COMMAND $<TARGET_FILE:mocktail_a64_guest_module_loader_test>)
-    if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
-      add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
-        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
-                "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
-    endif()
-  endif()
 endif()
 
 if(BUILD_TESTING)
