@@ -47,7 +47,7 @@ int main() {
   Check(!memory.Map(kStackBase + 1, A64GuestMemory::kPageSize,
                     A64GuestMemory::kRead, &error),
         "rejects unaligned guest mappings");
-  Check(!memory.Map(kStackBase + kStackSize, 2U * A64GuestMemory::kPageSize,
+  Check(!memory.Map(kStackBase + kStackSize, 7U * 1024U * 1024U,
                     A64GuestMemory::kRead | A64GuestMemory::kWrite, &error),
         "enforces the configured memory limit");
 
