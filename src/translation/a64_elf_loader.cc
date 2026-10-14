@@ -747,7 +747,11 @@ std::string CollectDynamicInitializersAndFinalizers(
     if (!image->IsExecutable(address, sizeof(std::uint32_t))) {
       return std::string(tag) + " does not point into executable PT_LOAD memory";
     }
-    destination->push_back(address);
+    try {
+      destination->push_back(address);
+    } catch (const std::bad_alloc&) {
+      return std::string("not enough memory to append ") + tag;
+    }
     return {};
   };
 
@@ -1105,7 +1109,9 @@ std::string ApplyDynamicMetadataAndRelocations(
       metadata.plt_relocation_size && *metadata.plt_relocation_size != 0;
   const bool has_main_relocations = any_rela_tag && *metadata.rela_size != 0;
   if (!has_android_rela && !has_relr &&
-      !has_main_relocations && !has_plt_relocations) return {};
+      !has_main_relocations && !has_plt_relocations) {
+    return CollectDynamicInitializersAndFinalizers(image, metadata, options);
+  }
 
   if (has_main_relocations &&
       (*metadata.rela_entry_size != sizeof(Elf64_Rela) ||
@@ -1319,7 +1325,7 @@ std::string ApplyDynamicMetadataAndRelocations(
     if (!error.empty()) return error;
   }
 
-  return {};
+  return CollectDynamicInitializersAndFinalizers(image, metadata, options);
 }
 
 }  // namespace
