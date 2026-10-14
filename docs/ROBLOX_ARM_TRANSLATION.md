@@ -22,7 +22,7 @@ When configured with `-DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON`, CMake fetche
 
 On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target.
 
-The bounded ELF64 loader now maps AArch64 `PT_LOAD` segments and zero-initializes BSS, applies `R_AARCH64_RELATIVE` relocations, and extracts `DT_NEEDED`/`DT_SONAME` metadata. It rejects unsupported symbol relocations, PLT relocations, text relocations, and packed RELR/Android relocation tables rather than treating an incompletely relocated image as runnable. A branch-specific GitHub Actions workflow builds the loader tests and Dynarmic smoke target on x86-64.
+The bounded ELF64 loader maps AArch64 `PT_LOAD` segments and zero-initializes BSS, extracts `DT_NEEDED`/`DT_SONAME`, and supports `R_AARCH64_RELATIVE`, `R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` RELA relocations. Undefined symbols must be resolved by an explicit callback that returns a guest address; the loader never casts a guest pointer to a host pointer. SysV/GNU hash metadata bounds symbol lookup. Versioned symbols, TLS symbols, IFUNCs, text relocations, and packed RELR/Android relocation tables remain unsupported and fail closed. A branch-specific GitHub Actions workflow builds the loader tests and Dynarmic smoke target on x86-64.
 
 ## Architecture options to evaluate
 
@@ -38,11 +38,12 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add an optional, pinned Dynarmic dependency and an isolated AArch64 CPU smoke target.
 - [x] Add a bounded ELF64 little-endian AArch64 loader for PT_LOAD segments, including BSS zero-fill, ET_DYN load bias, entry-point validation and read/write bounds checks.
 - [x] Run the Dynarmic smoke instructions from a synthetic ELF image instead of a raw byte array.
-- [x] Parse DT_NEEDED/DT_SONAME and apply bounded R_AARCH64_RELATIVE relocations.
-- [x] Fail closed for unsupported symbol/PLT/packed relocations and text relocations.
+- [x] Parse DT_NEEDED/DT_SONAME and apply bounded AArch64 RELATIVE, ABS64, GLOB_DAT and JUMP_SLOT RELA relocations.
+- [x] Add bounded SysV/GNU hash-based symbol counts and explicit undefined-symbol resolver callbacks.
+- [x] Fail closed for unsupported/packed relocation formats, symbol versions, TLS symbols, IFUNCs and text relocations.
 - [x] Add branch-specific CI for the synthetic ELF and Dynarmic tests.
 - [ ] Confirm the new branch CI succeeds on a clean x86-64 Linux host.
-- [ ] Implement bounded symbol-table lookup, dependency loading, and symbol-based AArch64 relocations.
+- [ ] Build a multi-image dependency resolver and support the Android symbol-versioning conventions in the actual libraries.
 - [ ] Select and implement a full guest address-space model for stacks, heaps, TLS, guard pages and permissions.
 - [ ] Add explicit guest-to-host calling conventions, syscalls, TLS and guest-thread scheduling.
 - [ ] Integrate and test the Android/Bionic and graphics boundaries.
