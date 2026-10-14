@@ -137,6 +137,19 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       "MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION currently requires an x86-64 host")
   endif()
 
+  # Dynarmic still requires Boost headers. Prefer Boost's config package
+  # on modern CMake; fall back to FindBoost on older CMake versions.
+  if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+  endif()
+  find_package(Boost 1.57 QUIET)
+  if(NOT Boost_FOUND)
+    message(FATAL_ERROR
+      "Roblox ARM translation requires Boost development headers (version 1.57 or newer). "
+      "On Arch/CachyOS install the 'boost' package (for example: "
+      "'sudo pacman -S --needed boost'), then rerun CMake.")
+  endif()
+
   include(FetchContent)
   set(DYNARMIC_TESTS OFF CACHE BOOL "Disable Dynarmic's own tests" FORCE)
   set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL
