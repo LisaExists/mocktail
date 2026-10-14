@@ -46,6 +46,11 @@ struct A64LoadedImage final {
   // symbols are intentionally omitted until Android symbol-version semantics
   // are implemented by the guest linker.
   std::vector<A64ExportedSymbol> exported_symbols;
+  // Dynamic initializer functions in ELF loader call order and finalizers in
+  // reverse-construction order. Values are guest virtual addresses, not host
+  // pointers; callers must execute them only after dependencies are mapped.
+  std::vector<std::uint64_t> initializers;
+  std::vector<std::uint64_t> finalizers;
   std::vector<A64LoadSegment> segments;
 
   // Reads loaded segments, including across adjacent segments. Returns false
