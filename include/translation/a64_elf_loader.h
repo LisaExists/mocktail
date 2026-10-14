@@ -57,6 +57,7 @@ struct A64ElfLoadOptions final {
   std::size_t max_program_headers = 4096;
   std::size_t max_dynamic_entries = 1U * 1024U * 1024U;
   std::size_t max_relocations = 4U * 1024U * 1024U;
+  std::size_t max_packed_relocation_bytes = 64U * 1024U * 1024U;
   std::size_t max_symbols = 1U * 1024U * 1024U;
   // Resolves undefined guest symbols to guest addresses in already-loaded
   // modules or explicit host-call thunks. No implicit host pointer conversion.
