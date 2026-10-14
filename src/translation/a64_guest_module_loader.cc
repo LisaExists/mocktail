@@ -50,7 +50,7 @@ bool AddAlias(std::map<std::string, std::size_t>* aliases,
 }  // namespace
 
 const A64GuestModule* A64GuestModuleSet::FindModule(
-    const std::string& name) const noexcept {
+    const std::string& name) const {
   const auto basename = Basename(name);
   for (const auto& module : modules) {
     if (module.source_name == name || Basename(module.source_name) == basename ||
