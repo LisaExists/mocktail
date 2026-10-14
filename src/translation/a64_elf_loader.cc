@@ -81,6 +81,12 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> hash_address;
   std::optional<std::uint64_t> gnu_hash_address;
   std::optional<std::uint64_t> versym_address;
+  std::optional<std::uint64_t> init_address;
+  std::optional<std::uint64_t> fini_address;
+  std::optional<std::uint64_t> init_array_address;
+  std::optional<std::uint64_t> init_array_size;
+  std::optional<std::uint64_t> fini_array_address;
+  std::optional<std::uint64_t> fini_array_size;
   std::vector<std::uint64_t> needed_offsets;
   std::optional<std::uint64_t> jmprel_address;
   std::optional<std::uint64_t> plt_relocation_size;
@@ -808,6 +814,30 @@ std::string ApplyDynamicMetadataAndRelocations(
       case DT_VERSYM:
         if (metadata.versym_address) return "duplicate DT_VERSYM tag";
         metadata.versym_address = entry.d_un.d_ptr;
+        break;
+      case DT_INIT:
+        if (metadata.init_address) return "duplicate DT_INIT tag";
+        metadata.init_address = entry.d_un.d_ptr;
+        break;
+      case DT_FINI:
+        if (metadata.fini_address) return "duplicate DT_FINI tag";
+        metadata.fini_address = entry.d_un.d_ptr;
+        break;
+      case DT_INIT_ARRAY:
+        if (metadata.init_array_address) return "duplicate DT_INIT_ARRAY tag";
+        metadata.init_array_address = entry.d_un.d_ptr;
+        break;
+      case DT_INIT_ARRAYSZ:
+        if (metadata.init_array_size) return "duplicate DT_INIT_ARRAYSZ tag";
+        metadata.init_array_size = value;
+        break;
+      case DT_FINI_ARRAY:
+        if (metadata.fini_array_address) return "duplicate DT_FINI_ARRAY tag";
+        metadata.fini_array_address = entry.d_un.d_ptr;
+        break;
+      case DT_FINI_ARRAYSZ:
+        if (metadata.fini_array_size) return "duplicate DT_FINI_ARRAYSZ tag";
+        metadata.fini_array_size = value;
         break;
       case DT_NEEDED:
         metadata.needed_offsets.push_back(value);
