@@ -1,7 +1,6 @@
 // Copyright 2026 Mocktail Project Authors
 // Licensed under the Apache License, Version 2.0.
 
-#include <array>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -10,28 +9,29 @@
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
+#include "translation/a64_elf_loader.h"
+#include "a64_test_elf.h"
 
 namespace {
 
 using Address = Dynarmic::A64::VAddr;
+using mocktail::translation::A64LoadedImage;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
-  void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
+  explicit SmokeMemory(A64LoadedImage& image) : image_(image) {}
 
-  void Write32(Address address, std::uint32_t value) {
-    for (unsigned int byte = 0; byte < 4; ++byte) {
-      Write8(address + byte,
-             static_cast<std::uint8_t>((value >> (byte * 8U)) & 0xffU));
-    }
-  }
+  void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
 
   bool saw_breakpoint() const { return saw_breakpoint_; }
   const std::string& failure() const { return failure_; }
 
   std::uint8_t MemoryRead8(Address address) override {
-    if (!Contains(address, 1)) return 0;
-    return memory_[static_cast<std::size_t>(address)];
+    std::uint8_t value = 0;
+    if (!image_.Read(address, &value, sizeof(value))) {
+      Fail("guest instruction/data read outside a loaded PT_LOAD segment");
+    }
+    return value;
   }
 
   std::uint16_t MemoryRead16(Address address) override {
@@ -54,21 +54,47 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   }
 
   void MemoryWrite8(Address address, std::uint8_t value) override {
-    Write8(address, value);
+    if (!image_.Write(address, &value, sizeof(value))) {
+      Fail("guest write was outside a writable PT_LOAD segment");
+    }
   }
 
   void MemoryWrite16(Address address, std::uint16_t value) override {
-    Write8(address, static_cast<std::uint8_t>(value));
-    Write8(address + 1, static_cast<std::uint8_t>(value >> 8U));
+    const std::uint8_t bytes[] = {
+        static_cast<std::uint8_t>(value),
+        static_cast<std::uint8_t>(value >> 8U),
+    };
+    if (!image_.Write(address, bytes, sizeof(bytes))) {
+      Fail("guest write was outside a writable PT_LOAD segment");
+    }
   }
 
   void MemoryWrite32(Address address, std::uint32_t value) override {
-    Write32(address, value);
+    const std::uint8_t bytes[] = {
+        static_cast<std::uint8_t>(value),
+        static_cast<std::uint8_t>(value >> 8U),
+        static_cast<std::uint8_t>(value >> 16U),
+        static_cast<std::uint8_t>(value >> 24U),
+    };
+    if (!image_.Write(address, bytes, sizeof(bytes))) {
+      Fail("guest write was outside a writable PT_LOAD segment");
+    }
   }
 
   void MemoryWrite64(Address address, std::uint64_t value) override {
-    MemoryWrite32(address, static_cast<std::uint32_t>(value));
-    MemoryWrite32(address + 4, static_cast<std::uint32_t>(value >> 32U));
+    const std::uint8_t bytes[] = {
+        static_cast<std::uint8_t>(value),
+        static_cast<std::uint8_t>(value >> 8U),
+        static_cast<std::uint8_t>(value >> 16U),
+        static_cast<std::uint8_t>(value >> 24U),
+        static_cast<std::uint8_t>(value >> 32U),
+        static_cast<std::uint8_t>(value >> 40U),
+        static_cast<std::uint8_t>(value >> 48U),
+        static_cast<std::uint8_t>(value >> 56U),
+    };
+    if (!image_.Write(address, bytes, sizeof(bytes))) {
+      Fail("guest write was outside a writable PT_LOAD segment");
+    }
   }
 
   void MemoryWrite128(Address address, Dynarmic::A64::Vector value) override {
@@ -102,19 +128,6 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   std::uint64_t GetCNTPCT() override { return ticks_; }
 
  private:
-  bool Contains(Address address, std::size_t length) const {
-    return address <= memory_.size() &&
-           length <= memory_.size() - static_cast<std::size_t>(address);
-  }
-
-  void Write8(Address address, std::uint8_t value) {
-    if (!Contains(address, 1)) {
-      Fail("guest memory write out of bounds");
-      return;
-    }
-    memory_[static_cast<std::size_t>(address)] = value;
-  }
-
   void Fail(std::string message) {
     if (failure_.empty()) failure_ = std::move(message);
     Stop();
@@ -124,7 +137,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
     if (jit_ != nullptr) jit_->HaltExecution();
   }
 
-  std::array<std::uint8_t, 4096> memory_{};
+  A64LoadedImage& image_;
   Dynarmic::A64::Jit* jit_ = nullptr;
   std::uint64_t ticks_ = 0;
   bool saw_breakpoint_ = false;
@@ -134,10 +147,15 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 }  // namespace
 
 int main() {
-  SmokeMemory memory;
-  // MOVZ X0, #42; BRK #0. This is a minimal CPU-only smoke program.
-  memory.Write32(0, 0xD2800540U);
-  memory.Write32(4, 0xD4200000U);
+  auto load_result = mocktail::translation::LoadA64Elf(
+      mocktail::translation::test::BuildMinimalA64Elf());
+  if (!load_result) {
+    std::cerr << "AArch64 ELF load failed: " << load_result.error << '\n';
+    return 1;
+  }
+
+  auto& image = *load_result.image;
+  SmokeMemory memory(image);
 
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &memory;
@@ -145,23 +163,25 @@ int main() {
   config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
   memory.Attach(&cpu);
-  cpu.SetPC(0);
+  cpu.SetPC(image.entry_point);
 
   static_cast<void>(cpu.Run());
   if (!memory.failure().empty()) {
-    std::cerr << "AArch64 CPU smoke test failed: " << memory.failure() << '\n';
+    std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
+              << memory.failure() << '\n';
     return 1;
   }
   if (!memory.saw_breakpoint()) {
-    std::cerr << "AArch64 CPU smoke test failed: BRK was not observed\n";
+    std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
+                 "BRK was not observed\n";
     return 1;
   }
   if (cpu.GetRegister(0) != 42) {
-    std::cerr << "AArch64 CPU smoke test failed: X0 was "
+    std::cerr << "AArch64 ELF/JIT integration smoke test failed: X0 was "
               << cpu.GetRegister(0) << ", expected 42\n";
     return 1;
   }
 
-  std::cout << "AArch64 CPU translation smoke test passed (X0=42)\n";
+  std::cout << "AArch64 ELF/JIT integration smoke test passed (X0=42)\n";
   return 0;
 }

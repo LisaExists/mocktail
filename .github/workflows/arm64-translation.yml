@@ -1,0 +1,70 @@
+name: ARM64 translation prototype
+
+on:
+  push:
+    branches:
+      - experimental/roblox-arm-translation
+    paths:
+      - '.github/workflows/arm64-translation.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'docs/ROBLOX_ARM_TRANSLATION.md'
+      - 'include/translation/**'
+      - 'src/translation/**'
+      - 'tests/translation/**'
+      - 'tests/test_roblox_arm_preflight.py'
+      - 'tools/roblox-arm-preflight.py'
+      - 'third_party/**'
+      - '.gitmodules'
+  pull_request:
+    branches:
+      - experimental/roblox-arm-translation
+    paths:
+      - '.github/workflows/arm64-translation.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'docs/ROBLOX_ARM_TRANSLATION.md'
+      - 'include/translation/**'
+      - 'src/translation/**'
+      - 'tests/translation/**'
+      - 'tests/test_roblox_arm_preflight.py'
+      - 'tools/roblox-arm-preflight.py'
+      - 'third_party/**'
+      - '.gitmodules'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-translation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  loader-and-jit-smoke:
+    name: ELF loader + Dynarmic smoke
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential binutils cmake git ninja-build pkg-config lld libboost-dev libsdl3-dev libsdl3-ttf-dev libcurl4-openssl-dev libssl-dev nlohmann-json3-dev libyaml-dev libelf-dev libminizip-dev libcapstone-dev libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libutf8proc-dev libfontconfig1-dev libegl-dev libvulkan-dev libplacebo-dev libpng-dev zlib1g-dev python3
+
+      - name: Configure optional ARM64 translation prototype
+        run: |
+          cmake -S . -B build-translation-ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON
+
+      - name: Build loader and Dynarmic tests
+        run: |
+          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_translation_smoke
+
+      - name: Run translation and preflight tests
+        run: |
+          ctest --test-dir build-translation-ci -R 'RobloxArmTranslation' --output-on-failure
