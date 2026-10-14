@@ -127,6 +127,30 @@ int main() {
           "collects DT_NEEDED dependencies for later resolution");
   }
 
+  auto android_packed_rela =
+      mocktail::translation::test::BuildA64ElfWithAndroidPackedRela();
+  auto loaded_android_packed_rela = LoadA64Elf(android_packed_rela);
+  Check(static_cast<bool>(loaded_android_packed_rela),
+        "decodes Android APS2-packed RELA relocations");
+  if (loaded_android_packed_rela) {
+    std::uint64_t actual = 0;
+    const auto target = loaded_android_packed_rela.image->load_bias + 0x1500;
+    Check(loaded_android_packed_rela.image->Read(target, &actual, sizeof(actual)) &&
+              actual == loaded_android_packed_rela.image->load_bias + 0x1000,
+          "applies a decoded APS2 R_AARCH64_RELATIVE relocation");
+  }
+
+  auto relr = mocktail::translation::test::BuildA64ElfWithRelrRelocation();
+  auto loaded_relr = LoadA64Elf(relr);
+  Check(static_cast<bool>(loaded_relr), "loads a DT_RELR pointer-relocation table");
+  if (loaded_relr) {
+    std::uint64_t actual = 0;
+    const auto target = loaded_relr.image->load_bias + 0x1500;
+    Check(loaded_relr.image->Read(target, &actual, sizeof(actual)) &&
+              actual == loaded_relr.image->load_bias + 0x1000,
+          "applies a DT_RELR base-relative pointer");
+  }
+
   auto defined_symbol_relocation =
       mocktail::translation::test::BuildA64ElfWithRelativeRelocation(
           R_AARCH64_ABS64, 0x1500, 0x10, 1);
