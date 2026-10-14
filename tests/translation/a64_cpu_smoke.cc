@@ -43,7 +43,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   std::uint8_t MemoryRead8(Address address) override {
     std::uint8_t value = 0;
     if (!memory_.Read(address, &value, sizeof(value))) {
-      Fail("guest instruction/data read outside a loaded PT_LOAD segment");
+      Fail("guest read outside readable mapped memory");
     }
     return value;
   }
@@ -69,7 +69,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
   void MemoryWrite8(Address address, std::uint8_t value) override {
     if (!memory_.Write(address, &value, sizeof(value))) {
-      Fail("guest write was outside a writable PT_LOAD segment");
+      Fail("guest write outside writable mapped memory");
     }
   }
 
@@ -79,7 +79,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value >> 8U),
     };
     if (!memory_.Write(address, bytes, sizeof(bytes))) {
-      Fail("guest write was outside a writable PT_LOAD segment");
+      Fail("guest write outside writable mapped memory");
     }
   }
 
@@ -91,7 +91,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value >> 24U),
     };
     if (!memory_.Write(address, bytes, sizeof(bytes))) {
-      Fail("guest write was outside a writable PT_LOAD segment");
+      Fail("guest write outside writable mapped memory");
     }
   }
 
@@ -107,7 +107,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
         static_cast<std::uint8_t>(value >> 56U),
     };
     if (!memory_.Write(address, bytes, sizeof(bytes))) {
-      Fail("guest write was outside a writable PT_LOAD segment");
+      Fail("guest write outside writable mapped memory");
     }
   }
 
