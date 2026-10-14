@@ -32,7 +32,7 @@ struct A64GuestModuleSet final {
   // Root first, followed by dependencies in breadth-first DT_NEEDED order.
   std::vector<A64GuestModule> modules;
 
-  const A64GuestModule* FindModule(const std::string& name) const noexcept;
+  const A64GuestModule* FindModule(const std::string& name) const;
   std::optional<std::uint64_t> ResolveExportedSymbol(
       const std::string& name) const noexcept;
 };
