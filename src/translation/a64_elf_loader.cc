@@ -768,7 +768,8 @@ bool A64LoadedImage::IsExecutable(std::uint64_t address,
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options) {
   if (options.max_image_size == 0 || options.max_program_headers == 0 ||
-      options.max_dynamic_entries == 0 || options.max_relocations == 0) {
+      options.max_dynamic_entries == 0 || options.max_relocations == 0 ||
+      options.max_symbols == 0) {
     return Failure("ELF load limits must be greater than zero");
   }
   if (file.size() < sizeof(Elf64_Ehdr)) {
