@@ -15,6 +15,7 @@
 #include "dynarmic/interface/A64/config.h"
 #include "translation/a64_elf_loader.h"
 #include "translation/a64_guest_memory.h"
+#include "translation/a64_guest_module_loader.h"
 #include "a64_test_elf.h"
 
 namespace {
@@ -161,49 +162,75 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc > 2) {
-    std::cerr << "usage: mocktail_a64_translation_smoke [aarch64-elf]\n";
-    return 2;
-  }
+  using mocktail::translation::A64GuestModuleSource;
+  using mocktail::translation::LoadA64GuestModuleSet;
+  using mocktail::translation::test::BuildMinimalA64Elf;
 
-  std::vector<std::uint8_t> elf_bytes;
-  if (argc == 2) {
-    std::ifstream input(argv[1], std::ios::binary);
-    if (!input) {
-      std::cerr << "cannot open AArch64 ELF fixture: " << argv[1] << '\n';
-      return 2;
-    }
-    std::vector<char> raw_bytes;
-    raw_bytes.assign(std::istreambuf_iterator<char>(input),
-                     std::istreambuf_iterator<char>());
-    elf_bytes.assign(raw_bytes.begin(), raw_bytes.end());
+  std::vector<A64GuestModuleSource> sources;
+  if (argc == 1) {
+    sources.push_back(
+        {"libmocktail-a64-synthetic.so", BuildMinimalA64Elf()});
   } else {
-    elf_bytes = mocktail::translation::test::BuildMinimalA64Elf();
+    for (int index = 1; index < argc; ++index) {
+      const std::string path = argv[index];
+      std::ifstream input(path, std::ios::binary);
+      if (!input) {
+        std::cerr << "cannot open AArch64 ELF fixture: " << path << '\\n';
+        return 2;
+      }
+      std::vector<char> raw_bytes;
+      raw_bytes.assign(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+      if (raw_bytes.empty()) {
+        std::cerr << "AArch64 ELF fixture is empty: " << path << '\\n';
+        return 2;
+      }
+      const auto separator = path.find_last_of('/');
+      const auto name = separator == std::string::npos
+                            ? path
+                            : path.substr(separator + 1);
+      std::vector<std::uint8_t> bytes(raw_bytes.begin(), raw_bytes.end());
+      sources.push_back({name, std::move(bytes)});
+    }
   }
 
-  auto load_result = mocktail::translation::LoadA64Elf(elf_bytes);
-  if (!load_result) {
-    std::cerr << "AArch64 ELF load failed: " << load_result.error << '\n';
+  const auto loaded = LoadA64GuestModuleSet(sources, sources.front().name);
+  if (!loaded) {
+    std::cerr << "AArch64 guest module loading failed: " << loaded.error
+              << '\\n';
+    return 1;
+  }
+  auto& modules = *loaded.modules;
+  if (modules.root_index >= modules.modules.size()) {
+    std::cerr << "AArch64 guest module loader returned an invalid root index\\n";
+    return 1;
+  }
+  const auto& image = modules.modules[modules.root_index].image;
+  if (image.entry_point == 0) {
+    std::cerr << "AArch64 root module has no executable entry point\\n";
     return 1;
   }
 
-  auto& image = *load_result.image;
   A64GuestMemory memory;
   std::string memory_error;
-  if (!memory.MapImage(image, &memory_error)) {
-    std::cerr << "guest ELF mapping failed: " << memory_error << '\n';
-    return 1;
+  for (const auto& module : modules.modules) {
+    if (!memory.MapImage(module.image, &memory_error)) {
+      std::cerr << "guest image mapping failed for " << module.source_name
+                << ": " << memory_error << '\\n';
+      return 1;
+    }
   }
+
   constexpr std::uint64_t kStackBase = 0x7000000000ULL;
   constexpr std::uint64_t kStackSize = 2U * 1024U * 1024U;
   if (!memory.Map(kStackBase, kStackSize,
                   A64GuestMemory::kRead | A64GuestMemory::kWrite,
                   &memory_error)) {
-    std::cerr << "guest stack mapping failed: " << memory_error << '\n';
+    std::cerr << "guest stack mapping failed: " << memory_error << '\\n';
     return 1;
   }
-  SmokeMemory callbacks(memory);
 
+  SmokeMemory callbacks(memory);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
   config.enable_cycle_counting = false;
@@ -217,30 +244,31 @@ int main(int argc, char** argv) {
   static_cast<void>(cpu.Run());
   if (!memory.failure().empty()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-              << memory.failure() << '\n';
+              << memory.failure() << '\\n';
     return 1;
   }
-  if (!memory.saw_breakpoint()) {
+  if (!callbacks.saw_breakpoint()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-                 "BRK was not observed\n";
+                 "BRK was not observed\\n";
     return 1;
   }
   if (cpu.GetRegister(0) != 42) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: X0 was "
-              << cpu.GetRegister(0) << ", expected 42\n";
+              << cpu.GetRegister(0) << ", expected 42\\n";
     return 1;
   }
-
   if (cpu.GetRegister(1) != 42) {
-    std::cerr << "AArch64 guest stack round-trip failed: X1 was "
-              << cpu.GetRegister(1) << ", expected 42\n";
+    std::cerr << "AArch64 guest result register was " << cpu.GetRegister(1)
+              << ", expected 42\\n";
     return 1;
   }
   if (cpu.GetSP() != initial_stack_pointer) {
-    std::cerr << "AArch64 guest stack pointer was not restored\n";
+    std::cerr << "AArch64 guest stack pointer was not restored\\n";
     return 1;
   }
 
-  std::cout << "AArch64 ELF/JIT smoke test passed (X0=X1=42; guest stack works)\n";
+  std::cout << "AArch64 guest module/JIT smoke test passed (modules="
+            << modules.modules.size()
+            << "; X0=X1=42; stack preserved)\\n";
   return 0;
 }
