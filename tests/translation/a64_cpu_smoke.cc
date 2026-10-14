@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
@@ -134,8 +135,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
 int main() {
   SmokeMemory memory;
-  // MOVZ X0, #42; BRK #0. This executes only toy instructions and never loads
-  // a Roblox or Android payload.
+  // MOVZ X0, #42; BRK #0. This is a minimal CPU-only smoke program.
   memory.Write32(0, 0xD2800540U);
   memory.Write32(4, 0xD4200000U);
 
