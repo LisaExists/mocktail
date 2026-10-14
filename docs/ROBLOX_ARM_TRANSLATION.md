@@ -22,7 +22,9 @@ When configured with `-DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON`, CMake fetche
 
 On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target.
 
-The bounded ELF64 loader maps AArch64 `PT_LOAD` segments and zero-initializes BSS, extracts `DT_NEEDED`/`DT_SONAME`, supports RELA relocations (`RELATIVE`, `ABS64`, `GLOB_DAT`, and `JUMP_SLOT`), Android APS2-packed RELA, and RELR pointer relocations. Undefined symbols must be resolved by an explicit callback that returns a guest address; the loader never casts a guest pointer to a host pointer. SysV/GNU hash metadata bounds symbol lookup. Symbol-version enforcement, TLS symbols, IFUNCs, text relocations, and Android packed REL relocations remain unsupported and fail closed.
+The bounded ELF64 loader maps AArch64 `PT_LOAD` segments and zero-initializes BSS, extracts `DT_NEEDED`/`DT_SONAME`, supports RELA relocations (`RELATIVE`, `ABS64`, `GLOB_DAT`, and `JUMP_SLOT`), Android APS2-packed RELA, and RELR pointer relocations. SysV/GNU hash metadata bounds symbol lookup. Undefined symbols must be resolved by an explicit callback that returns a guest address; the loader never casts a guest pointer to a host pointer. Symbol-version enforcement, TLS symbols, IFUNCs, and text relocations remain unsupported and fail closed.
+
+The experimental guest module loader now accepts a trusted catalogue of AArch64 shared-object bytes, walks the root object's `DT_NEEDED` closure, checks missing/ambiguous dependencies, assigns distinct guest address ranges, collects externally visible unversioned exports, and repeats the load with relocations resolved against the complete module set. Dependencies implemented by a guest thunk/runtime layer can be allow-listed explicitly, but every imported symbol must still resolve to a guest address. It is a two-pass prototype, not a replacement for Android's dynamic linker: namespace policy, versioned symbols, TLS/TLSDESC, IFUNC, constructors, Android linker namespaces, and Bionic system-library behavior are not implemented.
 
 A sparse page-based guest memory layer now maps ELF images and anonymous memory with read/write/execute permissions. The Dynarmic smoke guest loads and stores a value on a separately mapped guest stack, then checks that the stack pointer is restored. This is the foundation for a process address space, not yet a complete Android process: multi-image symbol resolution, guest TLS, loader syscalls, Android linker conventions, and native graphics/JNI bridges still need implementation.
 
@@ -48,8 +50,10 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add branch-specific CI for the synthetic ELF and Dynarmic tests.
 - [x] Add an optional cross-compiled AArch64 shared-object fixture and execute it through the loader/JIT path.
 - [ ] Confirm the new branch CI succeeds on a clean x86-64 Linux host.
-- [ ] Build a multi-image dependency resolver and support the Android symbol-versioning conventions in the actual libraries.
+- [x] Build a minimal two-pass multi-image dependency resolver for catalogued ET_DYN objects (unversioned exports only).
+- [ ] Add Android symbol-versioning conventions and confirm dependency resolution against the actual ARM64 package libraries.
 - [x] Add sparse page-based guest mappings with basic read/write/execute permissions and an anonymous stack mapping for the CPU smoke guest.
+- [x] Add a bounded two-pass guest module-set loader with `DT_NEEDED` closure discovery, non-overlapping image placement, unversioned export indexing, and dependency relocation tests.
 - [ ] Extend guest mappings with guard pages, heap allocation, per-thread TLS and memory synchronization.
 - [ ] Add explicit guest-to-host calling conventions, syscalls, TLS and guest-thread scheduling.
 - [ ] Integrate and test the Android/Bionic and graphics boundaries.
