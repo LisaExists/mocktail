@@ -175,14 +175,14 @@ int main(int argc, char** argv) {
       const std::string path = argv[index];
       std::ifstream input(path, std::ios::binary);
       if (!input) {
-        std::cerr << "cannot open AArch64 ELF fixture: " << path << '\\n';
+        std::cerr << "cannot open AArch64 ELF fixture: " << path << '\n';
         return 2;
       }
       std::vector<char> raw_bytes;
       raw_bytes.assign(std::istreambuf_iterator<char>(input),
                        std::istreambuf_iterator<char>());
       if (raw_bytes.empty()) {
-        std::cerr << "AArch64 ELF fixture is empty: " << path << '\\n';
+        std::cerr << "AArch64 ELF fixture is empty: " << path << '\n';
         return 2;
       }
       const auto separator = path.find_last_of('/');
@@ -197,17 +197,17 @@ int main(int argc, char** argv) {
   const auto loaded = LoadA64GuestModuleSet(sources, sources.front().name);
   if (!loaded) {
     std::cerr << "AArch64 guest module loading failed: " << loaded.error
-              << '\\n';
+              << '\n';
     return 1;
   }
   auto& modules = *loaded.modules;
   if (modules.root_index >= modules.modules.size()) {
-    std::cerr << "AArch64 guest module loader returned an invalid root index\\n";
+    std::cerr << "AArch64 guest module loader returned an invalid root index\n";
     return 1;
   }
   const auto& image = modules.modules[modules.root_index].image;
   if (image.entry_point == 0) {
-    std::cerr << "AArch64 root module has no executable entry point\\n";
+    std::cerr << "AArch64 root module has no executable entry point\n";
     return 1;
   }
 
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
   for (const auto& module : modules.modules) {
     if (!memory.MapImage(module.image, &memory_error)) {
       std::cerr << "guest image mapping failed for " << module.source_name
-                << ": " << memory_error << '\\n';
+                << ": " << memory_error << '\n';
       return 1;
     }
   }
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
   if (!memory.Map(kStackBase, kStackSize,
                   A64GuestMemory::kRead | A64GuestMemory::kWrite,
                   &memory_error)) {
-    std::cerr << "guest stack mapping failed: " << memory_error << '\\n';
+    std::cerr << "guest stack mapping failed: " << memory_error << '\n';
     return 1;
   }
 
@@ -244,31 +244,31 @@ int main(int argc, char** argv) {
   static_cast<void>(cpu.Run());
   if (!memory.failure().empty()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-              << memory.failure() << '\\n';
+              << memory.failure() << '\n';
     return 1;
   }
   if (!callbacks.saw_breakpoint()) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-                 "BRK was not observed\\n";
+                 "BRK was not observed\n";
     return 1;
   }
   if (cpu.GetRegister(0) != 42) {
     std::cerr << "AArch64 ELF/JIT integration smoke test failed: X0 was "
-              << cpu.GetRegister(0) << ", expected 42\\n";
+              << cpu.GetRegister(0) << ", expected 42\n";
     return 1;
   }
   if (cpu.GetRegister(1) != 42) {
     std::cerr << "AArch64 guest result register was " << cpu.GetRegister(1)
-              << ", expected 42\\n";
+              << ", expected 42\n";
     return 1;
   }
   if (cpu.GetSP() != initial_stack_pointer) {
-    std::cerr << "AArch64 guest stack pointer was not restored\\n";
+    std::cerr << "AArch64 guest stack pointer was not restored\n";
     return 1;
   }
 
   std::cout << "AArch64 guest module/JIT smoke test passed (modules="
             << modules.modules.size()
-            << "; X0=X1=42; stack preserved)\\n";
+            << "; X0=X1=42; stack preserved)\n";
   return 0;
 }
