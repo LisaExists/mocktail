@@ -1038,16 +1038,26 @@ std::string ApplyDynamicMetadataAndRelocations(
                type == R_AARCH64_JUMP_SLOT) {
       std::string symbol_error;
       std::uint64_t symbol_value = 0;
+      bool deferred = false;
+      std::string pending_symbol;
       if (!ResolveDynamicSymbol(*image, metadata, options, symbol_index,
                                 &symbol_value, &symbol_error)) {
-        return symbol_error;
-      }
-      if (type == R_AARCH64_JUMP_SLOT) {
+        constexpr const char* kUnresolvedPrefix = "unresolved AArch64 symbol: ";
+        if (options.defer_unresolved_symbols &&
+            symbol_error.rfind(kUnresolvedPrefix, 0) == 0) {
+          deferred = true;
+          pending_symbol = symbol_error.substr(std::strlen(kUnresolvedPrefix));
+          relocated_value = 0;
+        } else {
+          return symbol_error;
+        }
+      } else if (type == R_AARCH64_JUMP_SLOT) {
         relocated_value = symbol_value;
       } else if (!AddSignedOffset(symbol_value, relocation.r_addend,
                                   &relocated_value)) {
         return "symbol relocation result overflows";
       }
+
     } else {
       return std::string("unsupported AArch64 dynamic relocation type ") +
              std::to_string(type) + " in " + table_name;
@@ -1055,6 +1065,15 @@ std::string ApplyDynamicMetadataAndRelocations(
 
     if (!image->Write(target, &relocated_value, sizeof(relocated_value))) {
       return "relocation target is not contained in writable PT_LOAD memory";
+    }
+    if ((type == R_AARCH64_ABS64 || type == R_AARCH64_GLOB_DAT ||
+         type == R_AARCH64_JUMP_SLOT) && !pending_symbol.empty()) {
+      try {
+        image->pending_relocations.push_back(A64PendingRelocation{
+            target, type, relocation.r_addend, std::move(pending_symbol)});
+      } catch (const std::bad_alloc&) {
+        return "not enough memory to track deferred AArch64 relocations";
+      }
     }
     ++applied_relocation_count;
     return {};
@@ -1517,6 +1536,63 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
   }
 
   return A64ElfLoadResult{std::move(image), {}};
+}
+
+bool ResolveA64ElfPendingRelocations(A64LoadedImage& image,
+                                     const A64SymbolResolver& resolver,
+                                     std::string* error) {
+  auto fail = [&](std::string message) {
+    if (error != nullptr) *error = std::move(message);
+    return false;
+  };
+  if (image.pending_relocations.empty()) {
+    if (error != nullptr) error->clear();
+    return true;
+  }
+  if (!resolver) {
+    return fail("a symbol resolver is required for deferred AArch64 relocations");
+  }
+
+  std::vector<std::uint64_t> resolved_values;
+  try {
+    resolved_values.reserve(image.pending_relocations.size());
+  } catch (const std::bad_alloc&) {
+    return fail("not enough memory to resolve deferred AArch64 relocations");
+  }
+
+  for (const auto& pending : image.pending_relocations) {
+    const auto symbol = resolver(pending.symbol_name);
+    if (!symbol) {
+      return fail("unresolved AArch64 symbol: " + pending.symbol_name);
+    }
+
+    std::uint64_t value = 0;
+    if (pending.type == R_AARCH64_JUMP_SLOT) {
+      value = *symbol;
+    } else if (pending.type == R_AARCH64_ABS64 ||
+               pending.type == R_AARCH64_GLOB_DAT) {
+      if (!AddSignedOffset(*symbol, pending.addend, &value)) {
+        return fail("deferred symbol relocation result overflows for: " +
+                    pending.symbol_name);
+      }
+    } else {
+      return fail("unsupported deferred AArch64 relocation type " +
+                  std::to_string(pending.type));
+    }
+    resolved_values.push_back(value);
+  }
+
+  for (std::size_t index = 0; index < image.pending_relocations.size(); ++index) {
+    const auto& pending = image.pending_relocations[index];
+    if (!image.Write(pending.target_address, &resolved_values[index],
+                     sizeof(resolved_values[index]))) {
+      return fail("deferred relocation target is no longer writable: " +
+                  pending.symbol_name);
+    }
+  }
+  image.pending_relocations.clear();
+  if (error != nullptr) error->clear();
+  return true;
 }
 
 }  // namespace mocktail::translation
