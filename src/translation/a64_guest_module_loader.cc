@@ -178,16 +178,20 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
     if (!discovery_error.empty()) return Failure(discovery_error);
 
     for (std::size_t index = 0; index < discovered.size(); ++index) {
-      for (const auto& dependency :
-           discovered[index].metadata_image.dependencies) {
+      // discover() may append to the vector and reallocate it, so retain a
+      // snapshot of this object's dependencies while extending the graph.
+      const auto requester_name =
+          sources[discovered[index].source_index].name;
+      const auto dependencies =
+          discovered[index].metadata_image.dependencies;
+      for (const auto& dependency : dependencies) {
         if (aliases.find(dependency) == aliases.end()) {
           if (external_dependencies.find(dependency) !=
               external_dependencies.end()) {
             continue;
           }
           return Failure("missing guest dependency '" + dependency +
-                         "' required by '" +
-                         sources[discovered[index].source_index].name + "'");
+                         "' required by '" + requester_name + "'");
         }
         const auto dependency_source = aliases.find(dependency)->second;
         const auto error = discover(dependency_source);
