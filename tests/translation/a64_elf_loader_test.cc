@@ -56,15 +56,21 @@ int main() {
     Check(image.segments.size() == 1, "maps the PT_LOAD segment");
     Check(image.image_size == 0x1000, "reports the page-rounded image span");
 
-    std::array<std::uint8_t, 8> code{};
+    std::array<std::uint8_t, 24> code{};
     Check(image.Read(image.entry_point, code.data(), code.size()),
           "reads loaded instruction bytes");
-    const std::array<std::uint8_t, 8> expected{
-        0x40, 0x05, 0x80, 0xD2, 0x00, 0x00, 0x20, 0xD4};
-    Check(code == expected, "preserves ELF file bytes");
+    const std::array<std::uint8_t, 24> expected{
+        0x40, 0x05, 0x80, 0xD2,  // mov x0, #42
+        0xFF, 0x43, 0x00, 0xD1,  // sub sp, sp, #16
+        0xE0, 0x03, 0x00, 0xF9,  // str x0, [sp]
+        0xE1, 0x03, 0x40, 0xF9,  // ldr x1, [sp]
+        0xFF, 0x43, 0x00, 0x91,  // add sp, sp, #16
+        0x00, 0x00, 0x20, 0xD4,  // brk #0
+    };
+    Check(code == expected, "preserves ELF file and stack-access instructions");
 
     std::array<std::uint8_t, 8> bss{};
-    Check(image.Read(image.entry_point + 8, bss.data(), bss.size()),
+    Check(image.Read(image.entry_point + 24, bss.data(), bss.size()),
           "reads the PT_LOAD BSS tail");
     Check(bss == std::array<std::uint8_t, 8>{},
           "zero-fills the BSS tail");
