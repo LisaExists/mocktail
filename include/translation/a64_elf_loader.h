@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -45,6 +46,9 @@ struct A64LoadedImage final {
                     std::size_t length) const noexcept;
 };
 
+using A64SymbolResolver =
+    std::function<std::optional<std::uint64_t>(const std::string&)>;
+
 struct A64ElfLoadOptions final {
   // Desired guest address for the aligned origin of an ET_DYN image.
   std::uint64_t preferred_base = 0x100000000ULL;
@@ -53,6 +57,10 @@ struct A64ElfLoadOptions final {
   std::size_t max_program_headers = 4096;
   std::size_t max_dynamic_entries = 1U * 1024U * 1024U;
   std::size_t max_relocations = 4U * 1024U * 1024U;
+  std::size_t max_symbols = 1U * 1024U * 1024U;
+  // Resolves undefined guest symbols to guest addresses in already-loaded
+  // modules or explicit host-call thunks. No implicit host pointer conversion.
+  A64SymbolResolver resolve_symbol;
 };
 
 struct A64ElfLoadResult final {
@@ -65,9 +73,10 @@ struct A64ElfLoadResult final {
 };
 
 // Loads ELF64 little-endian AArch64 ET_DYN/ET_EXEC images. Maps PT_LOAD data
-// and BSS, collects DT_NEEDED/DT_SONAME metadata, and applies R_AARCH64_RELATIVE
-// relocations. Symbol-based relocations, dependency loading, TLS and full
-// process setup are not implemented yet. Unsupported relocations fail closed.
+// and BSS, collects DT_NEEDED/DT_SONAME metadata, and applies supported RELA
+// relocations. Undefined symbols are resolved only through the caller's explicit
+// resolver. Dependency loading, symbol versioning, TLS and process setup remain
+// separate responsibilities. Unsupported relocation formats fail closed.
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options = {});
 
