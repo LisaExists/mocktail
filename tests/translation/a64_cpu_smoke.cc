@@ -142,6 +142,7 @@ int main() {
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &memory;
   config.enable_cycle_counting = false;
+  config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
   memory.Attach(&cpu);
   cpu.SetPC(0);
