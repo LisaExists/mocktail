@@ -48,7 +48,7 @@ int main() {
   auto loaded = LoadA64Elf(valid);
   Check(static_cast<bool>(loaded), "loads a valid ELF64 AArch64 ET_DYN image");
   if (loaded) {
-    const auto& image = *loaded.image;
+    auto& image = *loaded.image;
     Check(image.load_bias == 0xFFFFF000ULL,
           "computes the ET_DYN load bias");
     Check(image.entry_point == 0x100000000ULL,
