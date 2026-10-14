@@ -22,7 +22,9 @@ When configured with `-DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON`, CMake fetche
 
 On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target.
 
-The bounded ELF64 loader maps AArch64 `PT_LOAD` segments and zero-initializes BSS, extracts `DT_NEEDED`/`DT_SONAME`, and supports `R_AARCH64_RELATIVE`, `R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` RELA relocations. Undefined symbols must be resolved by an explicit callback that returns a guest address; the loader never casts a guest pointer to a host pointer. SysV/GNU hash metadata bounds symbol lookup. Versioned symbols, TLS symbols, IFUNCs, text relocations, and packed RELR/Android relocation tables remain unsupported and fail closed. A branch-specific GitHub Actions workflow builds the loader tests and Dynarmic smoke target on x86-64.
+The bounded ELF64 loader maps AArch64 `PT_LOAD` segments and zero-initializes BSS, extracts `DT_NEEDED`/`DT_SONAME`, and supports `R_AARCH64_RELATIVE`, `R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` RELA relocations. Undefined symbols must be resolved by an explicit callback that returns a guest address; the loader never casts a guest pointer to a host pointer. SysV/GNU hash metadata bounds symbol lookup. Versioned symbols, TLS symbols, IFUNCs, text relocations, and packed RELR/Android relocation tables remain unsupported and fail closed.
+
+When `aarch64-linux-gnu-gcc` is installed, CMake also generates a genuine AArch64 `.so` fixture and sends it through the ELF loader and Dynarmic, stopping at a controlled `BRK`. The dedicated branch workflow installs this cross-toolchain so that the real-ELF path is tested in CI. This demonstrates basic code execution from a linker-produced guest image, not compatibility with the Android linker or the Roblox client.
 
 ## Architecture options to evaluate
 
@@ -42,6 +44,7 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add bounded SysV/GNU hash-based symbol counts and explicit undefined-symbol resolver callbacks.
 - [x] Fail closed for unsupported/packed relocation formats, symbol versions, TLS symbols, IFUNCs and text relocations.
 - [x] Add branch-specific CI for the synthetic ELF and Dynarmic tests.
+- [x] Add an optional cross-compiled AArch64 shared-object fixture and execute it through the loader/JIT path.
 - [ ] Confirm the new branch CI succeeds on a clean x86-64 Linux host.
 - [ ] Build a multi-image dependency resolver and support the Android symbol-versioning conventions in the actual libraries.
 - [ ] Select and implement a full guest address-space model for stacks, heaps, TLS, guard pages and permissions.
