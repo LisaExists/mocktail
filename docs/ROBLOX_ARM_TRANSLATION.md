@@ -20,7 +20,9 @@ The tool lists native libraries, checks their ELF machine fields, and reports AB
 
 When configured with `-DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON`, CMake fetches a pinned Dynarmic revision and builds an isolated AArch64 CPU smoke-test target. The option is off by default so ordinary Mocktail builds do not gain the extra dependency or network fetch.
 
-On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target. The smoke target executes a tiny in-memory instruction sequence; it does not load Roblox code.
+On x86-64 Linux, Dynarmic requires the Boost development headers and uses its pinned bundled external projects for other dependencies. On CachyOS/Arch, install the `boost` package before configuring the optional target.
+
+The bounded ELF64 loader now maps AArch64 `PT_LOAD` segments and zero-initializes BSS, applies `R_AARCH64_RELATIVE` relocations, and extracts `DT_NEEDED`/`DT_SONAME` metadata. It rejects unsupported symbol relocations, PLT relocations, text relocations, and packed RELR/Android relocation tables rather than treating an incompletely relocated image as runnable. A branch-specific GitHub Actions workflow builds the loader tests and Dynarmic smoke target on x86-64.
 
 ## Architecture options to evaluate
 
@@ -36,8 +38,11 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add an optional, pinned Dynarmic dependency and an isolated AArch64 CPU smoke target.
 - [x] Add a bounded ELF64 little-endian AArch64 loader for PT_LOAD segments, including BSS zero-fill, ET_DYN load bias, entry-point validation and read/write bounds checks.
 - [x] Run the Dynarmic smoke instructions from a synthetic ELF image instead of a raw byte array.
-- [ ] Run the new loader/JIT integration tests in branch CI and on a clean x86-64 Linux host.
-- [ ] Implement AArch64 dynamic relocations and guest-side symbol/dependency resolution.
+- [x] Parse DT_NEEDED/DT_SONAME and apply bounded R_AARCH64_RELATIVE relocations.
+- [x] Fail closed for unsupported symbol/PLT/packed relocations and text relocations.
+- [x] Add branch-specific CI for the synthetic ELF and Dynarmic tests.
+- [ ] Confirm the new branch CI succeeds on a clean x86-64 Linux host.
+- [ ] Implement bounded symbol-table lookup, dependency loading, and symbol-based AArch64 relocations.
 - [ ] Select and implement a full guest address-space model for stacks, heaps, TLS, guard pages and permissions.
 - [ ] Add explicit guest-to-host calling conventions, syscalls, TLS and guest-thread scheduling.
 - [ ] Integrate and test the Android/Bionic and graphics boundaries.
