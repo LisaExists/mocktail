@@ -54,7 +54,7 @@ jobs:
             libcapstone-dev libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev \
             libutf8proc-dev libfontconfig1-dev libegl-dev libvulkan-dev \
             libplacebo-dev libpng-dev zlib1g-dev libboost-dev \
-            gcc-aarch64-linux-gnu
+            gcc-aarch64-linux-gnu python3
 
       - name: Configure experimental AArch64 guest translation
         run: |
