@@ -2,10 +2,13 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
@@ -146,9 +149,28 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
 }  // namespace
 
-int main() {
-  auto load_result = mocktail::translation::LoadA64Elf(
-      mocktail::translation::test::BuildMinimalA64Elf());
+int main(int argc, char** argv) {
+  if (argc > 2) {
+    std::cerr << "usage: mocktail_a64_translation_smoke [aarch64-elf]\n";
+    return 2;
+  }
+
+  std::vector<std::uint8_t> elf_bytes;
+  if (argc == 2) {
+    std::ifstream input(argv[1], std::ios::binary);
+    if (!input) {
+      std::cerr << "cannot open AArch64 ELF fixture: " << argv[1] << '\n';
+      return 2;
+    }
+    const std::vector<char> raw_bytes{
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+    elf_bytes.assign(raw_bytes.begin(), raw_bytes.end());
+  } else {
+    elf_bytes = mocktail::translation::test::BuildMinimalA64Elf();
+  }
+
+  auto load_result = mocktail::translation::LoadA64Elf(elf_bytes);
   if (!load_result) {
     std::cerr << "AArch64 ELF load failed: " << load_result.error << '\n';
     return 1;
@@ -182,6 +204,6 @@ int main() {
     return 1;
   }
 
-  std::cout << "AArch64 ELF/JIT integration smoke test passed (X0=42)\n";
+  std::cout << "AArch64 ELF/JIT smoke test passed (X0=42)\n";
   return 0;
 }
