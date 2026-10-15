@@ -5,6 +5,7 @@
 
 #include <elf.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +33,37 @@ void ExpectRejected(const std::vector<std::uint8_t>& file,
                     mocktail::translation::A64ElfLoadOptions options = {}) {
   const auto result = mocktail::translation::LoadA64Elf(file, options);
   Check(!result && !result.error.empty(), name);
+}
+
+std::vector<std::uint8_t> BuildElfWithTls(
+    std::uint64_t file_size = 8, std::uint64_t memory_size = 16,
+    std::uint64_t alignment = 8, std::uint64_t virtual_address = 0x1008,
+    std::uint64_t file_offset = 0x1008, bool duplicate = false) {
+  using mocktail::translation::test::BuildMinimalA64Elf;
+  using mocktail::translation::test::ReadElfHeader;
+  using mocktail::translation::test::WriteElfHeader;
+
+  auto file = BuildMinimalA64Elf();
+  auto header = ReadElfHeader(file);
+  header.e_phnum = duplicate ? 3 : 2;
+  WriteElfHeader(file, header);
+
+  Elf64_Phdr tls{};
+  tls.p_type = PT_TLS;
+  tls.p_flags = PF_R;
+  tls.p_offset = file_offset;
+  tls.p_vaddr = virtual_address;
+  tls.p_filesz = file_size;
+  tls.p_memsz = memory_size;
+  tls.p_align = alignment;
+  const auto first_tls_offset =
+      static_cast<std::size_t>(header.e_phoff) + header.e_phentsize;
+  std::memcpy(file.data() + first_tls_offset, &tls, sizeof(tls));
+  if (duplicate) {
+    std::memcpy(file.data() + first_tls_offset + header.e_phentsize,
+                &tls, sizeof(tls));
+  }
+  return file;
 }
 
 std::vector<std::uint8_t> BuildElfWithInitializers() {
@@ -133,6 +165,71 @@ int main() {
               image.entry_point + image.segments.front().bytes.size(), 4),
           "does not mark addresses outside the loaded segment executable");
   }
+
+  auto tls_file = BuildElfWithTls();
+  const auto loaded_tls = LoadA64Elf(tls_file);
+  Check(static_cast<bool>(loaded_tls), "loads a valid PT_TLS template");
+  if (loaded_tls) {
+    const auto& tls = loaded_tls.image->tls;
+    Check(tls.has_value(), "retains PT_TLS metadata on the loaded image");
+    if (tls) {
+      Check(tls->file_size == 8 && tls->memory_size == 16 &&
+                tls->alignment == 8,
+            "preserves TLS file size, memory size, and alignment");
+      Check(tls->template_bytes.size() == 16,
+            "allocates template storage using PT_TLS memory size");
+      const std::vector<std::uint8_t> expected_tail(8, 0);
+      Check(std::equal(tls->template_bytes.begin() + 8,
+                       tls->template_bytes.end(), expected_tail.begin()),
+            "zero-fills the TLS BSS tail independently of PT_LOAD BSS");
+      Check(std::equal(tls->template_bytes.begin(),
+                       tls->template_bytes.begin() + 8,
+                       tls_file.begin() + 0x1008),
+            "copies initial TLS data from the validated load image");
+    }
+  }
+  const auto no_tls = LoadA64Elf(BuildMinimalA64Elf());
+  Check(no_tls && !no_tls.image->tls,
+        "keeps TLS metadata absent for modules without PT_TLS");
+
+  auto invalid_tls_size = BuildElfWithTls(12, 8);
+  const auto invalid_tls_size_result = LoadA64Elf(invalid_tls_size);
+  Check(!invalid_tls_size_result &&
+            invalid_tls_size_result.error.find("PT_TLS p_filesz exceeds p_memsz") !=
+                std::string::npos,
+        "rejects PT_TLS file size greater than its memory size");
+
+  auto invalid_tls_alignment = BuildElfWithTls(8, 16, 3);
+  const auto invalid_tls_alignment_result = LoadA64Elf(invalid_tls_alignment);
+  Check(!invalid_tls_alignment_result &&
+            invalid_tls_alignment_result.error.find("PT_TLS p_align is not a power of two") !=
+                std::string::npos,
+        "rejects non-power-of-two PT_TLS alignment");
+
+  auto invalid_tls_file_range =
+      BuildElfWithTls(8, 16, 8, 0x1008, UINT64_MAX - 2);
+  const auto invalid_tls_file_range_result = LoadA64Elf(invalid_tls_file_range);
+  Check(!invalid_tls_file_range_result &&
+            invalid_tls_file_range_result.error.find("PT_TLS file range is out of bounds") !=
+                std::string::npos,
+        "rejects PT_TLS file offsets outside the ELF image");
+
+  auto invalid_tls_virtual_range = BuildElfWithTls(8, 16, 8, 0x3000, 0x1008);
+  const auto invalid_tls_virtual_range_result =
+      LoadA64Elf(invalid_tls_virtual_range);
+  Check(!invalid_tls_virtual_range_result &&
+            invalid_tls_virtual_range_result.error.find(
+                "PT_TLS initial data is outside mapped PT_LOAD memory") !=
+                std::string::npos,
+        "rejects TLS initial data outside mapped PT_LOAD segments");
+
+  const auto duplicate_tls_result = LoadA64Elf(BuildElfWithTls(8, 16, 8,
+                                                              0x1008, 0x1008,
+                                                              true));
+  Check(!duplicate_tls_result &&
+            duplicate_tls_result.error.find("multiple PT_TLS") !=
+                std::string::npos,
+        "rejects ELF images containing duplicate PT_TLS segments");
 
   auto executable = BuildMinimalA64Elf(ET_EXEC);
   auto loaded_executable = LoadA64Elf(executable);
