@@ -104,6 +104,19 @@ bool A64GuestTlsRuntime::Prepare(A64GuestModuleSet& modules,
     return Fail(error, "not enough host memory to plan the guest TLS layout");
   }
 
+  std::vector<ModuleTemplate> templates;
+  try {
+    templates.reserve(pending.size());
+    for (const auto& layout : pending) {
+      const auto& tls =
+          *modules.modules[layout.module_index].image.tls;
+      templates.push_back(
+          ModuleTemplate{layout.module_id, layout.offset, tls.template_bytes});
+    }
+  } catch (const std::bad_alloc&) {
+    return Fail(error, "not enough host memory to retain guest TLS templates");
+  }
+
   // Only commit the calculated offsets after the entire layout passes its
   // bounds checks. Repeated prepares are forbidden, preventing IDs from
   // silently changing after a guest thread has been created.
@@ -119,6 +132,7 @@ bool A64GuestTlsRuntime::Prepare(A64GuestModuleSet& modules,
     tls.static_offset_from_tp = layout.offset;
   }
 
+  templates_ = std::move(templates);
   total_tls_size_ = cursor;
   maximum_alignment_ = max_alignment;
   prepared_ = true;
@@ -159,9 +173,21 @@ bool A64GuestTlsRuntime::CreateThread(A64GuestThreadTls* thread,
   }
 
   // The mapping is zero initialized, which provides the two TCB words and each
-  // PT_TLS BSS tail. Copy only each module's validated TLS template bytes.
-  for (const auto& module : current_modules_) {
-    static_cast<void>(module);
+  // PT_TLS BSS tail. Copy each validated template into its per-thread block.
+  for (const auto& module : templates_) {
+    if (module.bytes.empty()) continue;
+    if (AddOverflows(thread_pointer, module.offset_from_tp)) {
+      static_cast<void>(memory_.Unmap(allocation_base, requested_size));
+      return Fail(error, "guest TLS module address overflows");
+    }
+    const auto destination = thread_pointer + module.offset_from_tp;
+    if (AddOverflows(destination, module.bytes.size()) ||
+        destination + module.bytes.size() > allocation_base + requested_size ||
+        !memory_.Initialize(destination, module.bytes.data(),
+                            module.bytes.size())) {
+      static_cast<void>(memory_.Unmap(allocation_base, requested_size));
+      return Fail(error, "failed to initialize a guest thread TLS template");
+    }
   }
 
   if (error != nullptr) error->clear();
