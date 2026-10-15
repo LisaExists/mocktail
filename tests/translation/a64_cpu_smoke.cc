@@ -134,10 +134,12 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
     if (exception == Dynarmic::A64::Exception::Breakpoint) {
       if (allow_any_breakpoint_ || address == return_trap_) {
         saw_breakpoint_ = true;
-        Stop();
       } else {
         Fail("guest hit BRK before returning through the call trap");
       }
+      // Always stop for a breakpoint, even on a failure path. Otherwise the
+      // same BRK can be redispatched indefinitely and mask the original error.
+      Stop();
       return;
     }
     Fail("unexpected guest CPU exception");
