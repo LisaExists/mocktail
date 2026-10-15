@@ -144,7 +144,9 @@ bool A64GuestTlsRuntime::CreateThread(A64GuestThreadTls* thread,
                                       std::string* error) {
   if (!prepared_) return Fail(error, "guest TLS runtime must be prepared first");
   if (thread == nullptr) return Fail(error, "guest TLS output pointer is null");
-  if (thread->valid()) return Fail(error, "guest TLS output already owns an allocation");
+  if (thread->allocation_size != 0) {
+    return Fail(error, "guest TLS output already owns an allocation");
+  }
 
   if (AddOverflows(total_tls_size_, maximum_alignment_)) {
     return Fail(error, "guest TLS allocation size overflows");
