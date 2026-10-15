@@ -40,6 +40,7 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 ## Milestones
 
 - [x] Add an APK native-ABI/ELF preflight tool.
+- [x] Add a read-only ARM64 ELF audit tool for APKs, split APKs, dependencies, version metadata, TLS and dynamic relocation coverage.
 - [x] Add tests for ELF identification, ABI mismatch reporting and split-package detection.
 - [x] Add an optional, pinned Dynarmic dependency and an isolated AArch64 CPU smoke target.
 - [x] Add a bounded ELF64 little-endian AArch64 loader for PT_LOAD segments, including BSS zero-fill, ET_DYN load bias, entry-point validation and read/write bounds checks.

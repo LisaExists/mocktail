@@ -41,6 +41,11 @@ if(MOCKTAIL_TEST_PYTHON)
     COMMAND ${MOCKTAIL_TEST_PYTHON}
             ${CMAKE_CURRENT_SOURCE_DIR}/test_roblox_arm_preflight.py
   )
+  add_test(
+    NAME RobloxArmTranslation.ElfAudit
+    COMMAND ${MOCKTAIL_TEST_PYTHON}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_a64_elf_audit.py
+  )
 endif()
 
 add_executable(runtime_config_file_test runtime_config_file_test.cc)

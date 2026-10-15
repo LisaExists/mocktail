@@ -63,7 +63,16 @@ jobs:
 
       - name: Build loader and Dynarmic tests
         run: |
-          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_translation_smoke
+          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_linux_syscalls_test mocktail_a64_translation_smoke
+
+      - name: Audit linker-generated ARM64 fixtures
+        run: |
+          python3 tools/a64-elf-audit.py --strict \
+            build-translation-ci/mocktail-a64-guest-smoke.so \
+            build-translation-ci/mocktail-a64-guest-syscalls.so \
+            build-translation-ci/libmocktail-a64-module-root.so \
+            build-translation-ci/libmocktail-a64-module-dependency.so \
+            build-translation-ci/libmocktail-a64-module-function-root.so
 
       - name: Run translation and preflight tests
         run: |
