@@ -53,6 +53,9 @@ struct A64TlsSegment final {
   std::uint64_t file_size = 0;
   std::uint64_t memory_size = 0;
   std::uint64_t alignment = 1;
+  // Assigned by A64GuestTlsRuntime after the complete dependency graph loads.
+  std::uint64_t module_id = 0;
+  std::uint64_t static_offset_from_tp = 0;
   std::vector<std::uint8_t> template_bytes;
 };
 
