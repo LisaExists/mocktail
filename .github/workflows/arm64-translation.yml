@@ -67,4 +67,4 @@ jobs:
 
       - name: Run translation and preflight tests
         run: |
-          ctest --test-dir build-translation-ci -R 'RobloxArmTranslation' --output-on-failure
+          ctest --test-dir build-translation-ci -R 'RobloxArmTranslation' --output-on-failure --timeout 60
