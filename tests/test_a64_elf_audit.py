@@ -49,10 +49,23 @@ class ELFReportTests(unittest.TestCase):
             (MODULE.DT_RELAENT, 24),
             (MODULE.DT_NULL, 0),
         ])
-        struct.pack_into("<QQq", data, 0x300, 0x400, 1031, 0)
+        struct.pack_into("<QQq", data, 0x300, 0x400, 1032, 0)
         report = MODULE.audit_elf(bytes(data))
         self.assertFalse(report["prototype_loader_compatible"])
-        self.assertEqual(report["unsupported_relocations"]["R_AARCH64_TLSDESC"], 1)
+        self.assertEqual(report["unsupported_relocations"]["R_AARCH64_IRELATIVE"], 1)
+
+    def test_static_tlsdesc_relocation_is_in_the_supported_subset(self):
+        data = make_elf([
+            (MODULE.DT_RELA, 0x300),
+            (MODULE.DT_RELASZ, 24),
+            (MODULE.DT_RELAENT, 24),
+            (MODULE.DT_NULL, 0),
+        ])
+        struct.pack_into("<QQq", data, 0x300, 0x400, 1031, 0)
+        report = MODULE.audit_elf(bytes(data))
+        self.assertTrue(report["prototype_loader_compatible"])
+        self.assertEqual(report["relocation_counts"]["R_AARCH64_TLSDESC"], 1)
+        self.assertNotIn("R_AARCH64_TLSDESC", report["unsupported_relocations"])
 
     def test_jmprel_uses_dt_pltrel_as_format_not_entry_size(self):
         data = make_elf([
