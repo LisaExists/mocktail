@@ -1,6 +1,7 @@
 // Copyright 2026 Mocktail Project Authors
 // Licensed under the Apache License, Version 2.0.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <fstream>
@@ -198,6 +199,7 @@ int main(int argc, char** argv) {
   using mocktail::translation::test::BuildMinimalA64Elf;
 
   bool call_export = false;
+  bool require_tls = false;
   std::string export_name;
   int first_path = 1;
   if (argc >= 2 && std::string(argv[1]) == "--symbol") {
@@ -209,6 +211,14 @@ int main(int argc, char** argv) {
     call_export = true;
     export_name = argv[2];
     first_path = 3;
+  } else if (argc >= 2 && std::string(argv[1]) == "--require-tls") {
+    if (argc < 3) {
+      std::cerr << "usage: mocktail_a64_translation_smoke --require-tls "
+                   "tls-aarch64-elf\n";
+      return 2;
+    }
+    require_tls = true;
+    first_path = 2;
   }
 
   std::vector<A64GuestModuleSource> sources;
@@ -255,6 +265,33 @@ int main(int argc, char** argv) {
     return 1;
   }
   const auto& image = modules.modules[modules.root_index].image;
+  if (require_tls) {
+    if (!image.tls) {
+      std::cerr << "AArch64 ELF fixture does not contain a PT_TLS segment\n";
+      return 1;
+    }
+    const auto& tls = *image.tls;
+    constexpr std::uint64_t kExpectedTlsFileSize = 8;
+    constexpr std::uint64_t kExpectedTlsMemorySize = 24;
+    const std::array<std::uint8_t, 8> expected_initial{
+        0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
+    if (tls.file_size != kExpectedTlsFileSize ||
+        tls.memory_size != kExpectedTlsMemorySize ||
+        tls.template_bytes.size() != kExpectedTlsMemorySize ||
+        !std::equal(tls.template_bytes.begin(),
+                    tls.template_bytes.begin() + expected_initial.size(),
+                    expected_initial.begin()) ||
+        std::any_of(tls.template_bytes.begin() + expected_initial.size(),
+                    tls.template_bytes.end(),
+                    [](std::uint8_t byte) { return byte != 0; })) {
+      std::cerr << "PT_TLS template contents or sizes did not match the "
+                   "linker-produced fixture expectations\n";
+      return 1;
+    }
+    std::cout << "AArch64 PT_TLS template parsed (filesz="
+              << tls.file_size << "; memsz=" << tls.memory_size
+              << "; BSS zero-fill verified; execution model still unsupported)\n";
+  }
   Address start_address = image.entry_point;
   if (call_export) {
     const auto address = modules.ResolveExportedSymbol(export_name);
