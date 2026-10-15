@@ -425,6 +425,24 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
   if (!register_one("abort", [](const Arguments&) {
         return Failure("guest called abort()");
       })) return false;
+
+  // TLSDESC resolver for the prototype's preloaded static TLS layout. The
+  // guest ABI passes the descriptor address in X0; its second word is the
+  // precomputed offset from TP. Dynamic TLS/DTV descriptors are not handled.
+  if (!register_one("__mocktail_tlsdesc_static", [this](
+          const Arguments& arguments) -> A64HostCallResult {
+        if (arguments[0] >
+            std::numeric_limits<std::uint64_t>::max() - sizeof(std::uint64_t)) {
+          return Failure("static TLSDESC address overflows");
+        }
+        std::uint64_t thread_pointer_offset = 0;
+        if (!memory_.Read(arguments[0] + sizeof(std::uint64_t),
+                          &thread_pointer_offset,
+                          sizeof(thread_pointer_offset))) {
+          return Failure("static TLSDESC points outside readable guest memory");
+        }
+        return {true, thread_pointer_offset, {}};
+      })) return false;
   if (!register_one("__stack_chk_fail", [](const Arguments&) {
         return Failure("guest stack-protector check failed");
       })) return false;
