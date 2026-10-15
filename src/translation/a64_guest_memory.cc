@@ -94,6 +94,107 @@ bool A64GuestMemory::Map(std::uint64_t address, std::uint64_t size,
   return true;
 }
 
+bool A64GuestMemory::MapAnywhere(std::uint64_t size,
+                                     std::uint8_t permissions,
+                                     std::uint64_t* guest_address,
+                                     std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (guest_address == nullptr) {
+    return fail("guest mmap result pointer is null");
+  }
+  if (size == 0) return fail("guest mmap size must be greater than zero");
+  if (size > std::numeric_limits<std::uint64_t>::max() - (kPageSize - 1)) {
+    return fail("guest mmap size overflows while rounding to page size");
+  }
+  std::uint64_t rounded_size = 0;
+  if (!AlignUp(size, &rounded_size)) {
+    return fail("guest mmap size overflows while rounding to page size");
+  }
+  if (rounded_size > max_mapped_bytes_ ||
+      mapped_bytes_ > max_mapped_bytes_ -
+                          static_cast<std::size_t>(rounded_size)) {
+    return fail("guest mapping exceeds the configured memory limit");
+  }
+
+  // This address range is deliberately below the smoke harness' stack and far
+  // above the low ET_DYN fixture addresses. Existing guest mappings still win.
+  constexpr std::uint64_t kAnonymousMappingBase = 0x6000000000ULL;
+  std::uint64_t candidate = kAnonymousMappingBase;
+  while (true) {
+    if (AddOverflows(candidate, rounded_size)) {
+      return fail("guest mmap address range overflows");
+    }
+    const auto end = candidate + rounded_size;
+    const auto collision = pages_.lower_bound(candidate);
+    if (collision != pages_.end() && collision->first < end) {
+      if (AddOverflows(collision->first, kPageSize)) {
+        return fail("guest mmap search address overflows");
+      }
+      candidate = collision->first + kPageSize;
+      continue;
+    }
+
+    if (!Map(candidate, rounded_size, permissions, error)) return false;
+    *guest_address = candidate;
+    return true;
+  }
+}
+
+bool A64GuestMemory::Protect(std::uint64_t address, std::uint64_t size,
+                             std::uint8_t permissions, std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if ((permissions & ~kAllPermissions) != 0) {
+    return fail("guest protection contains unknown permission bits");
+  }
+  if (size == 0 || address % kPageSize != 0 || size % kPageSize != 0) {
+    return fail("guest protection ranges must be non-empty and page-aligned");
+  }
+  if (AddOverflows(address, size)) {
+    return fail("guest protection range overflows");
+  }
+  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
+    if (pages_.find(address + offset) == pages_.end()) {
+      return fail("guest protection range contains an unmapped page");
+    }
+  }
+  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
+    pages_.find(address + offset)->second.permissions = permissions;
+  }
+  if (error != nullptr) error->clear();
+  return true;
+}
+
+bool A64GuestMemory::Unmap(std::uint64_t address, std::uint64_t size,
+                           std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (size == 0 || address % kPageSize != 0 || size % kPageSize != 0) {
+    return fail("guest unmap ranges must be non-empty and page-aligned");
+  }
+  if (AddOverflows(address, size)) {
+    return fail("guest unmap range overflows");
+  }
+  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
+    if (pages_.find(address + offset) == pages_.end()) {
+      return fail("guest unmap range contains an unmapped page");
+    }
+  }
+  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
+    pages_.erase(address + offset);
+  }
+  mapped_bytes_ -= static_cast<std::size_t>(size);
+  if (error != nullptr) error->clear();
+  return true;
+}
+
 bool A64GuestMemory::MapImage(const A64LoadedImage& image,
                               std::string* error) {
   auto fail = [&](const char* message) {
