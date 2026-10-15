@@ -355,38 +355,38 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
         return result;
       })) return false;
 
-  if (!register_one("free", [this](const Arguments& arguments)
-          -> A64HostCallResult {
-        const auto address = arguments[0];
-        if (address == 0) return {true, 0, {}};
-        std::uint64_t size = 0;
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          const auto found = allocations_.find(address);
-          if (found == allocations_.end()) {
-            return Failure("free received a pointer not owned by guest malloc");
-          }
-          size = found->second;
-          allocations_.erase(found);
-        }
-        std::string diagnostic;
-        if (!memory_.Unmap(address, size, &diagnostic)) {
-          return Failure("free could not release its guest allocation: " +
-                         diagnostic);
-        }
-        return {true, 0, {}};
+  auto free_allocation = [this](std::uint64_t address)
+      -> A64HostCallResult {
+    if (address == 0) return {true, 0, {}};
+    std::uint64_t size = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      const auto found = allocations_.find(address);
+      if (found == allocations_.end()) {
+        return Failure("free received a pointer not owned by guest malloc");
+      }
+      size = found->second;
+      allocations_.erase(found);
+    }
+    std::string diagnostic;
+    if (!memory_.Unmap(address, size, &diagnostic)) {
+      return Failure("free could not release its guest allocation: " +
+                     diagnostic);
+    }
+    return {true, 0, {}};
+  };
+
+  if (!register_one("free", [free_allocation](const Arguments& arguments) {
+        return free_allocation(arguments[0]);
       })) return false;
 
-  if (!register_one("realloc", [this, allocate, read_bytes](
+  if (!register_one("realloc", [this, allocate, read_bytes, free_allocation](
           const Arguments& arguments) -> A64HostCallResult {
         const auto old_address = arguments[0];
         const auto new_size = arguments[1];
         if (old_address == 0) return allocate(new_size);
         if (new_size == 0) {
-          Arguments free_arguments{};
-          free_arguments[0] = old_address;
-          const auto freed = this->DispatchSvc(
-              kFirstSvcImmediate + 9U, free_arguments);
+          const auto freed = free_allocation(old_address);
           if (!freed.success) return freed;
           return {true, 0, {}};
         }
@@ -411,20 +411,13 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
         if (!read_bytes(old_address, copy_size, &bytes, &diagnostic) ||
             (copy_size != 0 &&
              !memory_.Write(allocated.value, bytes.data(), bytes.size()))) {
-          Arguments free_new{};
-          free_new[0] = allocated.value;
-          const auto freed = this->DispatchSvc(
-              kFirstSvcImmediate + 9U, free_new);
-          static_cast<void>(freed);
+          static_cast<void>(free_allocation(allocated.value));
           if (diagnostic.empty()) {
             diagnostic = "realloc could not copy old guest allocation";
           }
           return Failure(std::move(diagnostic));
         }
-        Arguments free_old{};
-        free_old[0] = old_address;
-        const auto freed = this->DispatchSvc(
-            kFirstSvcImmediate + 9U, free_old);
+        const auto freed = free_allocation(old_address);
         if (!freed.success) return freed;
         return allocated;
       })) return false;
