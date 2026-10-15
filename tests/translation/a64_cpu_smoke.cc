@@ -18,6 +18,7 @@
 #include "translation/a64_elf_loader.h"
 #include "translation/a64_guest_memory.h"
 #include "translation/a64_guest_module_loader.h"
+#include "translation/a64_guest_tls.h"
 #include "translation/a64_linux_syscalls.h"
 #include "translation/a64_guest_host_calls.h"
 #include "a64_test_elf.h"
@@ -324,6 +325,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   const auto& image = modules.modules[modules.root_index].image;
+  A64GuestTlsRuntime tls_runtime(memory);
+  A64GuestThreadTls thread_tls;
   if (require_tls) {
     if (!image.tls) {
       std::cerr << "AArch64 ELF fixture does not contain a PT_TLS segment\n";
@@ -347,9 +350,17 @@ int main(int argc, char** argv) {
                    "linker-produced fixture expectations\n";
       return 1;
     }
-    std::cout << "AArch64 PT_TLS template parsed (filesz="
-              << tls.file_size << "; memsz=" << tls.memory_size
-              << "; BSS zero-fill verified; execution model still unsupported)\n";
+    if (!tls_runtime.Prepare(modules, &memory_error)) {
+      std::cerr << "AArch64 guest TLS layout failed: " << memory_error << '\n';
+      return 1;
+    }
+    std::cout << "AArch64 PT_TLS template parsed and static TLS layout prepared "
+              << "(filesz=" << tls.file_size << "; memsz=" << tls.memory_size
+              << "; module="
+              << modules.modules[modules.root_index].image.tls->module_id
+              << "; TP offset="
+              << modules.modules[modules.root_index].image.tls->static_offset_from_tp
+              << ")\n";
   }
   std::size_t initializer_count = 0;
   for (const auto& module : modules.modules) {
@@ -405,6 +416,12 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (require_tls && !tls_runtime.CreateThread(&thread_tls, &memory_error)) {
+    std::cerr << "AArch64 guest TLS thread initialization failed: "
+              << memory_error << '\n';
+    return 1;
+  }
+
   constexpr std::uint64_t kReturnTrap = 0x7FFF000000ULL;
   if (call_export || run_initializers) {
     if (!memory.Map(kReturnTrap, A64GuestMemory::kPageSize,
@@ -424,6 +441,7 @@ int main(int argc, char** argv) {
   callbacks.SetReturnTrap(kReturnTrap, !call_export);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
+  if (require_tls) config.tpidr_el0 = &thread_tls.tpidr_el0;
   config.enable_cycle_counting = false;
   config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
@@ -506,9 +524,27 @@ int main(int argc, char** argv) {
               << ", expected 42\n";
     return 1;
   }
-  if (!call_export && cpu.GetRegister(1) != 42) {
+  if (require_tls) {
+    constexpr std::uint64_t kExpectedInitialTls = 0x1122334455667788ULL;
+    if (cpu.GetRegister(1) != kExpectedInitialTls) {
+      std::cerr << "guest TPIDR_EL0 TLS read returned " << cpu.GetRegister(1)
+                << ", expected 0x1122334455667788\n";
+      return 1;
+    }
+    if (cpu.GetRegister(3) != 0) {
+      std::cerr << "guest TLS BSS read returned " << cpu.GetRegister(3)
+                << ", expected zero\n";
+      return 1;
+    }
+    std::cout << "Guest TPIDR_EL0 points to initialized TLS and zero-filled BSS\n";
+  } else if (!call_export && cpu.GetRegister(1) != 42) {
     std::cerr << "AArch64 guest result register X1 was " << cpu.GetRegister(1)
               << ", expected 42\n";
+    return 1;
+  }
+
+  if (require_tls && !tls_runtime.DestroyThread(&thread_tls, &memory_error)) {
+    std::cerr << "AArch64 guest TLS cleanup failed: " << memory_error << '\n';
     return 1;
   }
 
