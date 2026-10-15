@@ -9,6 +9,7 @@
 .type _start, %function
 _start:
     mov x0, #42
+    mov x1, #42
     brk #0
 .size _start, .-_start
 
