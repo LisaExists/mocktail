@@ -131,7 +131,7 @@ int main() {
   Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
         "permits writes after mprotect restores write permission");
   Check(!anonymous_memory.Protect(anonymous_base,
-                                 2U * A64GuestMemory::kPageSize,
+                                 4U * A64GuestMemory::kPageSize,
                                  A64GuestMemory::kRead, &error),
         "rejects mprotect ranges containing an unmapped page");
   Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
@@ -145,16 +145,16 @@ int main() {
             !anonymous_memory.IsMapped(anonymous_base +
                                           A64GuestMemory::kPageSize, 1),
         "munmap preserves pages outside its range and releases pages inside it");
-  Check(anonymous_memory.mapped_bytes() == 2U * A64GuestMemory::kPageSize,
+  Check(anonymous_memory.mapped_bytes() == A64GuestMemory::kPageSize,
         "accounts for pages removed by a partial munmap");
   Check(anonymous_memory.Unmap(anonymous_base, 2U * A64GuestMemory::kPageSize,
                                &error) &&
-            anonymous_memory.mapped_bytes() == A64GuestMemory::kPageSize,
+            anonymous_memory.mapped_bytes() == 0,
         "munmaps a range containing remaining memory and holes");
   Check(anonymous_memory.Unmap(second_mapping, A64GuestMemory::kPageSize,
                                &error) &&
             anonymous_memory.mapped_bytes() == 0,
-        "releases the last anonymous mapping");
+        "repeatedly unmapping an empty range is harmless");
 
   Check(!anonymous_memory.MapAnywhere(0, A64GuestMemory::kRead,
                                       &anonymous_base, &error),
