@@ -228,6 +228,7 @@ int main(int argc, char** argv) {
 
   bool call_export = false;
   bool require_tls = false;
+  bool require_tlsdesc = false;
   bool run_initializers = false;
   std::string export_name;
   int first_path = 1;
@@ -247,6 +248,14 @@ int main(int argc, char** argv) {
       return 2;
     }
     require_tls = true;
+    first_path = 2;
+  } else if (argc >= 2 && std::string(argv[1]) == "--require-tlsdesc") {
+    if (argc < 3) {
+      std::cerr << "usage: mocktail_a64_translation_smoke --require-tlsdesc "
+                   "tlsdesc-aarch64-elf\\n";
+      return 2;
+    }
+    require_tlsdesc = true;
     first_path = 2;
   } else if (argc >= 2 && std::string(argv[1]) == "--run-initializers") {
     if (argc < 3) {
@@ -336,7 +345,7 @@ int main(int argc, char** argv) {
   const auto& image = modules.modules[modules.root_index].image;
   A64GuestTlsRuntime tls_runtime(memory);
   A64GuestThreadTls thread_tls;
-  if (require_tls) {
+  if (require_tls || require_tlsdesc) {
     if (!image.tls) {
       std::cerr << "AArch64 ELF fixture does not contain a PT_TLS segment\n";
       return 1;
@@ -425,7 +434,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if (require_tls && !tls_runtime.CreateThread(&thread_tls, &memory_error)) {
+  if ((require_tls || require_tlsdesc) && !tls_runtime.CreateThread(&thread_tls, &memory_error)) {
     std::cerr << "AArch64 guest TLS thread initialization failed: "
               << memory_error << '\n';
     return 1;
@@ -450,7 +459,7 @@ int main(int argc, char** argv) {
   callbacks.SetReturnTrap(kReturnTrap, !call_export);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
-  if (require_tls) config.tpidr_el0 = &thread_tls.tpidr_el0;
+  if (require_tls || require_tlsdesc) config.tpidr_el0 = &thread_tls.tpidr_el0;
   config.enable_cycle_counting = false;
   config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
