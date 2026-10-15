@@ -277,8 +277,8 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
         blockers.append("ELF contains no PT_LOAD segments")
     if image.has_tls_segment:
         report["runtime_gaps"].append(
-            "static PT_TLS template/TPIDR_EL0 support exists in the smoke runtime, "
-            "but Bionic TCB/DTV and dynamic TLS/TLSDESC are not implemented"
+            "static TLS and preloaded-module TLSDESC are supported by the prototype; "
+            "Bionic TCB/DTV, dlopen-style dynamic TLS, and guest pthread scheduling remain gaps"
         )
 
     tags = image.dynamic_tags(blockers)
