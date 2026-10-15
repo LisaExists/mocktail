@@ -301,6 +301,13 @@ int main(int argc, char** argv) {
   }
 
   A64GuestModuleLoadOptions load_options;
+  const auto tlsdesc_resolver =
+      host_calls.ResolveSymbol("__mocktail_tlsdesc_static");
+  if (!tlsdesc_resolver) {
+    std::cerr << "static TLSDESC resolver thunk was not registered\n";
+    return 1;
+  }
+  load_options.elf.tlsdesc_resolver_address = *tlsdesc_resolver;
   // libc is supplied by the guest-to-host thunk table until an ARM64 Bionic
   // library catalogue is provided. Every actual imported symbol still has to
   // resolve through an explicit guest stub.
