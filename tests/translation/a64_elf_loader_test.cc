@@ -459,6 +459,10 @@ int main() {
   };
   const auto loaded_versioned_import =
       LoadA64Elf(versioned_import, versioned_options);
+  if (!loaded_versioned_import) {
+    std::cerr << "[DETAIL] versioned import error: "
+              << loaded_versioned_import.error << '\n';
+  }
   Check(static_cast<bool>(loaded_versioned_import) && saw_versioned_request,
         "resolves a DT_VERNEED import by exact name, version and provider");
   if (loaded_versioned_import) {
@@ -476,6 +480,10 @@ int main() {
   };
   const auto refused_name_only =
       LoadA64Elf(versioned_import, no_versioned_resolver);
+  if (!refused_name_only) {
+    std::cerr << "[DETAIL] name-only rejection error: "
+              << refused_name_only.error << '\n';
+  }
   Check(!refused_name_only &&
             refused_name_only.error.find(
                 "unresolved AArch64 symbol: test_symbol@MOCK_ABI_1.0 from libc.so") !=
@@ -483,6 +491,10 @@ int main() {
         "refuses to bind a versioned import through a name-only resolver");
 
   const auto versioned_export = LoadA64Elf(BuildElfWithSymbolVersion(false));
+  if (!versioned_export) {
+    std::cerr << "[DETAIL] versioned export error: "
+              << versioned_export.error << '\n';
+  }
   Check(static_cast<bool>(versioned_export),
         "loads a DT_VERDEF versioned symbol definition");
   if (versioned_export) {
@@ -497,6 +509,10 @@ int main() {
 
   const auto hidden_version_export =
       LoadA64Elf(BuildElfWithSymbolVersion(false, true));
+  if (!hidden_version_export) {
+    std::cerr << "[DETAIL] hidden export error: "
+              << hidden_version_export.error << '\n';
+  }
   Check(static_cast<bool>(hidden_version_export),
         "loads a hidden/non-default symbol version");
   if (hidden_version_export) {
@@ -515,6 +531,11 @@ int main() {
   mocktail::translation::test::WriteDynamicEntry(
       malformed_version_count, 11, version_need_num);
   const auto malformed_version_result = LoadA64Elf(malformed_version_count);
+  if (malformed_version_result.error.find(
+          "DT_VERNEED chain ends before DT_VERNEEDNUM") == std::string::npos) {
+    std::cerr << "[DETAIL] malformed version count error: "
+              << malformed_version_result.error << '\n';
+  }
   Check(!malformed_version_result &&
             malformed_version_result.error.find(
                 "DT_VERNEED chain ends before DT_VERNEEDNUM") !=
