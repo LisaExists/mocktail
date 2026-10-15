@@ -119,6 +119,7 @@ std::vector<std::uint8_t> BuildElfWithInitializers() {
 int main() {
   using mocktail::translation::A64ElfLoadOptions;
   using mocktail::translation::LoadA64Elf;
+  using mocktail::translation::test::BuildA64ElfWithSymbolVersion;
   using mocktail::translation::test::BuildMinimalA64Elf;
   using mocktail::translation::test::ReadElfHeader;
   using mocktail::translation::test::ReadProgramHeader;
