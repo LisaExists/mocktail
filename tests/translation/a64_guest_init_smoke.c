@@ -4,9 +4,7 @@
 // This tiny C shared object deliberately avoids libc calls. Its initializer
 // sets guest data to 41; _start returns 42 only if the runtime executes
 // DT_INIT_ARRAY before entering the module.
-#include <stdint.h>
-
-__attribute__((visibility("hidden"))) volatile uint64_t guest_init_state;
+__attribute__((visibility("hidden"))) volatile unsigned long long guest_init_state;
 
 __attribute__((constructor, used)) static void guest_initializer(void) {
   guest_init_state = 41;
