@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "translation/a64_guest_memory.h"
@@ -117,10 +118,10 @@ int main() {
 
   Check(!runtime.Prepare(modules, &error),
         "rejects re-preparing a layout after thread addresses could exist");
+  const auto old_thread_pointer = thread_one.thread_pointer;
   Check(runtime.DestroyThread(&thread_one, &error),
         "releases the first guest TLS mapping");
-  Check(!thread_one.valid() &&
-            !memory.IsMapped(thread_one.thread_pointer, 1),
+  Check(!thread_one.valid() && !memory.IsMapped(old_thread_pointer, 1),
         "clears the thread descriptor after unmapping its TLS");
   Check(runtime.DestroyThread(&thread_two, &error),
         "releases the second guest TLS mapping");
