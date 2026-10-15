@@ -34,6 +34,11 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
   void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
 
+  void PrepareForRun() {
+    saw_breakpoint_ = false;
+    if (jit_ != nullptr) jit_->ClearHalt();
+  }
+
   bool saw_breakpoint() const { return saw_breakpoint_; }
   const std::string& failure() const { return failure_; }
   void SetReturnTrap(Address address, bool allow_any_breakpoint) {
@@ -200,6 +205,7 @@ int main(int argc, char** argv) {
 
   bool call_export = false;
   bool require_tls = false;
+  bool run_initializers = false;
   std::string export_name;
   int first_path = 1;
   if (argc >= 2 && std::string(argv[1]) == "--symbol") {
@@ -218,6 +224,14 @@ int main(int argc, char** argv) {
       return 2;
     }
     require_tls = true;
+    first_path = 2;
+  } else if (argc >= 2 && std::string(argv[1]) == "--run-initializers") {
+    if (argc < 3) {
+      std::cerr << "usage: mocktail_a64_translation_smoke --run-initializers "
+                   "root-aarch64-elf [dependency-elf ...]\n";
+      return 2;
+    }
+    run_initializers = true;
     first_path = 2;
   }
 
@@ -292,6 +306,14 @@ int main(int argc, char** argv) {
               << tls.file_size << "; memsz=" << tls.memory_size
               << "; BSS zero-fill verified; execution model still unsupported)\n";
   }
+  std::size_t initializer_count = 0;
+  for (const auto& module : modules.modules) {
+    initializer_count += module.image.initializers.size();
+  }
+  if (run_initializers && initializer_count == 0) {
+    std::cerr << "AArch64 modules have no DT_INIT/DT_INIT_ARRAY callbacks to run\n";
+    return 1;
+  }
   Address start_address = image.entry_point;
   if (call_export) {
     const auto address = modules.ResolveExportedSymbol(export_name);
@@ -341,7 +363,7 @@ int main(int argc, char** argv) {
   }
 
   constexpr std::uint64_t kReturnTrap = 0x7FFF000000ULL;
-  if (call_export) {
+  if (call_export || run_initializers) {
     if (!memory.Map(kReturnTrap, A64GuestMemory::kPageSize,
                     A64GuestMemory::kRead | A64GuestMemory::kExecute,
                     &memory_error)) {
@@ -365,21 +387,75 @@ int main(int argc, char** argv) {
   callbacks.Attach(&cpu);
   cpu.SetSP(kStackBase + kStackSize - 16);
   const auto initial_stack_pointer = cpu.GetSP();
-  if (call_export) {
-    cpu.SetRegister(0, 41);
-    cpu.SetRegister(30, kReturnTrap);
-  }
-  cpu.SetPC(start_address);
 
-  static_cast<void>(cpu.Run());
-  if (!callbacks.failure().empty()) {
-    std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-              << callbacks.failure() << '\n';
-    return 1;
+  auto run_guest_routine = [&](Address address, bool must_return,
+                               bool zero_arguments,
+                               std::optional<std::uint64_t> initial_x0,
+                               const std::string& label) -> bool {
+    callbacks.SetReturnTrap(kReturnTrap, !must_return);
+    callbacks.PrepareForRun();
+    cpu.SetSP(initial_stack_pointer);
+    cpu.SetRegister(30, kReturnTrap);
+    if (zero_arguments) {
+      cpu.SetRegister(0, 0);
+      cpu.SetRegister(1, 0);
+      cpu.SetRegister(2, 0);
+    }
+    if (initial_x0) cpu.SetRegister(0, *initial_x0);
+    cpu.SetPC(address);
+    static_cast<void>(cpu.Run());
+
+    if (!callbacks.failure().empty()) {
+      std::cerr << "AArch64 guest " << label << " failed: "
+                << callbacks.failure() << '\n';
+      return false;
+    }
+    if (!callbacks.saw_breakpoint()) {
+      std::cerr << "AArch64 guest " << label
+                << " did not reach its expected stop/return trap\n";
+      return false;
+    }
+    if (cpu.GetSP() != initial_stack_pointer) {
+      std::cerr << "AArch64 guest " << label
+                << " did not preserve the stack pointer\n";
+      return false;
+    }
+    return true;
+  };
+
+  std::size_t executed_initializers = 0;
+  if (run_initializers) {
+    // Run dependencies first, preserving each module's DT_INIT then init-array
+    // order. This is an opt-in test harness behavior, not automatic Bionic
+    // process startup or a claim of Android constructor-argument compatibility.
+    for (const auto module_index : modules.initialization_order) {
+      if (module_index >= modules.modules.size()) {
+        std::cerr << "guest module loader returned an invalid initialization index\n";
+        return 1;
+      }
+      const auto& module = modules.modules[module_index];
+      for (const auto address : module.image.initializers) {
+        if (!memory.IsExecutable(address, sizeof(std::uint32_t))) {
+          std::cerr << "initializer address is not executable for "
+                    << module.source_name << '\n';
+          return 1;
+        }
+        if (!run_guest_routine(address, true, true, std::nullopt,
+                              "initializer in " + module.source_name)) {
+          return 1;
+        }
+        ++executed_initializers;
+      }
+    }
+    std::cout << "Executed " << executed_initializers
+              << " guest initializer(s) in dependency order\n";
   }
-  if (!callbacks.saw_breakpoint()) {
-    std::cerr << "AArch64 ELF/JIT integration smoke test failed: "
-                 "the stop breakpoint was not observed\n";
+
+  const bool entry_returns = call_export;
+  const auto initial_x0 =
+      call_export ? std::optional<std::uint64_t>{41} : std::nullopt;
+  if (!run_guest_routine(start_address, entry_returns, false, initial_x0,
+                         call_export ? "exported function" : "entry point")) {
     return 1;
   }
   if (cpu.GetRegister(0) != 42) {
@@ -392,14 +468,11 @@ int main(int argc, char** argv) {
               << ", expected 42\n";
     return 1;
   }
-  if (cpu.GetSP() != initial_stack_pointer) {
-    std::cerr << "AArch64 guest stack pointer was not restored\n";
-    return 1;
-  }
 
   std::cout << "AArch64 guest module/JIT smoke test passed (modules="
             << modules.modules.size() << "; mode="
             << (call_export ? "export" : "entry")
+            << "; initializers=" << executed_initializers
             << "; X0=42; stack preserved)\n";
   return 0;
 }
