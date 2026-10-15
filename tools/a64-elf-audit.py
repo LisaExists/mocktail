@@ -471,12 +471,9 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
                     (version_indices[index] & 0x7FFF) > 1
                 )
                 if report["versioned_relocations"]:
-                    blockers.append(
-                        "relocations reference versioned symbols; version matching is unsupported"
-                    )
-                elif report["versioned_symbols"]:
                     report["runtime_gaps"].append(
-                        "symbol version metadata exists, but no scanned relocation uses a non-global version"
+                        "versioned relocations are matched by exact GNU version/provider; "
+                        "validate default-version interposition against the target Android libraries"
                     )
         except (AuditError, struct.error) as exc:
             blockers.append(f"cannot inspect dynamic symbol table: {exc}")
