@@ -30,6 +30,40 @@ int main() {
   using mocktail::translation::A64LinuxSyscalls;
   A64GuestMemory memory(1024U * 1024U);
   A64LinuxSyscalls syscalls(memory);
+  const std::array<std::uint64_t, 6> empty_arguments{};
+  const auto initial_break =
+      syscalls.Dispatch(A64LinuxSyscalls::kBrk, empty_arguments);
+  Check(initial_break.value == A64LinuxSyscalls::kInitialProgramBreak,
+        "brk(0) reports the initial guest program break");
+
+  const std::array<std::uint64_t, 6> grow_break_arguments{
+      initial_break.value + A64GuestMemory::kPageSize, 0, 0, 0, 0, 0};
+  const auto grown_break =
+      syscalls.Dispatch(A64LinuxSyscalls::kBrk, grow_break_arguments);
+  Check(grown_break.value == grow_break_arguments[0] &&
+            memory.IsMapped(initial_break.value, A64GuestMemory::kPageSize),
+        "brk grows the guest heap using private writable guest pages");
+  const std::uint64_t heap_sentinel = 0x1122334455667788ULL;
+  std::uint64_t heap_actual = 0;
+  Check(memory.Write(initial_break.value, &heap_sentinel, sizeof(heap_sentinel)) &&
+            memory.Read(initial_break.value, &heap_actual, sizeof(heap_actual)) &&
+            heap_actual == heap_sentinel,
+        "guest brk memory can be read and written without host pointers");
+
+  const std::array<std::uint64_t, 6> shrink_break_arguments{
+      initial_break.value, 0, 0, 0, 0, 0};
+  const auto shrunk_break =
+      syscalls.Dispatch(A64LinuxSyscalls::kBrk, shrink_break_arguments);
+  Check(shrunk_break.value == initial_break.value &&
+            !memory.IsMapped(initial_break.value, 1),
+        "brk releases pages when shrinking the heap");
+  const std::array<std::uint64_t, 6> invalid_break_arguments{
+      std::numeric_limits<std::uint64_t>::max(), 0, 0, 0, 0, 0};
+  const auto invalid_break =
+      syscalls.Dispatch(A64LinuxSyscalls::kBrk, invalid_break_arguments);
+  Check(invalid_break.value == initial_break.value,
+        "brk refuses out-of-range values without changing the current break");
+
   const std::array<std::uint64_t, 6> mmap_arguments{
       0, 5000, 3, 0x22, std::numeric_limits<std::uint64_t>::max(), 0};
   const auto mapped = syscalls.Dispatch(A64LinuxSyscalls::kMmap, mmap_arguments);

@@ -34,6 +34,13 @@ A64LinuxSyscallResult ErrorResult(int error) {
   return result;
 }
 
+bool RoundAddress(std::uint64_t address, std::uint64_t* rounded) noexcept {
+  const auto mask = A64GuestMemory::kPageSize - 1;
+  if (address > std::numeric_limits<std::uint64_t>::max() - mask) return false;
+  *rounded = (address + mask) & ~mask;
+  return true;
+}
+
 bool RoundLength(std::uint64_t length, std::uint64_t* rounded) noexcept {
   if (length == 0 ||
       length > std::numeric_limits<std::uint64_t>::max() -
@@ -64,6 +71,54 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
     std::uint64_t number,
     const std::array<std::uint64_t, 6>& arguments) {
   switch (number) {
+    case kBrk: {
+      // Linux brk returns the current break on failure instead of -errno.
+      // This private guest heap never maps or exposes host process memory.
+      const auto requested = arguments[0];
+      if (requested == 0) {
+        A64LinuxSyscallResult result;
+        result.value = program_break_;
+        return result;
+      }
+      if (requested < kInitialProgramBreak || requested > kMaxProgramBreak) {
+        A64LinuxSyscallResult result;
+        result.value = program_break_;
+        return result;
+      }
+
+      std::uint64_t old_mapping_end = 0;
+      std::uint64_t new_mapping_end = 0;
+      if (!RoundAddress(program_break_, &old_mapping_end) ||
+          !RoundAddress(requested, &new_mapping_end)) {
+        A64LinuxSyscallResult result;
+        result.value = program_break_;
+        return result;
+      }
+
+      std::string error;
+      if (new_mapping_end > old_mapping_end) {
+        if (!memory_.Map(old_mapping_end, new_mapping_end - old_mapping_end,
+                         A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                         &error)) {
+          A64LinuxSyscallResult result;
+          result.value = program_break_;
+          return result;
+        }
+      } else if (new_mapping_end < old_mapping_end) {
+        if (!memory_.Unmap(new_mapping_end, old_mapping_end - new_mapping_end,
+                           &error)) {
+          A64LinuxSyscallResult result;
+          result.value = program_break_;
+          return result;
+        }
+      }
+
+      program_break_ = requested;
+      A64LinuxSyscallResult result;
+      result.value = program_break_;
+      return result;
+    }
+
     case kMmap: {
       std::uint64_t rounded_size = 0;
       if (!RoundLength(arguments[1], &rounded_size)) {

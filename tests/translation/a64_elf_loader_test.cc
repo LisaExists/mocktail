@@ -219,9 +219,17 @@ int main() {
       LoadA64Elf(invalid_tls_virtual_range);
   Check(!invalid_tls_virtual_range_result &&
             invalid_tls_virtual_range_result.error.find(
-                "PT_TLS initial data is outside mapped PT_LOAD memory") !=
+                "PT_TLS memory range is outside mapped PT_LOAD memory") !=
                 std::string::npos,
         "rejects TLS initial data outside mapped PT_LOAD segments");
+
+  const auto invalid_tls_bss_range_result =
+      LoadA64Elf(BuildElfWithTls(0, 16, 8, 0x3000, 0x1008));
+  Check(!invalid_tls_bss_range_result &&
+            invalid_tls_bss_range_result.error.find(
+                "PT_TLS memory range is outside mapped PT_LOAD memory") !=
+                std::string::npos,
+        "rejects an unmapped PT_TLS BSS-only range");
 
   const auto duplicate_tls_result = LoadA64Elf(BuildElfWithTls(8, 16, 8,
                                                               0x1008, 0x1008,

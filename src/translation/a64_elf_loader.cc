@@ -1651,13 +1651,38 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
     tls.file_size = tls_header->p_filesz;
     tls.memory_size = tls_header->p_memsz;
     tls.alignment = std::max<std::uint64_t>(1, tls_header->p_align);
+    const auto template_address = tls_header->p_vaddr + image.load_bias;
+    if (AddOverflows(template_address, tls.memory_size)) {
+      return Failure("relocated PT_TLS memory range overflows");
+    }
+    const auto template_end = template_address + tls.memory_size;
+    auto mapped_cursor = template_address;
+    while (mapped_cursor < template_end) {
+      bool found_segment = false;
+      std::uint64_t containing_end = 0;
+      for (const auto& segment : image.segments) {
+        if (mapped_cursor < segment.guest_address) continue;
+        const auto offset = mapped_cursor - segment.guest_address;
+        if (offset < segment.bytes.size()) {
+          if (AddOverflows(segment.guest_address, segment.bytes.size())) {
+            return Failure("PT_TLS containing PT_LOAD range overflows");
+          }
+          found_segment = true;
+          containing_end = segment.guest_address + segment.bytes.size();
+          break;
+        }
+      }
+      if (!found_segment) {
+        return Failure("PT_TLS memory range is outside mapped PT_LOAD memory");
+      }
+      mapped_cursor = std::min(template_end, containing_end);
+    }
     try {
       tls.template_bytes.resize(static_cast<std::size_t>(tls.memory_size), 0);
     } catch (const std::bad_alloc&) {
       return Failure("not enough host memory to allocate bounded PT_TLS template");
     }
     if (tls.file_size != 0) {
-      const auto template_address = tls_header->p_vaddr + image.load_bias;
       if (!image.Read(template_address, tls.template_bytes.data(),
                       static_cast<std::size_t>(tls.file_size))) {
         return Failure("PT_TLS initial data is outside mapped PT_LOAD memory");

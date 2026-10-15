@@ -24,6 +24,10 @@ class A64LinuxSyscalls final {
  public:
   static constexpr std::uint64_t kExit = 93;
   static constexpr std::uint64_t kExitGroup = 94;
+  static constexpr std::uint64_t kBrk = 214;
+  static constexpr std::uint64_t kInitialProgramBreak = 0x6800000000ULL;
+  static constexpr std::uint64_t kMaxProgramBreak =
+      kInitialProgramBreak + 256U * 1024U * 1024U;
   static constexpr std::uint64_t kMunmap = 215;
   static constexpr std::uint64_t kMmap = 222;
   static constexpr std::uint64_t kMprotect = 226;
@@ -35,6 +39,7 @@ class A64LinuxSyscalls final {
 
  private:
   A64GuestMemory& memory_;
+  std::uint64_t program_break_ = kInitialProgramBreak;
 };
 
 }  // namespace mocktail::translation

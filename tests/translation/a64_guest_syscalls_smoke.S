@@ -27,8 +27,23 @@ _start:
     mov x8, #215
     svc #0
 
-    mov x0, x11
-    mov x1, x11
+    mov x0, #0
+    mov x8, #214
+    svc #0
+    mov x12, x0
+
+    add x0, x12, #4096
+    mov x8, #214
+    svc #0
+    mov x10, #42
+    str x10, [x12]
+    ldr x13, [x12]
+
+    mov x0, x12
+    mov x8, #214
+    svc #0
+    mov x0, x13
+    mov x1, x13
     brk #0
 .size _start, .-_start
 
