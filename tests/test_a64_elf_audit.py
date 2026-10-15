@@ -71,11 +71,15 @@ class ELFReportTests(unittest.TestCase):
         self.assertFalse(report["prototype_loader_compatible"])
         self.assertTrue(any("not AArch64" in b for b in report["prototype_loader_blockers"]))
 
-    def test_tls_program_header_is_flagged(self):
+    def test_tls_program_header_reports_remaining_bionic_tls_gaps(self):
         data = make_elf([(MODULE.DT_NULL, 0)], extra_tls=True)
         report = MODULE.audit_elf(bytes(data))
         self.assertTrue(report["has_tls_segment"])
-        self.assertTrue(any("PT_TLS" in b for b in report["prototype_loader_blockers"]))
+        self.assertTrue(report["prototype_loader_compatible"])
+        self.assertTrue(any("DTV" in gap or "TLSDESC" in gap
+                            for gap in report["runtime_gaps"]))
+        self.assertFalse(any("PT_TLS" in b
+                             for b in report["prototype_loader_blockers"]))
 
     def test_apk_inspection_only_audits_arm64_shared_objects(self):
         with tempfile.TemporaryDirectory() as directory:
