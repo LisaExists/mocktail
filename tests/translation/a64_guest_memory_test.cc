@@ -100,6 +100,70 @@ int main() {
   Check(!guard_memory.IsExecutable(kStackBase, 4),
         "does not mistake readable data for executable code");
 
+  A64GuestMemory anonymous_memory(1024U * 1024U);
+  std::uint64_t anonymous_base = 0;
+  Check(anonymous_memory.MapAnywhere(5000,
+                                     A64GuestMemory::kRead |
+                                         A64GuestMemory::kWrite,
+                                     &anonymous_base, &error),
+        "maps rounded anonymous guest memory at an available address");
+  Check(anonymous_base % A64GuestMemory::kPageSize == 0 &&
+            anonymous_memory.mapped_bytes() == 2U * A64GuestMemory::kPageSize,
+        "rounds guest mmap sizes up to whole pages");
+  std::uint64_t second_mapping = 0;
+  Check(anonymous_memory.MapAnywhere(A64GuestMemory::kPageSize,
+                                     A64GuestMemory::kRead,
+                                     &second_mapping, &error) &&
+            second_mapping >= anonymous_base +
+                                  2U * A64GuestMemory::kPageSize,
+        "finds a second non-overlapping anonymous address");
+  Check(anonymous_memory.Protect(anonymous_base,
+                                 A64GuestMemory::kPageSize,
+                                 A64GuestMemory::kRead, &error),
+        "changes permissions on an entire mapped page");
+  Check(!anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
+        "blocks writes after guest mprotect removes write permission");
+  Check(anonymous_memory.Protect(anonymous_base,
+                                 A64GuestMemory::kPageSize,
+                                 A64GuestMemory::kRead |
+                                     A64GuestMemory::kWrite, &error),
+        "restores guest page write permission");
+  Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
+        "permits writes after mprotect restores write permission");
+  Check(!anonymous_memory.Protect(anonymous_base,
+                                 2U * A64GuestMemory::kPageSize,
+                                 A64GuestMemory::kRead, &error),
+        "rejects mprotect ranges containing an unmapped page");
+  Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
+        "failed mprotect leaves earlier pages unchanged");
+  Check(!anonymous_memory.Unmap(anonymous_base,
+                               2U * A64GuestMemory::kPageSize, &error),
+        "rejects munmap ranges containing an unmapped page");
+  Check(anonymous_memory.IsMapped(anonymous_base,
+                                  A64GuestMemory::kPageSize),
+        "failed munmap leaves earlier pages mapped");
+  Check(anonymous_memory.Unmap(anonymous_base + A64GuestMemory::kPageSize,
+                               A64GuestMemory::kPageSize, &error),
+        "unmaps a single guest page");
+  Check(!anonymous_memory.IsMapped(anonymous_base +
+                                       A64GuestMemory::kPageSize, 1),
+        "unmapped guest pages become inaccessible");
+  Check(anonymous_memory.Unmap(anonymous_base, A64GuestMemory::kPageSize,
+                               &error) &&
+            anonymous_memory.mapped_bytes() == A64GuestMemory::kPageSize,
+        "unmaps the remaining pages and updates memory accounting");
+  Check(anonymous_memory.Unmap(second_mapping, A64GuestMemory::kPageSize,
+                               &error) &&
+            anonymous_memory.mapped_bytes() == 0,
+        "releases the last anonymous mapping");
+
+  Check(!anonymous_memory.MapAnywhere(0, A64GuestMemory::kRead,
+                                      &anonymous_base, &error),
+        "rejects empty anonymous guest mappings");
+  Check(!anonymous_memory.MapAnywhere(A64GuestMemory::kPageSize,
+                                      A64GuestMemory::kRead, nullptr, &error),
+        "requires a guest address output for anonymous mappings");
+
   std::cout << failures << " guest-memory test(s) failed\n";
   return failures == 0 ? 0 : 1;
 }
