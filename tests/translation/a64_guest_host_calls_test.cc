@@ -118,8 +118,9 @@ int main() {
         "strcmp compares strings from guest memory");
 
   arguments = {};
-  arguments[0] = kSource;
-  arguments[1] = A64GuestHostCalls::kMaximumTransferBytes + 1ULL;
+  arguments[0] = kDestination;
+  arguments[1] = kSource;
+  arguments[2] = A64GuestHostCalls::kMaximumTransferBytes + 1ULL;
   const auto oversized = calls.DispatchSvc(
       ReadSvcImmediate(memory, *memcpy_stub), arguments);
   Check(!oversized.success &&
