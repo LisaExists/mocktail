@@ -55,7 +55,7 @@ class A64GuestTlsRuntime final {
 
   // Unmaps a TLS allocation created by this runtime and clears its descriptor.
   bool DestroyThread(A64GuestThreadTls* thread,
-                     std::string* error = nullptr) noexcept;
+                     std::string* error = nullptr);
 
   bool prepared() const noexcept { return prepared_; }
   std::uint64_t total_tls_size() const noexcept { return total_tls_size_; }
