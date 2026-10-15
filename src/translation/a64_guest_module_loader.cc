@@ -62,10 +62,36 @@ const A64GuestModule* A64GuestModuleSet::FindModule(
 }
 
 std::optional<std::uint64_t> A64GuestModuleSet::ResolveExportedSymbol(
-    const std::string& name) const noexcept {
+    const std::string& name) const {
   for (const auto& module : modules) {
     for (const auto& symbol : module.image.exported_symbols) {
-      if (symbol.name == name) return symbol.guest_address;
+      if (symbol.name == name &&
+          (symbol.version.empty() || !symbol.version_hidden)) {
+        return symbol.guest_address;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t> A64GuestModuleSet::ResolveExportedSymbol(
+    const A64SymbolRequest& request) const {
+  for (const auto& module : modules) {
+    if (!request.provider.empty() &&
+        module.image.soname != request.provider &&
+        module.source_name != request.provider &&
+        Basename(module.source_name) != request.provider) {
+      continue;
+    }
+    for (const auto& symbol : module.image.exported_symbols) {
+      if (symbol.name != request.name) continue;
+      if (request.version.empty()) {
+        if (symbol.version.empty() || !symbol.version_hidden) {
+          return symbol.guest_address;
+        }
+      } else if (symbol.version == request.version) {
+        return symbol.guest_address;
+      }
     }
   }
   return std::nullopt;
@@ -133,6 +159,10 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
       // with the final resolver below.
       preflight_options.resolve_symbol =
           [](const std::string&) -> std::optional<std::uint64_t> {
+        return std::uint64_t{0};
+      };
+      preflight_options.resolve_versioned_symbol =
+          [](const A64SymbolRequest&) -> std::optional<std::uint64_t> {
         return std::uint64_t{0};
       };
 
@@ -207,7 +237,10 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
         -> std::optional<std::uint64_t> {
       for (const auto& module : discovered) {
         for (const auto& symbol : module.metadata_image.exported_symbols) {
-          if (symbol.name == name) return symbol.guest_address;
+          if (symbol.name == name &&
+              (symbol.version.empty() || !symbol.version_hidden)) {
+            return symbol.guest_address;
+          }
         }
       }
       if (options.resolve_external_symbol) {
@@ -216,10 +249,35 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
       return std::nullopt;
     };
 
+    auto resolve_versioned_symbol = [&](const A64SymbolRequest& request)
+        -> std::optional<std::uint64_t> {
+      for (const auto& module : discovered) {
+        const auto& image = module.metadata_image;
+        const auto& source_name = sources[module.source_index].name;
+        if (!request.provider.empty() &&
+            image.soname != request.provider &&
+            source_name != request.provider &&
+            Basename(source_name) != request.provider) {
+          continue;
+        }
+        for (const auto& symbol : image.exported_symbols) {
+          if (symbol.name == request.name &&
+              symbol.version == request.version) {
+            return symbol.guest_address;
+          }
+        }
+      }
+      if (options.resolve_external_versioned_symbol) {
+        return options.resolve_external_versioned_symbol(request);
+      }
+      return std::nullopt;
+    };
+
     for (const auto& module : discovered) {
       A64ElfLoadOptions final_options = options.elf;
       final_options.preferred_base = module.preferred_base;
       final_options.resolve_symbol = resolve_symbol;
+      final_options.resolve_versioned_symbol = resolve_versioned_symbol;
       auto loaded = LoadA64Elf(sources[module.source_index].bytes,
                                std::move(final_options));
       if (!loaded) {

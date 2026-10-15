@@ -38,8 +38,12 @@ struct A64GuestModuleSet final {
   std::vector<std::size_t> finalization_order;
 
   const A64GuestModule* FindModule(const std::string& name) const;
+  // An empty request.version selects an unversioned/default export. A
+  // non-empty request requires an exact version and optional provider match.
   std::optional<std::uint64_t> ResolveExportedSymbol(
-      const std::string& name) const noexcept;
+      const std::string& name) const;
+  std::optional<std::uint64_t> ResolveExportedSymbol(
+      const A64SymbolRequest& request) const;
 };
 
 struct A64GuestModuleLoadOptions final {
@@ -54,6 +58,7 @@ struct A64GuestModuleLoadOptions final {
   // An allowed dependency does not automatically resolve any symbols.
   std::vector<std::string> external_dependencies;
   A64SymbolResolver resolve_external_symbol;
+  A64VersionedSymbolResolver resolve_external_versioned_symbol;
 };
 
 struct A64GuestModuleLoadResult final {
@@ -68,8 +73,8 @@ struct A64GuestModuleLoadResult final {
 // Loads the root module and its DT_NEEDED closure. A bounded metadata pass
 // assigns non-overlapping guest bases and indexes exports; a second pass applies
 // relocations against the complete module set. External dependencies and
-// symbols must be declared/resolved explicitly. This prototype intentionally
-// fails closed on unsupported ELF features and symbol-version requirements.
+// symbols must be declared/resolved explicitly. GNU version requirements are
+// matched by exact version/provider; unsupported ELF features still fail closed.
 A64GuestModuleLoadResult LoadA64GuestModuleSet(
     const std::vector<A64GuestModuleSource>& sources,
     const std::string& root_name,

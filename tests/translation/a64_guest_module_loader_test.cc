@@ -32,8 +32,10 @@ int main() {
   using mocktail::translation::A64GuestMemory;
   using mocktail::translation::A64GuestModuleLoadOptions;
   using mocktail::translation::A64GuestModuleSource;
+  using mocktail::translation::A64SymbolRequest;
   using mocktail::translation::LoadA64GuestModuleSet;
   using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
+  using mocktail::translation::test::BuildA64ElfWithSymbolVersion;
   using mocktail::translation::test::ReadDynamicEntry;
   using mocktail::translation::test::WriteDynamicEntry;
 
@@ -88,6 +90,32 @@ int main() {
           "maps the root image into sparse guest memory");
     Check(memory.MapImage(modules.modules[1].image, &memory_error),
           "maps the dependency without colliding with the root image");
+  }
+
+  auto versioned_root = BuildA64ElfWithSymbolVersion(true);
+  auto versioned_dependency = BuildA64ElfWithSymbolVersion(false);
+  auto versioned_soname = ReadDynamicEntry(versioned_dependency, 6);
+  versioned_soname.d_un.d_val = 1;  // libc.so
+  WriteDynamicEntry(versioned_dependency, 6, versioned_soname);
+  const std::vector<A64GuestModuleSource> versioned_sources{
+      {"libversioned-root.so", versioned_root},
+      {"libc.so", versioned_dependency},
+  };
+  const auto loaded_versioned =
+      LoadA64GuestModuleSet(versioned_sources, "libversioned-root.so");
+  Check(static_cast<bool>(loaded_versioned),
+        "resolves a versioned root import from the exact dependency version");
+  if (loaded_versioned) {
+    const auto& modules = *loaded_versioned.modules;
+    const auto resolved = modules.ResolveExportedSymbol(
+        A64SymbolRequest{"test_symbol", "MOCK_ABI_1.0", "libc.so"});
+    Check(resolved == std::optional<std::uint64_t>{0x123456789ULL},
+          "queries an export by name, version and provider");
+    std::uint64_t relocated = 0;
+    const auto slot = modules.modules[0].image.load_bias + 0x1500;
+    Check(modules.modules[0].image.Read(slot, &relocated, sizeof(relocated)) &&
+              relocated == 0x123456789ULL,
+          "applies a cross-module GLOB_DAT relocation with a version requirement");
   }
 
   const std::vector<A64GuestModuleSource> missing_dependency{

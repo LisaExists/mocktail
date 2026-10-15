@@ -289,6 +289,80 @@ inline void WriteDynamicEntry(std::vector<std::uint8_t>& file,
   }
 }
 
+inline std::vector<std::uint8_t> BuildA64ElfWithSymbolVersion(
+    bool undefined_symbol, bool hidden_version = false) {
+  auto file = BuildA64ElfWithRelativeRelocation(
+      undefined_symbol ? R_AARCH64_GLOB_DAT : R_AARCH64_RELATIVE,
+      0x1500, 0, undefined_symbol ? 1 : 0, undefined_symbol);
+  const char strings[] =
+      "\0libc.so\0libmock.so\0test_symbol\0MOCK_ABI_1.0";
+  std::memcpy(file.data() + 0x1300, strings, sizeof(strings));
+  auto strsz = ReadDynamicEntry(file, 4);
+  strsz.d_un.d_val = sizeof(strings);
+  WriteDynamicEntry(file, 4, strsz);
+
+  auto write_dynamic = [&](std::size_t index, std::int64_t tag,
+                           std::uint64_t value) {
+    Elf64_Dyn entry{};
+    entry.d_tag = tag;
+    entry.d_un.d_val = value;
+    WriteDynamicEntry(file, index, entry);
+  };
+  // The string table begins with a NUL byte, so this prefix length is the
+  // correct byte offset of MOCK_ABI_1.0 (strstr cannot scan this table).
+  constexpr std::uint32_t kVersionNameOffset =
+      sizeof("\0libc.so\0libmock.so\0test_symbol");
+
+  const Elf64_Half versym[] = {
+      0,
+      static_cast<Elf64_Half>(2U | (hidden_version ? 0x8000U : 0U))};
+  std::memcpy(file.data() + 0x13c0, versym, sizeof(versym));
+
+  if (undefined_symbol) {
+    Elf64_Verneed need{};
+    need.vn_version = VER_NEED_CURRENT;
+    need.vn_cnt = 1;
+    need.vn_file = 1;  // libc.so
+    need.vn_aux = sizeof(Elf64_Verneed);
+    std::memcpy(file.data() + 0x1400, &need, sizeof(need));
+
+    Elf64_Vernaux auxiliary{};
+    auxiliary.vna_other = 2;
+    auxiliary.vna_name = kVersionNameOffset;
+    std::memcpy(file.data() + 0x1400 + sizeof(need), &auxiliary,
+                sizeof(auxiliary));
+    write_dynamic(10, 0x6ffffffe, 0x1400);  // DT_VERNEED
+    write_dynamic(11, 0x6fffffff, 1);       // DT_VERNEEDNUM
+  } else {
+    Elf64_Verdef definition{};
+    definition.vd_version = VER_DEF_CURRENT;
+    definition.vd_ndx = 2;
+    definition.vd_cnt = 1;
+    definition.vd_aux = sizeof(Elf64_Verdef);
+    std::memcpy(file.data() + 0x1400, &definition, sizeof(definition));
+
+    Elf64_Verdaux auxiliary{};
+    auxiliary.vda_name = kVersionNameOffset;
+    std::memcpy(file.data() + 0x1400 + sizeof(definition), &auxiliary,
+                sizeof(auxiliary));
+    write_dynamic(10, 0x6ffffffc, 0x1400);  // DT_VERDEF
+    write_dynamic(11, 0x6ffffffd, 1);       // DT_VERDEFNUM
+  }
+  write_dynamic(12, DT_VERSYM, 0x13c0);
+  write_dynamic(13, DT_NULL, 0);
+
+  const auto header = ReadElfHeader(file);
+  Elf64_Phdr dynamic_header{};
+  std::memcpy(&dynamic_header,
+              file.data() + header.e_phoff + header.e_phentsize,
+              sizeof(dynamic_header));
+  dynamic_header.p_filesz = 14 * sizeof(Elf64_Dyn);
+  dynamic_header.p_memsz = dynamic_header.p_filesz;
+  std::memcpy(file.data() + header.e_phoff + header.e_phentsize,
+              &dynamic_header, sizeof(dynamic_header));
+  return file;
+}
+
 inline Elf64_Ehdr ReadElfHeader(const std::vector<std::uint8_t>& file) {
   Elf64_Ehdr header{};
   if (file.size() >= sizeof(header)) {

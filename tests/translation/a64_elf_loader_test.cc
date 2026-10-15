@@ -40,6 +40,7 @@ std::vector<std::uint8_t> BuildElfWithTls(
     std::uint64_t alignment = 8, std::uint64_t virtual_address = 0x1008,
     std::uint64_t file_offset = 0x1008, bool duplicate = false) {
   using mocktail::translation::test::BuildMinimalA64Elf;
+  using mocktail::translation::test::BuildA64ElfWithSymbolVersion;
   using mocktail::translation::test::ReadElfHeader;
   using mocktail::translation::test::WriteElfHeader;
 
@@ -63,89 +64,6 @@ std::vector<std::uint8_t> BuildElfWithTls(
     std::memcpy(file.data() + first_tls_offset + header.e_phentsize,
                 &tls, sizeof(tls));
   }
-  return file;
-}
-
-std::vector<std::uint8_t> BuildElfWithSymbolVersion(
-    bool undefined_symbol, bool hidden_version = false) {
-  using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
-  using mocktail::translation::test::ReadDynamicEntry;
-  using mocktail::translation::test::WriteDynamicEntry;
-  using mocktail::translation::test::ReadElfHeader;
-  auto file = BuildA64ElfWithRelativeRelocation(
-      undefined_symbol ? R_AARCH64_GLOB_DAT : R_AARCH64_RELATIVE,
-      0x1500, 0, undefined_symbol ? 1 : 0, undefined_symbol);
-  const char strings[] =
-      "\0libc.so\0libmock.so\0test_symbol\0MOCK_ABI_1.0";
-  std::memcpy(file.data() + 0x1300, strings, sizeof(strings));
-  auto strsz = ReadDynamicEntry(file, 4);
-  strsz.d_un.d_val = sizeof(strings);
-  WriteDynamicEntry(file, 4, strsz);
-
-  auto dynamic = [&](std::size_t index, std::int64_t tag,
-                     std::uint64_t value) {
-    Elf64_Dyn entry{};
-    entry.d_tag = tag;
-    entry.d_un.d_val = value;
-    WriteDynamicEntry(file, index, entry);
-  };
-  // The string table intentionally starts with a NUL byte, so strstr()
-  // cannot scan it as a conventional C string. This prefix size is the exact
-  // byte offset of the appended version name.
-  constexpr std::uint32_t version_offset =
-      sizeof("\0libc.so\0libmock.so\0test_symbol");
-
-  const Elf64_Half versym[] = {
-      0,
-      static_cast<Elf64_Half>(2U | (hidden_version ? 0x8000U : 0U))};
-  std::memcpy(file.data() + 0x13c0, versym, sizeof(versym));
-
-  if (undefined_symbol) {
-    Elf64_Verneed need{};
-    need.vn_version = VER_NEED_CURRENT;
-    need.vn_cnt = 1;
-    need.vn_file = 1;  // libc.so
-    need.vn_aux = sizeof(Elf64_Verneed);
-    need.vn_next = 0;
-    std::memcpy(file.data() + 0x1400, &need, sizeof(need));
-
-    Elf64_Vernaux auxiliary{};
-    auxiliary.vna_other = 2;
-    auxiliary.vna_name = version_offset;
-    auxiliary.vna_next = 0;
-    std::memcpy(file.data() + 0x1400 + sizeof(need), &auxiliary,
-                sizeof(auxiliary));
-    dynamic(10, 0x6ffffffe, 0x1400);  // DT_VERNEED
-    dynamic(11, 0x6fffffff, 1);       // DT_VERNEEDNUM
-  } else {
-    Elf64_Verdef definition{};
-    definition.vd_version = VER_DEF_CURRENT;
-    definition.vd_ndx = 2;
-    definition.vd_cnt = 1;
-    definition.vd_aux = sizeof(Elf64_Verdef);
-    definition.vd_next = 0;
-    std::memcpy(file.data() + 0x1400, &definition, sizeof(definition));
-
-    Elf64_Verdaux auxiliary{};
-    auxiliary.vda_name = version_offset;
-    auxiliary.vda_next = 0;
-    std::memcpy(file.data() + 0x1400 + sizeof(definition), &auxiliary,
-                sizeof(auxiliary));
-    dynamic(10, 0x6ffffffc, 0x1400);  // DT_VERDEF
-    dynamic(11, 0x6ffffffd, 1);       // DT_VERDEFNUM
-  }
-  dynamic(12, DT_VERSYM, 0x13c0);
-  dynamic(13, DT_NULL, 0);
-
-  auto header = ReadElfHeader(file);
-  Elf64_Phdr dynamic_header{};
-  std::memcpy(&dynamic_header,
-              file.data() + header.e_phoff + header.e_phentsize,
-              sizeof(dynamic_header));
-  dynamic_header.p_filesz = 14 * sizeof(Elf64_Dyn);
-  dynamic_header.p_memsz = dynamic_header.p_filesz;
-  std::memcpy(file.data() + header.e_phoff + header.e_phentsize,
-              &dynamic_header, sizeof(dynamic_header));
   return file;
 }
 
@@ -444,7 +362,7 @@ int main() {
           "writes the resolved PLT target into guest memory");
   }
 
-  auto versioned_import = BuildElfWithSymbolVersion(true);
+  auto versioned_import = BuildA64ElfWithSymbolVersion(true);
   A64ElfLoadOptions versioned_options;
   bool saw_versioned_request = false;
   versioned_options.resolve_symbol =
@@ -493,7 +411,7 @@ int main() {
                 std::string::npos,
         "refuses to bind a versioned import through a name-only resolver");
 
-  const auto versioned_export = LoadA64Elf(BuildElfWithSymbolVersion(false));
+  const auto versioned_export = LoadA64Elf(BuildA64ElfWithSymbolVersion(false));
   if (!versioned_export) {
     std::cerr << "[DETAIL] versioned export error: "
               << versioned_export.error << '\n';
@@ -511,7 +429,7 @@ int main() {
   }
 
   const auto hidden_version_export =
-      LoadA64Elf(BuildElfWithSymbolVersion(false, true));
+      LoadA64Elf(BuildA64ElfWithSymbolVersion(false, true));
   if (!hidden_version_export) {
     std::cerr << "[DETAIL] hidden export error: "
               << hidden_version_export.error << '\n';
@@ -527,7 +445,7 @@ int main() {
           "preserves the DT_VERSYM hidden bit for non-default versions");
   }
 
-  auto malformed_version_count = BuildElfWithSymbolVersion(true);
+  auto malformed_version_count = BuildA64ElfWithSymbolVersion(true);
   auto version_need_num = mocktail::translation::test::ReadDynamicEntry(
       malformed_version_count, 11);
   version_need_num.d_un.d_val = 2;
