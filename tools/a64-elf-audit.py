@@ -276,7 +276,10 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     if not image.loads:
         blockers.append("ELF contains no PT_LOAD segments")
     if image.has_tls_segment:
-        blockers.append("PT_TLS needs guest TLS support, which is not implemented")
+        report["runtime_gaps"].append(
+            "static PT_TLS template/TPIDR_EL0 support exists in the smoke runtime, "
+            "but Bionic TCB/DTV and dynamic TLS/TLSDESC are not implemented"
+        )
 
     tags = image.dynamic_tags(blockers)
     soname_offset = first_tag(tags, DT_SONAME, blockers, "DT_SONAME")
@@ -292,7 +295,8 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     ))
     if report["has_initializers"]:
         report["runtime_gaps"].append(
-            "ELF initializers/finalizers are parsed but not executed by this prototype"
+            "ELF initializers/finalizers can be executed by the opt-in smoke harness, "
+            "but automatic Android linker startup and finalization are not implemented"
         )
     if DT_TEXTREL in tags or any(v & DF_TEXTREL for v in tags.get(DT_FLAGS, [])):
         report["has_text_relocations"] = True
@@ -306,8 +310,8 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
         blockers.append("DT_ANDROID_RELA and DT_ANDROID_RELASZ must be provided together")
     elif android_rela_addr is not None and android_rela_size:
         report["has_android_packed_rela"] = True
-        report["runtime_gaps"].append(
-            "APS2 packed RELA is present; this report does not decode its relocation types"
+        blockers.append(
+            "APS2 packed RELA is present; the audit cannot classify its relocation types"
         )
 
     relocations: list[tuple[int, int]] = []
