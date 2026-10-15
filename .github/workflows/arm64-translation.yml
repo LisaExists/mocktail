@@ -73,6 +73,10 @@ jobs:
             build-translation-ci/libmocktail-a64-module-root.so \
             build-translation-ci/libmocktail-a64-module-dependency.so \
             build-translation-ci/libmocktail-a64-module-function-root.so
+          # TLS remains a reported compatibility blocker until guest TLS
+          # allocation, Bionic's thread-pointer layout and TLS relocations exist.
+          python3 tools/a64-elf-audit.py \
+            build-translation-ci/mocktail-a64-guest-tls.so
 
       - name: Run translation and preflight tests
         run: |
