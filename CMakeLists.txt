@@ -300,10 +300,25 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_syscalls_smoke.S"
       VERBATIM
     )
+    set(MOCKTAIL_A64_TLS_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/mocktail-a64-guest-tls.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_TLS_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,-e,_start
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-guest-tls.so
+              -o "${MOCKTAIL_A64_TLS_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_tls_smoke.S"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_tls_smoke.S"
+      VERBATIM
+    )
     add_custom_target(mocktail_a64_guest_elf_fixture
       DEPENDS
         "${MOCKTAIL_A64_REAL_ELF_FIXTURE}"
-        "${MOCKTAIL_A64_SYSCALL_FIXTURE}")
+        "${MOCKTAIL_A64_SYSCALL_FIXTURE}"
+        "${MOCKTAIL_A64_TLS_FIXTURE}")
 
     set(MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE
       "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-a64-module-dependency.so")
@@ -383,6 +398,9 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       add_test(NAME RobloxArmTranslation.RealElfSyscallSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_SYSCALL_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.RealElfTlsTemplateSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                --require-tls "${MOCKTAIL_A64_TLS_FIXTURE}")
       add_test(NAME RobloxArmTranslation.RealElfModuleSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
