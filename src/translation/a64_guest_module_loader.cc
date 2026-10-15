@@ -235,6 +235,38 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
           sources[module.source_index].name, std::move(*loaded.image)});
     }
 
+    // Emit a dependency-first postorder. Circular DT_NEEDED graphs are legal;
+    // an edge back into the active DFS path is skipped, while every module is
+    // still emitted once. Constructor execution can use this order later.
+    std::vector<std::uint8_t> visit_state(result.modules.size(), 0);
+    auto visit_module = [&](auto&& self, std::size_t module_index) -> void {
+      if (visit_state[module_index] == 2) return;
+      if (visit_state[module_index] == 1) return;
+      visit_state[module_index] = 1;
+
+      const auto dependencies =
+          result.modules[module_index].image.dependencies;
+      for (const auto& dependency : dependencies) {
+        const auto* dependency_module = result.FindModule(dependency);
+        if (dependency_module == nullptr) continue;  // Explicit external thunk.
+        const auto dependency_index = static_cast<std::size_t>(
+            dependency_module - result.modules.data());
+        if (dependency_index < result.modules.size()) {
+          self(self, dependency_index);
+        }
+      }
+
+      visit_state[module_index] = 2;
+      result.initialization_order.push_back(module_index);
+    };
+
+    for (std::size_t index = 0; index < result.modules.size(); ++index) {
+      visit_module(visit_module, index);
+    }
+    result.finalization_order = result.initialization_order;
+    std::reverse(result.finalization_order.begin(),
+                 result.finalization_order.end());
+
     return A64GuestModuleLoadResult{std::move(result), {}};
   } catch (const std::bad_alloc&) {
     return Failure("host memory allocation failed while loading guest module set");
