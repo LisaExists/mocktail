@@ -219,6 +219,32 @@ int main() {
                 std::string::npos,
         "rejects ambiguous shared-object aliases");
 
+  auto tls_import_root = BuildTlsRelocationElf(true);
+  auto tls_export_library = BuildTlsRelocationElf(false);
+  const std::vector<A64GuestModuleSource> tls_sources{
+      {"libroot_tls.so", tls_import_root},
+      {"libc.so", tls_export_library},
+  };
+  const auto tls_loaded =
+      LoadA64GuestModuleSet(tls_sources, "libroot_tls.so");
+  Check(static_cast<bool>(tls_loaded),
+        "resolves an imported TLS symbol across guest modules");
+  if (tls_loaded) {
+    const auto& tls_modules = *tls_loaded.modules;
+    std::uint64_t tp_offset = 0;
+    Check(tls_modules.modules[0].image.Read(
+              tls_modules.modules[0].image.load_bias + 0x1500,
+              &tp_offset, sizeof(tp_offset)) &&
+              tp_offset == 40,
+          "applies TPREL64 using the dependency's assigned static TLS offset");
+    const auto resolved_tls = tls_modules.ResolveTlsSymbol(
+        A64SymbolRequest{"test_symbol", "", "libmock.so"});
+    Check(resolved_tls && resolved_tls->module_id == 2 &&
+              resolved_tls->module_offset == 8 &&
+              resolved_tls->static_offset_from_tp == 40,
+          "publishes the dependency TLS module ID and TP-relative symbol offset");
+  }
+
   const auto no_root = LoadA64GuestModuleSet(sources, "libmissing.so");
   Check(!no_root &&
             no_root.error.find("root guest module was not found") !=
