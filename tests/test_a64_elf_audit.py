@@ -59,9 +59,19 @@ class ELFReportTests(unittest.TestCase):
             (MODULE.DT_RELA, 0x300),
             (MODULE.DT_RELASZ, 24),
             (MODULE.DT_RELAENT, 24),
+            (MODULE.DT_SYMTAB, 0x500),
+            (MODULE.DT_SYMENT, 24),
+            (MODULE.DT_HASH, 0x540),
+            (MODULE.DT_STRTAB, 0x600),
+            (MODULE.DT_STRSZ, 8),
             (MODULE.DT_NULL, 0),
-        ])
-        struct.pack_into("<QQq", data, 0x300, 0x400, 1031, 0)
+        ], extra_tls=True)
+        struct.pack_into("<QQq", data, 0x300, 0x700, (1 << 32) | 1031, 0)
+        # Minimal SysV hash table: one bucket, two dynamic symbols.
+        struct.pack_into("<IIIII", data, 0x540, 1, 2, 1, 0, 0)
+        struct.pack_into("<IBBHQQ", data, 0x500 + 24,
+                         1, (1 << 4) | MODULE.STT_TLS, 0, 1, 8, 8)
+        data[0x600:0x608] = b"\\x00tlsvar\\x00"
         report = MODULE.audit_elf(bytes(data))
         self.assertTrue(report["prototype_loader_compatible"])
         self.assertEqual(report["relocation_counts"]["R_AARCH64_TLSDESC"], 1)
