@@ -333,7 +333,7 @@ int main() {
       unterminated_dynamic, 10);
   last_dynamic.d_tag = DT_DEBUG;
   mocktail::translation::test::WriteDynamicEntry(
-      unterminated_dynamic, 7, last_dynamic);
+      unterminated_dynamic, 10, last_dynamic);
   const auto unterminated_result = LoadA64Elf(unterminated_dynamic);
   Check(!unterminated_result &&
             unterminated_result.error.find("does not end with DT_NULL") !=
