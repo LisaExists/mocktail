@@ -67,6 +67,45 @@ std::vector<std::uint8_t> BuildElfWithTls(
   return file;
 }
 
+std::vector<std::uint8_t> BuildElfWithTlsRelocation(
+    std::uint32_t relocation_type, std::int64_t addend = 3) {
+  using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
+  using mocktail::translation::test::ReadElfHeader;
+  using mocktail::translation::test::WriteElfHeader;
+
+  auto file = BuildA64ElfWithRelativeRelocation(
+      relocation_type, 0x1500, addend, 1, false, false);
+  auto header = ReadElfHeader(file);
+  header.e_phnum = 3;
+  WriteElfHeader(file, header);
+
+  Elf64_Phdr tls{};
+  tls.p_type = PT_TLS;
+  tls.p_flags = PF_R;
+  tls.p_offset = 0x1400;
+  tls.p_vaddr = 0x1400;
+  tls.p_filesz = 8;
+  tls.p_memsz = 16;
+  tls.p_align = 8;
+  const auto tls_header_offset =
+      static_cast<std::size_t>(header.e_phoff) +
+      2 * static_cast<std::size_t>(header.e_phentsize);
+  std::memcpy(file.data() + tls_header_offset, &tls, sizeof(tls));
+
+  // The helper's dynamic symbol #1 normally names an absolute object. Convert
+  // it to a TLS object at offset 8 in this module's PT_TLS block.
+  Elf64_Sym tls_symbol{};
+  std::memcpy(&tls_symbol, file.data() + 0x1380 + sizeof(Elf64_Sym),
+              sizeof(tls_symbol));
+  tls_symbol.st_info = ELF64_ST_INFO(STB_GLOBAL, STT_TLS);
+  tls_symbol.st_shndx = 1;
+  tls_symbol.st_value = 8;
+  tls_symbol.st_size = 8;
+  std::memcpy(file.data() + 0x1380 + sizeof(Elf64_Sym), &tls_symbol,
+              sizeof(tls_symbol));
+  return file;
+}
+
 std::vector<std::uint8_t> BuildElfWithInitializers() {
   using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
   using mocktail::translation::test::ReadDynamicEntry;
@@ -464,6 +503,66 @@ int main() {
                 "DT_VERNEED chain ends before DT_VERNEEDNUM") !=
                 std::string::npos,
         "rejects version requirement chains shorter than their count");
+
+  // Static TLS relocation calculations use offsets and IDs, never guest
+  // addresses. The static TLSDESC thunk receives its own descriptor address
+  // through X0 and returns the descriptor's TP-relative word.
+  A64ElfLoadOptions tls_options;
+  tls_options.tls_module_id = 7;
+  tls_options.tls_static_offset_from_tp = 32;
+  tls_options.tlsdesc_resolver_address = 0x7FFF100000ULL;
+
+  auto dtpmod_file = BuildElfWithTlsRelocation(1028, 99);
+  auto dtpmod = LoadA64Elf(dtpmod_file, tls_options);
+  Check(static_cast<bool>(dtpmod), "loads R_AARCH64_TLS_DTPMOD64 relocation");
+  if (dtpmod) {
+    std::uint64_t value = 0;
+    Check(dtpmod.image->Read(dtpmod.image->load_bias + 0x1500,
+                             &value, sizeof(value)) && value == 7,
+          "writes the current TLS module ID for DTPMOD64");
+  }
+
+  auto dtprel_file = BuildElfWithTlsRelocation(1029, 3);
+  auto dtprel = LoadA64Elf(dtprel_file, tls_options);
+  Check(static_cast<bool>(dtprel), "loads R_AARCH64_TLS_DTPREL64 relocation");
+  if (dtprel) {
+    std::uint64_t value = 0;
+    Check(dtprel.image->Read(dtprel.image->load_bias + 0x1500,
+                             &value, sizeof(value)) && value == 11,
+          "computes DTPREL as the module TLS offset plus addend");
+  }
+
+  auto tprel_file = BuildElfWithTlsRelocation(1030, 3);
+  auto tprel = LoadA64Elf(tprel_file, tls_options);
+  Check(static_cast<bool>(tprel), "loads R_AARCH64_TLS_TPREL64 relocation");
+  if (tprel) {
+    std::uint64_t value = 0;
+    Check(tprel.image->Read(tprel.image->load_bias + 0x1500,
+                            &value, sizeof(value)) && value == 43,
+          "computes TPREL as the TLS symbol TP offset plus addend");
+  }
+
+  auto tlsdesc_file = BuildElfWithTlsRelocation(1031, 3);
+  auto tlsdesc = LoadA64Elf(tlsdesc_file, tls_options);
+  Check(static_cast<bool>(tlsdesc), "loads static R_AARCH64_TLSDESC relocation");
+  if (tlsdesc) {
+    std::uint64_t descriptor[2]{};
+    Check(tlsdesc.image->Read(tlsdesc.image->load_bias + 0x1500,
+                              descriptor, sizeof(descriptor)) &&
+              descriptor[0] == tls_options.tlsdesc_resolver_address &&
+              descriptor[1] == 43,
+          "writes static TLSDESC resolver and TP-relative offset");
+  }
+
+  auto missing_tlsdesc_resolver_options = tls_options;
+  missing_tlsdesc_resolver_options.tlsdesc_resolver_address = 0;
+  const auto missing_tlsdesc_resolver = LoadA64Elf(
+      tlsdesc_file, missing_tlsdesc_resolver_options);
+  Check(!missing_tlsdesc_resolver &&
+            missing_tlsdesc_resolver.error.find(
+                "requires an explicit static guest resolver") !=
+                std::string::npos,
+        "fails closed when a TLSDESC resolver is not supplied");
 
   auto init_fini = BuildElfWithInitializers();
   const auto loaded_init_fini = LoadA64Elf(init_fini);
