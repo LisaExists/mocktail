@@ -28,6 +28,8 @@ namespace {
 using Address = Dynarmic::A64::VAddr;
 using mocktail::translation::A64LoadedImage;
 using mocktail::translation::A64GuestMemory;
+using mocktail::translation::A64GuestThreadTls;
+using mocktail::translation::A64GuestTlsRuntime;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
