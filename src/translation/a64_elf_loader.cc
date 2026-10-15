@@ -1461,6 +1461,7 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
   std::vector<Elf64_Phdr> load_headers;
   load_headers.reserve(header.e_phnum);
   std::optional<Elf64_Phdr> dynamic_header;
+  std::optional<Elf64_Phdr> tls_header;
   std::uint64_t minimum_virtual_address =
       std::numeric_limits<std::uint64_t>::max();
   std::uint64_t maximum_virtual_end = 0;
@@ -1495,6 +1496,32 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
         return Failure("PT_DYNAMIC virtual-address range overflows");
       }
       dynamic_header = program_header;
+    }
+    if (program_header.p_type == PT_TLS) {
+      if (tls_header) return Failure("ELF contains multiple PT_TLS segments");
+      if (program_header.p_filesz > program_header.p_memsz) {
+        return Failure("PT_TLS p_filesz exceeds p_memsz");
+      }
+      if (program_header.p_memsz > options.max_image_size) {
+        return Failure("PT_TLS memory size exceeds the configured limit");
+      }
+      if (!FileRangeWithin(program_header.p_offset, program_header.p_filesz,
+                           file.size())) {
+        return Failure("PT_TLS file range is out of bounds");
+      }
+      if (AddOverflows(program_header.p_vaddr, program_header.p_memsz)) {
+        return Failure("PT_TLS virtual-address range overflows");
+      }
+      const std::uint64_t alignment = program_header.p_align;
+      if (alignment > 1 && !IsPowerOfTwo(alignment)) {
+        return Failure("PT_TLS p_align is not a power of two");
+      }
+      if (alignment > 1 &&
+          (program_header.p_vaddr % alignment) !=
+              (program_header.p_offset % alignment)) {
+        return Failure("PT_TLS file offset and virtual address are misaligned");
+      }
+      tls_header = program_header;
     }
     if (program_header.p_type != PT_LOAD) continue;
 
@@ -1616,6 +1643,40 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
             [](const A64LoadSegment& left, const A64LoadSegment& right) {
               return left.guest_address < right.guest_address;
             });
+  if (tls_header) {
+    if (AddOverflows(tls_header->p_vaddr, image.load_bias)) {
+      return Failure("relocated PT_TLS template address overflows");
+    }
+    A64TlsSegment tls;
+    tls.file_size = tls_header->p_filesz;
+    tls.memory_size = tls_header->p_memsz;
+    tls.alignment = std::max<std::uint64_t>(1, tls_header->p_align);
+    try {
+      tls.template_bytes.resize(static_cast<std::size_t>(tls.memory_size), 0);
+    } catch (const std::bad_alloc&) {
+      return Failure("not enough host memory to allocate bounded PT_TLS template");
+    }
+    if (tls.file_size != 0) {
+      const auto template_address = tls_header->p_vaddr + image.load_bias;
+      if (!image.Read(template_address, tls.template_bytes.data(),
+                      static_cast<std::size_t>(tls.file_size))) {
+        return Failure("PT_TLS initial data is outside mapped PT_LOAD memory");
+      }
+      // The dynamic loader's TLS template is defined by the file contents. Read
+      // it from the original file as a defensive check against a malformed
+      // overlapping segment that changes the bytes at the declared virtual
+      // address.
+      if (!std::equal(tls.template_bytes.begin(),
+                      tls.template_bytes.begin() +
+                          static_cast<std::ptrdiff_t>(tls.file_size),
+                      file.begin() +
+                          static_cast<std::ptrdiff_t>(tls_header->p_offset))) {
+        return Failure("PT_TLS initial data does not match its PT_LOAD image");
+      }
+    }
+    image.tls = std::move(tls);
+  }
+
   for (std::size_t index = 1; index < image.segments.size(); ++index) {
     const auto& previous = image.segments[index - 1];
     const auto& current = image.segments[index];
