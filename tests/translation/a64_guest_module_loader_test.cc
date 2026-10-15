@@ -64,6 +64,12 @@ int main() {
           "assigns each shared object a distinct guest base");
     Check(modules.modules[1].image.soname == "libc.so",
           "retains the dependency SONAME");
+    Check(modules.initialization_order ==
+              std::vector<std::size_t>{1, 0},
+          "orders dependency constructors before the root module");
+    Check(modules.finalization_order ==
+              std::vector<std::size_t>{0, 1},
+          "orders finalization in reverse dependency order");
     Check(modules.ResolveExportedSymbol("test_symbol") ==
               std::optional<std::uint64_t>{0x123456789ULL},
           "indexes a dependency's externally visible dynamic symbol");
@@ -105,6 +111,11 @@ int main() {
   Check(static_cast<bool>(external),
         "allows an explicitly declared external guest dependency");
   if (external) {
+    Check(external.modules->initialization_order ==
+              std::vector<std::size_t>{0} &&
+              external.modules->finalization_order ==
+                  std::vector<std::size_t>{0},
+          "omits explicit external dependencies from module lifecycle order");
     std::uint64_t relocated = 0;
     const auto root_slot =
         external.modules->modules[0].image.load_bias + 0x1500;
