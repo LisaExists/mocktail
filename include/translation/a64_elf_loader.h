@@ -35,6 +35,10 @@ struct A64ExportedSymbol final {
   // definitions. version_hidden marks non-default versions of the same name.
   std::string version;
   bool version_hidden = false;
+  // TLS symbols use offsets rather than process-wide guest addresses.
+  std::uint64_t tls_module_id = 0;
+  std::uint64_t tls_module_offset = 0;
+  std::uint64_t tls_static_offset_from_tp = 0;
 };
 
 struct A64SymbolRequest final {
@@ -43,6 +47,14 @@ struct A64SymbolRequest final {
   // must match exactly; provider, when present, is the DT_NEEDED filename.
   std::string version;
   std::string provider;
+};
+
+struct A64TlsSymbol final {
+  std::uint64_t module_id = 0;
+  std::uint64_t module_offset = 0;
+  // Offset from TP to the variable when all loaded modules use the prototype's
+  // preallocated static TLS block. This also powers the static TLSDESC resolver.
+  std::uint64_t static_offset_from_tp = 0;
 };
 
 // PT_TLS image template for one ELF module. template_bytes is memory_size bytes
@@ -96,6 +108,8 @@ using A64SymbolResolver =
     std::function<std::optional<std::uint64_t>(const std::string&)>;
 using A64VersionedSymbolResolver =
     std::function<std::optional<std::uint64_t>(const A64SymbolRequest&)>;
+using A64TlsSymbolResolver =
+    std::function<std::optional<A64TlsSymbol>(const A64SymbolRequest&)>;
 
 struct A64ElfLoadOptions final {
   // Desired guest address for the aligned origin of an ET_DYN image.
@@ -112,6 +126,12 @@ struct A64ElfLoadOptions final {
   // fall back to a name-only match.
   A64SymbolResolver resolve_symbol;
   A64VersionedSymbolResolver resolve_versioned_symbol;
+  A64TlsSymbolResolver resolve_tls_symbol;
+  // These are supplied by the multi-module linker after laying out every PT_TLS.
+  std::uint64_t tls_module_id = 1;
+  std::uint64_t tls_static_offset_from_tp = 16;
+  // Guest address of a guest-safe TLSDESC resolver thunk. Zero disables TLSDESC.
+  std::uint64_t tlsdesc_resolver_address = 0;
 };
 
 struct A64ElfLoadResult final {
