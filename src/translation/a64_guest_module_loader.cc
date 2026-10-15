@@ -3,6 +3,8 @@
 
 #include "translation/a64_guest_module_loader.h"
 
+#include <elf.h>
+
 #include <algorithm>
 #include <limits>
 #include <map>
