@@ -204,6 +204,25 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   )
   target_compile_features(mocktail_a64_guest_module_loader PUBLIC cxx_std_17)
 
+  add_library(mocktail_a64_guest_tls STATIC
+    src/translation/a64_guest_tls.cc
+  )
+  target_include_directories(mocktail_a64_guest_tls PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  target_link_libraries(mocktail_a64_guest_tls PUBLIC
+    mocktail_a64_guest_memory
+    mocktail_a64_guest_module_loader
+  )
+  target_compile_features(mocktail_a64_guest_tls PUBLIC cxx_std_17)
+
+  add_executable(mocktail_a64_guest_tls_test
+    tests/translation/a64_guest_tls_test.cc
+  )
+  target_link_libraries(mocktail_a64_guest_tls_test PRIVATE
+    mocktail_a64_guest_tls
+  )
+
   add_library(mocktail_a64_linux_syscalls STATIC
     src/translation/a64_linux_syscalls.cc
   )
@@ -281,12 +300,14 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     dynarmic
     mocktail_a64_guest_memory
     mocktail_a64_guest_module_loader
+    mocktail_a64_guest_tls
     mocktail_a64_linux_syscalls
     mocktail_a64_guest_host_calls
   )
   add_dependencies(mocktail_a64_translation_smoke
     mocktail_a64_linux_syscalls_test
-    mocktail_a64_guest_host_calls_test)
+    mocktail_a64_guest_host_calls_test
+    mocktail_a64_guest_tls_test)
 
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
   # and execute its instructions through the same loader/JIT path.
@@ -443,6 +464,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       COMMAND $<TARGET_FILE:mocktail_a64_linux_syscalls_test>)
     add_test(NAME RobloxArmTranslation.GuestHostCalls
       COMMAND $<TARGET_FILE:mocktail_a64_guest_host_calls_test>)
+    add_test(NAME RobloxArmTranslation.GuestTLS
+      COMMAND $<TARGET_FILE:mocktail_a64_guest_tls_test>)
     if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
       add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
@@ -453,7 +476,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       add_test(NAME RobloxArmTranslation.RealElfHostCallSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_HOST_CALL_FIXTURE}")
-      add_test(NAME RobloxArmTranslation.RealElfTlsTemplateSmoke
+      add_test(NAME RobloxArmTranslation.RealElfTlsRuntimeSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 --require-tls "${MOCKTAIL_A64_TLS_FIXTURE}")
       add_test(NAME RobloxArmTranslation.RealElfInitializerSmoke
