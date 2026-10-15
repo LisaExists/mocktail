@@ -682,7 +682,6 @@ std::string CollectDynamicExports(
       if (visibility != STV_DEFAULT && visibility != STV_PROTECTED) continue;
 
       const auto type = ELF64_ST_TYPE(symbol.st_info);
-      if (type == STT_TLS) continue;
 #ifdef STT_GNU_IFUNC
       if (type == STT_GNU_IFUNC) continue;
 #endif
@@ -727,17 +726,34 @@ std::string CollectDynamicExports(
       }
       if (name.empty()) continue;
 
-      std::uint64_t guest_address = symbol.st_value;
-      if (symbol.st_shndx != SHN_ABS) {
-        if (AddOverflows(image->load_bias, symbol.st_value)) {
-          return "dynamic symbol guest address overflows";
+      std::uint64_t guest_address = 0;
+      std::uint64_t tls_module_id = 0;
+      std::uint64_t tls_module_offset = 0;
+      std::uint64_t tls_static_offset_from_tp = 0;
+      if (type == STT_TLS) {
+        if (!image->tls) {
+          return "exported TLS symbol exists in a module without PT_TLS";
         }
-        guest_address = image->load_bias + symbol.st_value;
-      }
-      if (type == STT_FUNC &&
-          !image->IsExecutable(guest_address, sizeof(std::uint32_t))) {
-        return "exported function '" + name +
-               "' does not point into executable PT_LOAD memory";
+        tls_module_id = image->tls->module_id;
+        tls_module_offset = symbol.st_value;
+        if (AddOverflows(image->tls->static_offset_from_tp, symbol.st_value)) {
+          return "exported TLS symbol TP-relative offset overflows";
+        }
+        tls_static_offset_from_tp =
+            image->tls->static_offset_from_tp + symbol.st_value;
+      } else {
+        guest_address = symbol.st_value;
+        if (symbol.st_shndx != SHN_ABS) {
+          if (AddOverflows(image->load_bias, symbol.st_value)) {
+            return "dynamic symbol guest address overflows";
+          }
+          guest_address = image->load_bias + symbol.st_value;
+        }
+        if (type == STT_FUNC &&
+            !image->IsExecutable(guest_address, sizeof(std::uint32_t))) {
+          return "exported function '" + name +
+                 "' does not point into executable PT_LOAD memory";
+        }
       }
 
       image->exported_symbols.push_back(A64ExportedSymbol{
@@ -745,7 +761,8 @@ std::string CollectDynamicExports(
           static_cast<std::uint8_t>(binding),
           static_cast<std::uint8_t>(type),
           static_cast<std::uint8_t>(visibility),
-          std::move(version_name), version_hidden});
+          std::move(version_name), version_hidden,
+          tls_module_id, tls_module_offset, tls_static_offset_from_tp});
     }
   } catch (const std::bad_alloc&) {
     return "not enough memory to collect bounded dynamic symbols";
@@ -1913,6 +1930,8 @@ A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
     tls.file_size = tls_header->p_filesz;
     tls.memory_size = tls_header->p_memsz;
     tls.alignment = std::max<std::uint64_t>(1, tls_header->p_align);
+    tls.module_id = options.tls_module_id;
+    tls.static_offset_from_tp = options.tls_static_offset_from_tp;
     const auto template_address = tls_header->p_vaddr + image.load_bias;
     if (AddOverflows(template_address, tls.memory_size)) {
       return Failure("relocated PT_TLS memory range overflows");
