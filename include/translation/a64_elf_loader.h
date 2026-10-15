@@ -31,6 +31,18 @@ struct A64ExportedSymbol final {
   std::uint8_t binding = 0;
   std::uint8_t type = 0;
   std::uint8_t visibility = 0;
+  // Empty for unversioned symbols; populated from DT_VERDEF for versioned
+  // definitions. version_hidden marks non-default versions of the same name.
+  std::string version;
+  bool version_hidden = false;
+};
+
+struct A64SymbolRequest final {
+  std::string name;
+  // Empty requests the default/unversioned definition. A non-empty version
+  // must match exactly; provider, when present, is the DT_NEEDED filename.
+  std::string version;
+  std::string provider;
 };
 
 // PT_TLS image template for one ELF module. template_bytes is memory_size bytes
@@ -53,9 +65,8 @@ struct A64LoadedImage final {
   std::uint64_t image_size = 0;
   std::string soname;
   std::vector<std::string> dependencies;
-  // Unversioned, externally visible dynamic definitions only. Versioned
-  // symbols are intentionally omitted until Android symbol-version semantics
-  // are implemented by the guest linker.
+  // Externally visible definitions, including versioned definitions when
+  // their DT_VERDEF metadata is valid. Version selection remains explicit.
   std::vector<A64ExportedSymbol> exported_symbols;
   // Dynamic initializer functions in ELF loader call order and finalizers in
   // reverse-construction order. Values are guest virtual addresses, not host
@@ -80,6 +91,8 @@ struct A64LoadedImage final {
 
 using A64SymbolResolver =
     std::function<std::optional<std::uint64_t>(const std::string&)>;
+using A64VersionedSymbolResolver =
+    std::function<std::optional<std::uint64_t>(const A64SymbolRequest&)>;
 
 struct A64ElfLoadOptions final {
   // Desired guest address for the aligned origin of an ET_DYN image.
@@ -91,9 +104,11 @@ struct A64ElfLoadOptions final {
   std::size_t max_relocations = 4U * 1024U * 1024U;
   std::size_t max_packed_relocation_bytes = 64U * 1024U * 1024U;
   std::size_t max_symbols = 1U * 1024U * 1024U;
-  // Resolves undefined guest symbols to guest addresses in already-loaded
-  // modules or explicit host-call thunks. No implicit host pointer conversion.
+  // Unversioned imports may use the compact name-only resolver. Versioned
+  // imports are sent only to resolve_versioned_symbol; they never silently
+  // fall back to a name-only match.
   A64SymbolResolver resolve_symbol;
+  A64VersionedSymbolResolver resolve_versioned_symbol;
 };
 
 struct A64ElfLoadResult final {

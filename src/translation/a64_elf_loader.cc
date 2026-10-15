@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <new>
 #include <utility>
 
@@ -64,6 +65,12 @@ bool AddSignedOffset(std::uint64_t base, std::int64_t offset,
   return true;
 }
 
+struct DynamicSymbolVersionInfo final {
+  std::string name;
+  std::string provider;
+  std::uint16_t flags = 0;
+};
+
 struct DynamicMetadata final {
   std::optional<std::uint64_t> rela_address;
   std::optional<std::uint64_t> rela_size;
@@ -81,6 +88,12 @@ struct DynamicMetadata final {
   std::optional<std::uint64_t> hash_address;
   std::optional<std::uint64_t> gnu_hash_address;
   std::optional<std::uint64_t> versym_address;
+  std::optional<std::uint64_t> verneed_address;
+  std::optional<std::uint64_t> verneed_count;
+  std::optional<std::uint64_t> verdef_address;
+  std::optional<std::uint64_t> verdef_count;
+  std::map<std::uint16_t, DynamicSymbolVersionInfo> required_versions;
+  std::map<std::uint16_t, DynamicSymbolVersionInfo> defined_versions;
   std::optional<std::uint64_t> init_address;
   std::optional<std::uint64_t> fini_address;
   std::optional<std::uint64_t> init_array_address;
@@ -142,6 +155,196 @@ bool ReadDynamicString(const A64LoadedImage& image,
 
   *error = "dynamic string is unterminated or exceeds 4096 bytes";
   return false;
+}
+
+std::string ParseSymbolVersionMetadata(
+    const A64LoadedImage& image, DynamicMetadata* metadata,
+    const A64ElfLoadOptions& options) {
+  const bool any_need_tag = metadata->verneed_address.has_value() ||
+                            metadata->verneed_count.has_value();
+  const bool any_def_tag = metadata->verdef_address.has_value() ||
+                           metadata->verdef_count.has_value();
+  if (any_need_tag &&
+      (!metadata->verneed_address || !metadata->verneed_count ||
+       *metadata->verneed_count == 0)) {
+    return "DT_VERNEED and DT_VERNEEDNUM must describe a non-empty table";
+  }
+  if (any_def_tag &&
+      (!metadata->verdef_address || !metadata->verdef_count ||
+       *metadata->verdef_count == 0)) {
+    return "DT_VERDEF and DT_VERDEFNUM must describe a non-empty table";
+  }
+  if ((metadata->verneed_count &&
+       *metadata->verneed_count > options.max_dynamic_entries) ||
+      (metadata->verdef_count &&
+       *metadata->verdef_count > options.max_dynamic_entries)) {
+    return "ELF symbol-version record count exceeds the configured limit";
+  }
+  if (!any_need_tag && !any_def_tag) return {};
+  if (!metadata->versym_address) {
+    return "DT_VERNEED/DT_VERDEF requires DT_VERSYM";
+  }
+  if (!metadata->strtab_address || !metadata->strtab_size ||
+      *metadata->strtab_size == 0) {
+    return "DT_VERNEED/DT_VERDEF requires DT_STRTAB and DT_STRSZ";
+  }
+
+  auto relocated = [&](std::uint64_t base, std::uint64_t offset,
+                       std::uint64_t* address) -> bool {
+    if (AddOverflows(base, offset)) return false;
+    const auto virtual_address = base + offset;
+    if (AddOverflows(image.load_bias, virtual_address)) return false;
+    *address = image.load_bias + virtual_address;
+    return true;
+  };
+
+  if (metadata->verneed_address) {
+    std::uint64_t current = 0;
+    if (!relocated(0, *metadata->verneed_address, &current)) {
+      return "relocated DT_VERNEED address overflows";
+    }
+    for (std::uint64_t record_index = 0;
+         record_index < *metadata->verneed_count; ++record_index) {
+      Elf64_Verneed need{};
+      if (!image.Read(current, &need, sizeof(need))) {
+        return "DT_VERNEED record is outside loaded PT_LOAD segments";
+      }
+      if (need.vn_version != VER_NEED_CURRENT || need.vn_cnt == 0 ||
+          need.vn_cnt > options.max_symbols || need.vn_aux == 0) {
+        return "DT_VERNEED record has invalid version, auxiliary count or offset";
+      }
+
+      std::string provider;
+      std::string string_error;
+      if (!ReadDynamicString(image, image.load_bias,
+                             *metadata->strtab_address, *metadata->strtab_size,
+                             need.vn_file, &provider, &string_error)) {
+        return "DT_VERNEED provider string: " + string_error;
+      }
+      if (provider.empty()) return "DT_VERNEED contains an empty provider name";
+
+      if (AddOverflows(current, need.vn_aux)) {
+        return "DT_VERNEED auxiliary address overflows";
+      }
+      std::uint64_t auxiliary = current + need.vn_aux;
+      for (std::uint64_t aux_index = 0; aux_index < need.vn_cnt; ++aux_index) {
+        Elf64_Vernaux aux{};
+        if (!image.Read(auxiliary, &aux, sizeof(aux))) {
+          return "DT_VERNEED auxiliary record is outside loaded PT_LOAD segments";
+        }
+        const auto version_index =
+            static_cast<std::uint16_t>(aux.vna_other & 0x7fffU);
+        if (version_index < 2) {
+          return "DT_VERNEED uses a reserved symbol-version index";
+        }
+        std::string version_name;
+        if (!ReadDynamicString(image, image.load_bias,
+                               *metadata->strtab_address,
+                               *metadata->strtab_size, aux.vna_name,
+                               &version_name, &string_error)) {
+          return "DT_VERNEED version string: " + string_error;
+        }
+        if (version_name.empty()) {
+          return "DT_VERNEED contains an empty version name";
+        }
+        const auto inserted = metadata->required_versions.emplace(
+            version_index,
+            DynamicSymbolVersionInfo{version_name, provider, aux.vna_flags});
+        if (!inserted.second) {
+          return "DT_VERNEED contains a duplicate symbol-version index";
+        }
+        if (aux_index + 1 < need.vn_cnt) {
+          if (aux.vna_next == 0 || AddOverflows(auxiliary, aux.vna_next)) {
+            return "DT_VERNEED auxiliary chain ends before its declared count";
+          }
+          auxiliary += aux.vna_next;
+        } else if (aux.vna_next != 0) {
+          return "DT_VERNEED auxiliary chain exceeds its declared count";
+        }
+      }
+
+      if (record_index + 1 < *metadata->verneed_count) {
+        if (need.vn_next == 0 || AddOverflows(current, need.vn_next)) {
+          return "DT_VERNEED chain ends before DT_VERNEEDNUM";
+        }
+        current += need.vn_next;
+      } else if (need.vn_next != 0) {
+        return "DT_VERNEED chain exceeds DT_VERNEEDNUM";
+      }
+    }
+  }
+
+  if (metadata->verdef_address) {
+    std::uint64_t current = 0;
+    if (!relocated(0, *metadata->verdef_address, &current)) {
+      return "relocated DT_VERDEF address overflows";
+    }
+    for (std::uint64_t record_index = 0;
+         record_index < *metadata->verdef_count; ++record_index) {
+      Elf64_Verdef definition{};
+      if (!image.Read(current, &definition, sizeof(definition))) {
+        return "DT_VERDEF record is outside loaded PT_LOAD segments";
+      }
+      if (definition.vd_version != VER_DEF_CURRENT || definition.vd_cnt == 0 ||
+          definition.vd_cnt > options.max_symbols || definition.vd_aux == 0) {
+        return "DT_VERDEF record has invalid version, auxiliary count or offset";
+      }
+      const auto version_index =
+          static_cast<std::uint16_t>(definition.vd_ndx & 0x7fffU);
+      if (version_index == 0) {
+        return "DT_VERDEF uses the local symbol-version index";
+      }
+      if (AddOverflows(current, definition.vd_aux)) {
+        return "DT_VERDEF auxiliary address overflows";
+      }
+      std::uint64_t auxiliary = current + definition.vd_aux;
+      std::string version_name;
+      std::string string_error;
+      for (std::uint64_t aux_index = 0; aux_index < definition.vd_cnt;
+           ++aux_index) {
+        Elf64_Verdaux aux{};
+        if (!image.Read(auxiliary, &aux, sizeof(aux))) {
+          return "DT_VERDEF auxiliary record is outside loaded PT_LOAD segments";
+        }
+        std::string auxiliary_name;
+        if (!ReadDynamicString(image, image.load_bias,
+                               *metadata->strtab_address,
+                               *metadata->strtab_size, aux.vda_name,
+                               &auxiliary_name, &string_error)) {
+          return "DT_VERDEF version string: " + string_error;
+        }
+        if (auxiliary_name.empty()) {
+          return "DT_VERDEF contains an empty version name";
+        }
+        if (aux_index == 0) version_name = std::move(auxiliary_name);
+        if (aux_index + 1 < definition.vd_cnt) {
+          if (aux.vda_next == 0 || AddOverflows(auxiliary, aux.vda_next)) {
+            return "DT_VERDEF auxiliary chain ends before its declared count";
+          }
+          auxiliary += aux.vda_next;
+        } else if (aux.vda_next != 0) {
+          return "DT_VERDEF auxiliary chain exceeds its declared count";
+        }
+      }
+      const auto inserted = metadata->defined_versions.emplace(
+          version_index,
+          DynamicSymbolVersionInfo{version_name, {}, definition.vd_flags});
+      if (!inserted.second) {
+        return "DT_VERDEF contains a duplicate symbol-version index";
+      }
+
+      if (record_index + 1 < *metadata->verdef_count) {
+        if (definition.vd_next == 0 ||
+            AddOverflows(current, definition.vd_next)) {
+          return "DT_VERDEF chain ends before DT_VERDEFNUM";
+        }
+        current += definition.vd_next;
+      } else if (definition.vd_next != 0) {
+        return "DT_VERDEF chain exceeds DT_VERDEFNUM";
+      }
+    }
+  }
+  return {};
 }
 
 bool GetDynamicSymbolCount(const A64LoadedImage& image,
@@ -304,6 +507,8 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
     return false;
   }
 
+  std::string requested_version;
+  std::string requested_provider;
   if (metadata.versym_address) {
     const auto version_offset = symbol_index * sizeof(Elf64_Half);
     if (AddOverflows(*metadata.versym_address, version_offset) ||
@@ -312,17 +517,31 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
       *error = "dynamic symbol-version address overflows";
       return false;
     }
-    Elf64_Half version_index = 0;
+    Elf64_Half version_entry = 0;
     const auto guest_version_address =
         image.load_bias + *metadata.versym_address + version_offset;
-    if (!image.Read(guest_version_address, &version_index,
-                    sizeof(version_index))) {
+    if (!image.Read(guest_version_address, &version_entry,
+                    sizeof(version_entry))) {
       *error = "DT_VERSYM entry is outside loaded PT_LOAD segments";
       return false;
     }
-    version_index &= 0x7fffU;
+    const auto version_index =
+        static_cast<std::uint16_t>(version_entry & 0x7fffU);
     if (version_index > 1) {
-      *error = "versioned dynamic symbols are not supported yet";
+      const auto& versions = symbol.st_shndx == SHN_UNDEF
+                                 ? metadata.required_versions
+                                 : metadata.defined_versions;
+      const auto version = versions.find(version_index);
+      if (version == versions.end()) {
+        *error = symbol.st_shndx == SHN_UNDEF
+                     ? "versioned undefined symbol has no DT_VERNEED entry"
+                     : "versioned definition has no DT_VERDEF entry";
+        return false;
+      }
+      requested_version = version->second.name;
+      requested_provider = version->second.provider;
+    } else if (version_index == 0 && symbol.st_shndx != SHN_UNDEF) {
+      *error = "defined dynamic symbol uses the local DT_VERSYM index";
       return false;
     }
   }
@@ -360,18 +579,28 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
       *error = "undefined dynamic symbol has an empty name";
       return false;
     }
-    if (options.resolve_symbol) {
-      const auto resolved = options.resolve_symbol(name);
-      if (resolved) {
-        *symbol_value = *resolved;
-        return true;
+    std::optional<std::uint64_t> resolved;
+    if (!requested_version.empty()) {
+      if (options.resolve_versioned_symbol) {
+        resolved = options.resolve_versioned_symbol(
+            A64SymbolRequest{name, requested_version, requested_provider});
       }
+    } else if (options.resolve_symbol) {
+      resolved = options.resolve_symbol(name);
+    }
+    if (resolved) {
+      *symbol_value = *resolved;
+      return true;
     }
     if (binding == STB_WEAK) {
       *symbol_value = 0;
       return true;
     }
     *error = "unresolved AArch64 symbol: " + name;
+    if (!requested_version.empty()) {
+      *error += "@" + requested_version;
+      if (!requested_provider.empty()) *error += " from " + requested_provider;
+    }
     return false;
   }
 
@@ -458,6 +687,8 @@ std::string CollectDynamicExports(
       if (type == STT_GNU_IFUNC) continue;
 #endif
 
+      std::string version_name;
+      bool version_hidden = false;
       if (metadata.versym_address) {
         if (index > std::numeric_limits<std::uint64_t>::max() /
                         sizeof(Elf64_Half)) {
@@ -469,13 +700,23 @@ std::string CollectDynamicExports(
                          *metadata.versym_address + version_offset)) {
           return "dynamic symbol-version address overflows";
         }
-        Elf64_Half version_index = 0;
+        Elf64_Half version_entry = 0;
         if (!image->Read(image->load_bias + *metadata.versym_address +
                              version_offset,
-                         &version_index, sizeof(version_index))) {
+                         &version_entry, sizeof(version_entry))) {
           return "DT_VERSYM entry is outside loaded PT_LOAD segments";
         }
-        if ((version_index & 0x7fffU) > 1) continue;
+        const auto version_index =
+            static_cast<std::uint16_t>(version_entry & 0x7fffU);
+        version_hidden = (version_entry & 0x8000U) != 0;
+        if (version_index == 0) continue;
+        if (version_index > 1) {
+          const auto version = metadata.defined_versions.find(version_index);
+          if (version == metadata.defined_versions.end()) {
+            return "defined dynamic symbol references a missing DT_VERDEF index";
+          }
+          version_name = version->second.name;
+        }
       }
 
       std::string name;
@@ -503,7 +744,8 @@ std::string CollectDynamicExports(
           std::move(name), guest_address, symbol.st_size,
           static_cast<std::uint8_t>(binding),
           static_cast<std::uint8_t>(type),
-          static_cast<std::uint8_t>(visibility)});
+          static_cast<std::uint8_t>(visibility),
+          std::move(version_name), version_hidden});
     }
   } catch (const std::bad_alloc&) {
     return "not enough memory to collect bounded dynamic symbols";
@@ -908,6 +1150,22 @@ std::string ApplyDynamicMetadataAndRelocations(
         if (metadata.versym_address) return "duplicate DT_VERSYM tag";
         metadata.versym_address = entry.d_un.d_ptr;
         break;
+      case 0x6ffffffe:  // DT_VERNEED
+        if (metadata.verneed_address) return "duplicate DT_VERNEED tag";
+        metadata.verneed_address = entry.d_un.d_ptr;
+        break;
+      case 0x6fffffff:  // DT_VERNEEDNUM
+        if (metadata.verneed_count) return "duplicate DT_VERNEEDNUM tag";
+        metadata.verneed_count = value;
+        break;
+      case 0x6ffffffc:  // DT_VERDEF
+        if (metadata.verdef_address) return "duplicate DT_VERDEF tag";
+        metadata.verdef_address = entry.d_un.d_ptr;
+        break;
+      case 0x6ffffffd:  // DT_VERDEFNUM
+        if (metadata.verdef_count) return "duplicate DT_VERDEFNUM tag";
+        metadata.verdef_count = value;
+        break;
       case DT_INIT:
         if (metadata.init_address) return "duplicate DT_INIT tag";
         metadata.init_address = entry.d_un.d_ptr;
@@ -1098,6 +1356,10 @@ std::string ApplyDynamicMetadataAndRelocations(
       image->dependencies.push_back(std::move(dependency));
     }
   }
+
+  const auto versions_error =
+      ParseSymbolVersionMetadata(*image, &metadata, options);
+  if (!versions_error.empty()) return versions_error;
 
   const auto exports_error = CollectDynamicExports(image, metadata, options);
   if (!exports_error.empty()) return exports_error;
