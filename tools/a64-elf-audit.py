@@ -453,8 +453,15 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
                 if symbol_type == STT_GNU_IFUNC:
                     report["ifunc_symbols"] += 1
             used_symbols = {index for _typ, index in relocations if index < len(symbol_types) and index != 0}
-            if any(symbol_types[index] == STT_TLS for index in used_symbols):
-                blockers.append("a dynamic relocation references a TLS symbol")
+            tls_relocation_types = {1028, 1029, 1030, 1031}
+            if any(symbol_types[symbol_index] == STT_TLS and
+                   relocation_type not in tls_relocation_types
+                   for relocation_type, symbol_index in relocations
+                   if symbol_index < len(symbol_types) and symbol_index != 0):
+                blockers.append(
+                    "a TLS symbol is referenced by a relocation outside the supported "
+                    "DTPMOD64/DTPREL64/TPREL64/TLSDESC subset"
+                )
             if any(symbol_types[index] == STT_GNU_IFUNC for index in used_symbols):
                 blockers.append("a dynamic relocation references a GNU IFUNC symbol")
             if version_indices is not None:
