@@ -44,6 +44,8 @@ struct A64GuestModuleSet final {
       const std::string& name) const;
   std::optional<std::uint64_t> ResolveExportedSymbol(
       const A64SymbolRequest& request) const;
+  std::optional<A64TlsSymbol> ResolveTlsSymbol(
+      const A64SymbolRequest& request) const;
 };
 
 struct A64GuestModuleLoadOptions final {
@@ -59,6 +61,7 @@ struct A64GuestModuleLoadOptions final {
   std::vector<std::string> external_dependencies;
   A64SymbolResolver resolve_external_symbol;
   A64VersionedSymbolResolver resolve_external_versioned_symbol;
+  A64TlsSymbolResolver resolve_external_tls_symbol;
 };
 
 struct A64GuestModuleLoadResult final {
