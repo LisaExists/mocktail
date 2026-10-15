@@ -136,22 +136,21 @@ int main() {
         "rejects mprotect ranges containing an unmapped page");
   Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
         "failed mprotect leaves earlier pages unchanged");
-  Check(!anonymous_memory.Unmap(anonymous_base,
+  Check(anonymous_memory.Unmap(anonymous_base +
+                                   A64GuestMemory::kPageSize,
                                2U * A64GuestMemory::kPageSize, &error),
-        "rejects munmap ranges containing an unmapped page");
+        "unmaps a range spanning mapped pages and holes");
   Check(anonymous_memory.IsMapped(anonymous_base,
-                                  A64GuestMemory::kPageSize),
-        "failed munmap leaves earlier pages mapped");
-  Check(anonymous_memory.Unmap(anonymous_base + A64GuestMemory::kPageSize,
-                               A64GuestMemory::kPageSize, &error),
-        "unmaps a single guest page");
-  Check(!anonymous_memory.IsMapped(anonymous_base +
-                                       A64GuestMemory::kPageSize, 1),
-        "unmapped guest pages become inaccessible");
-  Check(anonymous_memory.Unmap(anonymous_base, A64GuestMemory::kPageSize,
+                                  A64GuestMemory::kPageSize) &&
+            !anonymous_memory.IsMapped(anonymous_base +
+                                          A64GuestMemory::kPageSize, 1),
+        "munmap preserves pages outside its range and releases pages inside it");
+  Check(anonymous_memory.mapped_bytes() == 2U * A64GuestMemory::kPageSize,
+        "accounts for pages removed by a partial munmap");
+  Check(anonymous_memory.Unmap(anonymous_base, 2U * A64GuestMemory::kPageSize,
                                &error) &&
             anonymous_memory.mapped_bytes() == A64GuestMemory::kPageSize,
-        "unmaps the remaining pages and updates memory accounting");
+        "munmaps a range containing remaining memory and holes");
   Check(anonymous_memory.Unmap(second_mapping, A64GuestMemory::kPageSize,
                                &error) &&
             anonymous_memory.mapped_bytes() == 0,

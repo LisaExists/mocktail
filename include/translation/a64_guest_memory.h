@@ -41,9 +41,9 @@ class A64GuestMemory final {
                    std::uint64_t* guest_address,
                    std::string* error = nullptr);
 
-  // Implements the page-aligned semantics used by mmap/mprotect/munmap.
-  // Protect and Unmap validate the whole range first and leave memory unchanged
-  // when validation fails.
+  // Implements page-aligned memory operations. Protect validates the whole
+  // range before changing permissions; Unmap follows Linux munmap semantics and
+  // ignores already-unmapped holes within a valid range.
   bool Protect(std::uint64_t address, std::uint64_t size,
                std::uint8_t permissions, std::string* error = nullptr);
   bool Unmap(std::uint64_t address, std::uint64_t size,

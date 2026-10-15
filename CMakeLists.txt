@@ -204,6 +204,24 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   )
   target_compile_features(mocktail_a64_guest_module_loader PUBLIC cxx_std_17)
 
+  add_library(mocktail_a64_linux_syscalls STATIC
+    src/translation/a64_linux_syscalls.cc
+  )
+  target_include_directories(mocktail_a64_linux_syscalls PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  target_link_libraries(mocktail_a64_linux_syscalls PUBLIC
+    mocktail_a64_guest_memory
+  )
+  target_compile_features(mocktail_a64_linux_syscalls PUBLIC cxx_std_17)
+
+  add_executable(mocktail_a64_linux_syscalls_test
+    tests/translation/a64_linux_syscalls_test.cc
+  )
+  target_link_libraries(mocktail_a64_linux_syscalls_test PRIVATE
+    mocktail_a64_linux_syscalls
+  )
+
   add_executable(mocktail_a64_guest_module_loader_test
     tests/translation/a64_guest_module_loader_test.cc
   )
@@ -245,6 +263,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     dynarmic
     mocktail_a64_guest_memory
     mocktail_a64_guest_module_loader
+    mocktail_a64_linux_syscalls
   )
 
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
@@ -265,8 +284,24 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_smoke.S"
       VERBATIM
     )
+    set(MOCKTAIL_A64_SYSCALL_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/mocktail-a64-guest-syscalls.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_SYSCALL_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,-e,_start
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-guest-syscalls.so
+              -o "${MOCKTAIL_A64_SYSCALL_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_syscalls_smoke.S"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_syscalls_smoke.S"
+      VERBATIM
+    )
     add_custom_target(mocktail_a64_guest_elf_fixture
-      DEPENDS "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+      DEPENDS
+        "${MOCKTAIL_A64_REAL_ELF_FIXTURE}"
+        "${MOCKTAIL_A64_SYSCALL_FIXTURE}")
 
     set(MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE
       "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-a64-module-dependency.so")
@@ -325,7 +360,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     add_dependencies(mocktail_a64_translation_smoke
       mocktail_a64_guest_elf_fixture
-      mocktail_a64_guest_module_fixtures)
+      mocktail_a64_guest_module_fixtures
+      mocktail_a64_linux_syscalls_test)
   endif()
 
   if(BUILD_TESTING)
@@ -337,10 +373,15 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       COMMAND $<TARGET_FILE:mocktail_a64_guest_memory_test>)
     add_test(NAME RobloxArmTranslation.GuestModuleLoader
       COMMAND $<TARGET_FILE:mocktail_a64_guest_module_loader_test>)
+    add_test(NAME RobloxArmTranslation.LinuxSyscalls
+      COMMAND $<TARGET_FILE:mocktail_a64_linux_syscalls_test>)
     if(MOCKTAIL_AARCH64_GCC_EXECUTABLE)
       add_test(NAME RobloxArmTranslation.RealElfCpuSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_REAL_ELF_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.RealElfSyscallSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                "${MOCKTAIL_A64_SYSCALL_FIXTURE}")
       add_test(NAME RobloxArmTranslation.RealElfModuleSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"

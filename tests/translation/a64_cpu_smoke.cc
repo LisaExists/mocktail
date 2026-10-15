@@ -16,6 +16,7 @@
 #include "translation/a64_elf_loader.h"
 #include "translation/a64_guest_memory.h"
 #include "translation/a64_guest_module_loader.h"
+#include "translation/a64_linux_syscalls.h"
 #include "a64_test_elf.h"
 
 namespace {
@@ -26,7 +27,8 @@ using mocktail::translation::A64GuestMemory;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
-  explicit SmokeMemory(A64GuestMemory& memory) : memory_(memory) {}
+  explicit SmokeMemory(A64GuestMemory& memory)
+      : memory_(memory), syscalls_(memory) {}
 
   void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
 
@@ -125,8 +127,22 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
     Fail("Dynarmic requested interpreter fallback for the smoke instructions");
   }
 
-  void CallSVC(std::uint32_t) override {
-    Fail("unexpected SVC in the smoke program");
+  void CallSVC(std::uint32_t immediate) override {
+    if (jit_ == nullptr) {
+      Fail("Dynarmic invoked SVC before the JIT was attached");
+      return;
+    }
+    if (immediate != 0) {
+      jit_->SetRegister(0, static_cast<std::uint64_t>(
+                               -static_cast<std::int64_t>(38)));  // -ENOSYS
+      return;
+    }
+    const std::array<std::uint64_t, 6> arguments{
+        jit_->GetRegister(0), jit_->GetRegister(1), jit_->GetRegister(2),
+        jit_->GetRegister(3), jit_->GetRegister(4), jit_->GetRegister(5)};
+    const auto result = syscalls_.Dispatch(jit_->GetRegister(8), arguments);
+    jit_->SetRegister(0, result.value);
+    if (result.should_exit) Stop();
   }
 
   void ExceptionRaised(Address address,
@@ -164,6 +180,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   }
 
   A64GuestMemory& memory_;
+  mocktail::translation::A64LinuxSyscalls syscalls_;
   Dynarmic::A64::Jit* jit_ = nullptr;
   std::uint64_t ticks_ = 0;
   Address return_trap_ = 0;

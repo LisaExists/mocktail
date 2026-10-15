@@ -182,15 +182,12 @@ bool A64GuestMemory::Unmap(std::uint64_t address, std::uint64_t size,
   if (AddOverflows(address, size)) {
     return fail("guest unmap range overflows");
   }
-  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
-    if (pages_.find(address + offset) == pages_.end()) {
-      return fail("guest unmap range contains an unmapped page");
-    }
+  const auto end = address + size;
+  auto page = pages_.lower_bound(address);
+  while (page != pages_.end() && page->first < end) {
+    page = pages_.erase(page);
+    mapped_bytes_ -= static_cast<std::size_t>(kPageSize);
   }
-  for (std::uint64_t offset = 0; offset < size; offset += kPageSize) {
-    pages_.erase(address + offset);
-  }
-  mapped_bytes_ -= static_cast<std::size_t>(size);
   if (error != nullptr) error->clear();
   return true;
 }
