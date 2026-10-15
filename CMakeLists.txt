@@ -265,6 +265,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_guest_module_loader
     mocktail_a64_linux_syscalls
   )
+  add_dependencies(mocktail_a64_translation_smoke
+    mocktail_a64_linux_syscalls_test)
 
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
   # and execute its instructions through the same loader/JIT path.
@@ -360,8 +362,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     add_dependencies(mocktail_a64_translation_smoke
       mocktail_a64_guest_elf_fixture
-      mocktail_a64_guest_module_fixtures
-      mocktail_a64_linux_syscalls_test)
+      mocktail_a64_guest_module_fixtures)
   endif()
 
   if(BUILD_TESTING)
