@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
   } else if (argc >= 2 && std::string(argv[1]) == "--require-tlsdesc") {
     if (argc < 3) {
       std::cerr << "usage: mocktail_a64_translation_smoke --require-tlsdesc "
-                   "tlsdesc-aarch64-elf\\n";
+                   "tlsdesc-aarch64-elf\n";
       return 2;
     }
     require_tlsdesc = true;
