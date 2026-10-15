@@ -6,6 +6,7 @@
 #include <elf.h>
 
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -24,6 +25,60 @@ void Check(bool condition, const std::string& name) {
     std::cerr << "[FAIL] " << name << '\n';
     ++failures;
   }
+}
+
+std::vector<std::uint8_t> BuildTlsRelocationElf(bool undefined_symbol) {
+  using mocktail::translation::test::BuildA64ElfWithRelativeRelocation;
+  using mocktail::translation::test::ReadDynamicEntry;
+  using mocktail::translation::test::ReadElfHeader;
+  using mocktail::translation::test::WriteDynamicEntry;
+  using mocktail::translation::test::WriteElfHeader;
+
+  auto file = BuildA64ElfWithRelativeRelocation(
+      1030, 0x1500, 0, 1, undefined_symbol);
+  auto header = ReadElfHeader(file);
+  header.e_phnum = 3;
+  WriteElfHeader(file, header);
+
+  Elf64_Phdr tls{};
+  tls.p_type = PT_TLS;
+  tls.p_flags = PF_R;
+  tls.p_offset = 0x1400;
+  tls.p_vaddr = 0x1400;
+  tls.p_filesz = 8;
+  tls.p_memsz = 16;
+  tls.p_align = 8;
+  std::memcpy(file.data() + header.e_phoff +
+                  2 * static_cast<std::size_t>(header.e_phentsize),
+              &tls, sizeof(tls));
+
+  Elf64_Sym symbol{};
+  std::memcpy(&symbol, file.data() + 0x1380 + sizeof(Elf64_Sym),
+              sizeof(symbol));
+  symbol.st_info = ELF64_ST_INFO(STB_GLOBAL, STT_TLS);
+  symbol.st_shndx = undefined_symbol ? SHN_UNDEF : 1;
+  symbol.st_value = undefined_symbol ? 0 : 8;
+  symbol.st_size = 8;
+  std::memcpy(file.data() + 0x1380 + sizeof(Elf64_Sym), &symbol,
+              sizeof(symbol));
+
+  if (undefined_symbol) {
+    constexpr std::size_t kExtraStringOffset = 32;
+    const char soname[] = "libroot_tls.so";
+    std::memcpy(file.data() + 0x1300 + kExtraStringOffset, soname,
+                sizeof(soname));
+    auto strsz = ReadDynamicEntry(file, 4);
+    strsz.d_un.d_val = kExtraStringOffset + sizeof(soname);
+    WriteDynamicEntry(file, 4, strsz);
+    auto soname_entry = ReadDynamicEntry(file, 6);
+    soname_entry.d_un.d_val = kExtraStringOffset;
+    WriteDynamicEntry(file, 6, soname_entry);
+  } else {
+    auto needed = ReadDynamicEntry(file, 5);
+    needed.d_tag = DT_DEBUG;
+    WriteDynamicEntry(file, 5, needed);
+  }
+  return file;
 }
 
 }  // namespace
