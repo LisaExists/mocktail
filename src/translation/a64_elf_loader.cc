@@ -1592,6 +1592,48 @@ std::string ApplyDynamicMetadataAndRelocations(
                                   &relocated_value)) {
         return "symbol relocation result overflows";
       }
+    } else if (type == 1028 || type == 1029 || type == 1030 ||
+               type == 1031) {
+      // AArch64 static TLS relocations. The module loader assigns a stable TLS
+      // module ID and TP-relative offset before this final relocation pass.
+      // TLSDESC is intentionally restricted to the static resolver thunk; this
+      // is not the dynamic DTV/TLSDESC protocol required by dlopen/pthreads.
+      A64TlsSymbol tls_symbol;
+      std::string tls_error;
+      if (!ResolveTlsDynamicSymbol(*image, metadata, options, symbol_index,
+                                   &tls_symbol, &tls_error)) {
+        return tls_error;
+      }
+
+      if (type == 1028) {  // R_AARCH64_TLS_DTPMOD64
+        relocated_value = tls_symbol.module_id;
+      } else if (type == 1029) {  // R_AARCH64_TLS_DTPREL64
+        if (!AddSignedOffset(tls_symbol.module_offset, relocation.r_addend,
+                             &relocated_value)) {
+          return "R_AARCH64_TLS_DTPREL64 result overflows";
+        }
+      } else if (type == 1030) {  // R_AARCH64_TLS_TPREL64
+        if (!AddSignedOffset(tls_symbol.static_offset_from_tp,
+                             relocation.r_addend, &relocated_value)) {
+          return "R_AARCH64_TLS_TPREL64 result overflows";
+        }
+      } else {  // R_AARCH64_TLSDESC
+        if (options.tlsdesc_resolver_address == 0) {
+          return "R_AARCH64_TLSDESC requires an explicit static guest resolver";
+        }
+        std::uint64_t static_offset = 0;
+        if (!AddSignedOffset(tls_symbol.static_offset_from_tp,
+                             relocation.r_addend, &static_offset)) {
+          return "R_AARCH64_TLSDESC TP-relative offset overflows";
+        }
+        const std::uint64_t descriptor[2] = {
+            options.tlsdesc_resolver_address, static_offset};
+        if (!image->Write(target, descriptor, sizeof(descriptor))) {
+          return "TLSDESC target is not contained in writable PT_LOAD memory";
+        }
+        ++applied_relocation_count;
+        return {};
+      }
     } else {
       return std::string("unsupported AArch64 dynamic relocation type ") +
              std::to_string(type) + " in " + table_name;
