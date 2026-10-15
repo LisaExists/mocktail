@@ -31,6 +31,11 @@ struct A64GuestModuleSet final {
   std::size_t root_index = 0;
   // Root first, followed by dependencies in breadth-first DT_NEEDED order.
   std::vector<A64GuestModule> modules;
+  // Module indices ordered for initialization (dependencies before dependents)
+  // and finalization (reverse dependency order). These describe order only;
+  // this prototype does not execute constructors or destructors yet.
+  std::vector<std::size_t> initialization_order;
+  std::vector<std::size_t> finalization_order;
 
   const A64GuestModule* FindModule(const std::string& name) const;
   std::optional<std::uint64_t> ResolveExportedSymbol(
