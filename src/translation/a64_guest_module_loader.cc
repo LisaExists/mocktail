@@ -27,6 +27,19 @@ bool AddOverflows(std::uint64_t left, std::uint64_t right) noexcept {
   return right > std::numeric_limits<std::uint64_t>::max() - left;
 }
 
+bool IsPowerOfTwo(std::uint64_t value) noexcept {
+  return value != 0 && (value & (value - 1U)) == 0;
+}
+
+bool AlignUp(std::uint64_t value, std::uint64_t alignment,
+             std::uint64_t* result) noexcept {
+  if (!IsPowerOfTwo(alignment)) return false;
+  const auto mask = alignment - 1U;
+  if (value > std::numeric_limits<std::uint64_t>::max() - mask) return false;
+  *result = (value + mask) & ~mask;
+  return true;
+}
+
 std::string Basename(const std::string& path) {
   const auto separator = path.find_last_of('/');
   return separator == std::string::npos ? path : path.substr(separator + 1);
@@ -68,6 +81,33 @@ std::optional<std::uint64_t> A64GuestModuleSet::ResolveExportedSymbol(
       if (symbol.name == name &&
           (symbol.version.empty() || !symbol.version_hidden)) {
         return symbol.guest_address;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<A64TlsSymbol> A64GuestModuleSet::ResolveTlsSymbol(
+    const A64SymbolRequest& request) const {
+  for (const auto& module : modules) {
+    if (!request.provider.empty() &&
+        module.image.soname != request.provider &&
+        module.source_name != request.provider &&
+        Basename(module.source_name) != request.provider) {
+      continue;
+    }
+    for (const auto& symbol : module.image.exported_symbols) {
+      if (symbol.type != STT_TLS || symbol.name != request.name) continue;
+      if (request.version.empty()) {
+        if (symbol.version.empty() || !symbol.version_hidden) {
+          return A64TlsSymbol{symbol.tls_module_id,
+                              symbol.tls_module_offset,
+                              symbol.tls_static_offset_from_tp};
+        }
+      } else if (symbol.version == request.version) {
+        return A64TlsSymbol{symbol.tls_module_id,
+                            symbol.tls_module_offset,
+                            symbol.tls_static_offset_from_tp};
       }
     }
   }
@@ -165,6 +205,10 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
           [](const A64SymbolRequest&) -> std::optional<std::uint64_t> {
         return std::uint64_t{0};
       };
+      preflight_options.resolve_tls_symbol =
+          [](const A64SymbolRequest&) -> std::optional<A64TlsSymbol> {
+        return A64TlsSymbol{1, 0, 16};
+      };
 
       auto loaded = LoadA64Elf(sources[source_index].bytes,
                                std::move(preflight_options));
@@ -229,6 +273,56 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
       }
     }
 
+    // Assign one stable module ID and static TP-relative range to every
+    // PT_TLS image before applying final relocations. This supports preloaded
+    // static TLS and static TLSDESC only; dlopen-style dynamic TLS is separate.
+    constexpr std::uint64_t kStaticTlsTcbPrefixSize = 16;
+    constexpr std::uint64_t kMaximumStaticTlsBytes = 64U * 1024U * 1024U;
+    constexpr std::uint64_t kMaximumStaticTlsAlignment = 1U * 1024U * 1024U;
+    std::uint64_t tls_cursor = kStaticTlsTcbPrefixSize;
+    std::uint64_t next_tls_module_id = 1;
+    for (auto& module : discovered) {
+      auto& image = module.metadata_image;
+      if (!image.tls) continue;
+      auto& tls = *image.tls;
+      const auto alignment = std::max<std::uint64_t>(tls.alignment, 1);
+      if (!IsPowerOfTwo(alignment) ||
+          alignment > kMaximumStaticTlsAlignment) {
+        return Failure("PT_TLS alignment exceeds the supported static TLS layout");
+      }
+      if (tls.memory_size != tls.template_bytes.size() ||
+          tls.file_size > tls.memory_size) {
+        return Failure("PT_TLS template has inconsistent sizes");
+      }
+      std::uint64_t aligned_cursor = 0;
+      if (!AlignUp(tls_cursor, alignment, &aligned_cursor) ||
+          AddOverflows(aligned_cursor, tls.memory_size)) {
+        return Failure("static guest TLS layout overflows");
+      }
+      const auto next_cursor_value = aligned_cursor + tls.memory_size;
+      if (next_cursor_value < kStaticTlsTcbPrefixSize ||
+          next_cursor_value - kStaticTlsTcbPrefixSize >
+              kMaximumStaticTlsBytes) {
+        return Failure("static guest TLS layout exceeds the configured limit");
+      }
+      tls.module_id = next_tls_module_id++;
+      tls.static_offset_from_tp = aligned_cursor;
+      tls_cursor = next_cursor_value;
+
+      for (auto& symbol : image.exported_symbols) {
+        if (symbol.type != STT_TLS) continue;
+        if (symbol.tls_module_offset > tls.memory_size ||
+            symbol.size > tls.memory_size - symbol.tls_module_offset ||
+            AddOverflows(tls.static_offset_from_tp,
+                         symbol.tls_module_offset)) {
+          return Failure("exported TLS symbol is outside its module TLS block");
+        }
+        symbol.tls_module_id = tls.module_id;
+        symbol.tls_static_offset_from_tp =
+            tls.static_offset_from_tp + symbol.tls_module_offset;
+      }
+    }
+
     A64GuestModuleSet result;
     result.root_index = 0;
     result.modules.reserve(discovered.size());
@@ -237,7 +331,7 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
         -> std::optional<std::uint64_t> {
       for (const auto& module : discovered) {
         for (const auto& symbol : module.metadata_image.exported_symbols) {
-          if (symbol.name == name &&
+          if (symbol.type != STT_TLS && symbol.name == name &&
               (symbol.version.empty() || !symbol.version_hidden)) {
             return symbol.guest_address;
           }
@@ -261,7 +355,7 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
           continue;
         }
         for (const auto& symbol : image.exported_symbols) {
-          if (symbol.name == request.name &&
+          if (symbol.type != STT_TLS && symbol.name == request.name &&
               symbol.version == request.version) {
             return symbol.guest_address;
           }
@@ -273,11 +367,49 @@ A64GuestModuleLoadResult LoadA64GuestModuleSet(
       return std::nullopt;
     };
 
+    auto resolve_tls_symbol = [&](const A64SymbolRequest& request)
+        -> std::optional<A64TlsSymbol> {
+      for (const auto& module : discovered) {
+        const auto& image = module.metadata_image;
+        const auto& source_name = sources[module.source_index].name;
+        if (!request.provider.empty() &&
+            image.soname != request.provider &&
+            source_name != request.provider &&
+            Basename(source_name) != request.provider) {
+          continue;
+        }
+        for (const auto& symbol : image.exported_symbols) {
+          if (symbol.type != STT_TLS || symbol.name != request.name) continue;
+          if (request.version.empty()) {
+            if (symbol.version.empty() || !symbol.version_hidden) {
+              return A64TlsSymbol{symbol.tls_module_id,
+                                  symbol.tls_module_offset,
+                                  symbol.tls_static_offset_from_tp};
+            }
+          } else if (symbol.version == request.version) {
+            return A64TlsSymbol{symbol.tls_module_id,
+                                symbol.tls_module_offset,
+                                symbol.tls_static_offset_from_tp};
+          }
+        }
+      }
+      if (options.resolve_external_tls_symbol) {
+        return options.resolve_external_tls_symbol(request);
+      }
+      return std::nullopt;
+    };
+
     for (const auto& module : discovered) {
       A64ElfLoadOptions final_options = options.elf;
       final_options.preferred_base = module.preferred_base;
       final_options.resolve_symbol = resolve_symbol;
       final_options.resolve_versioned_symbol = resolve_versioned_symbol;
+      final_options.resolve_tls_symbol = resolve_tls_symbol;
+      if (module.metadata_image.tls) {
+        final_options.tls_module_id = module.metadata_image.tls->module_id;
+        final_options.tls_static_offset_from_tp =
+            module.metadata_image.tls->static_offset_from_tp;
+      }
       auto loaded = LoadA64Elf(sources[module.source_index].bytes,
                                std::move(final_options));
       if (!loaded) {
