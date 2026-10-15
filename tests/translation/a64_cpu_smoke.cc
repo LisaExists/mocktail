@@ -19,6 +19,7 @@
 #include "translation/a64_guest_memory.h"
 #include "translation/a64_guest_module_loader.h"
 #include "translation/a64_linux_syscalls.h"
+#include "translation/a64_guest_host_calls.h"
 #include "a64_test_elf.h"
 
 namespace {
@@ -29,8 +30,9 @@ using mocktail::translation::A64GuestMemory;
 
 class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
  public:
-  explicit SmokeMemory(A64GuestMemory& memory)
-      : memory_(memory), syscalls_(memory) {}
+  SmokeMemory(A64GuestMemory& memory,
+              mocktail::translation::A64GuestHostCalls& host_calls)
+      : memory_(memory), syscalls_(memory), host_calls_(host_calls) {}
 
   void Attach(Dynarmic::A64::Jit* jit) { jit_ = jit; }
 
@@ -139,6 +141,21 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
       Fail("Dynarmic invoked SVC before the JIT was attached");
       return;
     }
+
+    if (host_calls_.HandlesSvc(immediate)) {
+      mocktail::translation::A64GuestHostCalls::Arguments arguments{};
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        arguments[index] = jit_->GetRegister(index);
+      }
+      const auto result = host_calls_.DispatchSvc(immediate, arguments);
+      if (!result.success) {
+        Fail("guest host call failed: " + result.error);
+        return;
+      }
+      jit_->SetRegister(0, result.value);
+      return;
+    }
+
     if (immediate != 0) {
       jit_->SetRegister(0, static_cast<std::uint64_t>(
                                -static_cast<std::int64_t>(38)));  // -ENOSYS
@@ -188,6 +205,7 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 
   A64GuestMemory& memory_;
   mocktail::translation::A64LinuxSyscalls syscalls_;
+  mocktail::translation::A64GuestHostCalls& host_calls_;
   Dynarmic::A64::Jit* jit_ = nullptr;
   std::uint64_t ticks_ = 0;
   Address return_trap_ = 0;
@@ -199,6 +217,8 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
 }  // namespace
 
 int main(int argc, char** argv) {
+  using mocktail::translation::A64GuestHostCalls;
+  using mocktail::translation::A64GuestModuleLoadOptions;
   using mocktail::translation::A64GuestModuleSource;
   using mocktail::translation::LoadA64GuestModuleSet;
   using mocktail::translation::test::BuildMinimalA64Elf;
@@ -267,7 +287,32 @@ int main(int argc, char** argv) {
     }
   }
 
-  const auto loaded = LoadA64GuestModuleSet(sources, sources.front().name);
+  A64GuestMemory memory;
+  std::string memory_error;
+  A64GuestHostCalls host_calls(memory);
+  if (!host_calls.RegisterBuiltinLibc(&memory_error) ||
+      !host_calls.Install(&memory_error)) {
+    std::cerr << "AArch64 guest host-call setup failed: "
+              << memory_error << '\n';
+    return 1;
+  }
+
+  A64GuestModuleLoadOptions load_options;
+  // libc is supplied by the guest-to-host thunk table until an ARM64 Bionic
+  // library catalogue is provided. Every actual imported symbol still has to
+  // resolve through an explicit guest stub.
+  load_options.external_dependencies = {"libc.so"};
+  load_options.resolve_external_symbol =
+      [&host_calls](const std::string& name) {
+        return host_calls.ResolveSymbol(name);
+      };
+  load_options.resolve_external_versioned_symbol =
+      [&host_calls](const mocktail::translation::A64SymbolRequest& request) {
+        return host_calls.ResolveVersionedSymbol(request);
+      };
+
+  const auto loaded = LoadA64GuestModuleSet(
+      sources, sources.front().name, std::move(load_options));
   if (!loaded) {
     std::cerr << "AArch64 guest module loading failed: " << loaded.error
               << '\n';
@@ -343,8 +388,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  A64GuestMemory memory;
-  std::string memory_error;
   for (const auto& module : modules.modules) {
     if (!memory.MapImage(module.image, &memory_error)) {
       std::cerr << "guest image mapping failed for " << module.source_name
@@ -377,7 +420,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  SmokeMemory callbacks(memory);
+  SmokeMemory callbacks(memory, host_calls);
   callbacks.SetReturnTrap(kReturnTrap, !call_export);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
