@@ -314,7 +314,7 @@ int main(int argc, char** argv) {
         return host_calls.ResolveVersionedSymbol(request);
       };
 
-  const auto loaded = LoadA64GuestModuleSet(
+  auto loaded = LoadA64GuestModuleSet(
       sources, sources.front().name, std::move(load_options));
   if (!loaded) {
     std::cerr << "AArch64 guest module loading failed: " << loaded.error
