@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "translation/a64_guest_module_loader.h"
 
@@ -62,10 +63,17 @@ class A64GuestTlsRuntime final {
   std::uint64_t maximum_alignment() const noexcept { return maximum_alignment_; }
 
  private:
+  struct ModuleTemplate final {
+    std::uint64_t module_id = 0;
+    std::uint64_t offset_from_tp = 0;
+    std::vector<std::uint8_t> bytes;
+  };
+
   A64GuestMemory& memory_;
   std::size_t max_tls_bytes_;
   std::uint64_t total_tls_size_ = 0;
   std::uint64_t maximum_alignment_ = kTcbPrefixSize;
+  std::vector<ModuleTemplate> templates_;
   bool prepared_ = false;
 };
 
