@@ -35,6 +35,20 @@ class A64GuestMemory final {
   bool Map(std::uint64_t address, std::uint64_t size,
            std::uint8_t permissions, std::string* error = nullptr);
 
+  // Maps rounded-up anonymous memory at the first available address from the
+  // runtime's normal guest mmap range. The result is a guest address only.
+  bool MapAnywhere(std::uint64_t size, std::uint8_t permissions,
+                   std::uint64_t* guest_address,
+                   std::string* error = nullptr);
+
+  // Implements the page-aligned semantics used by mmap/mprotect/munmap.
+  // Protect and Unmap validate the whole range first and leave memory unchanged
+  // when validation fails.
+  bool Protect(std::uint64_t address, std::uint64_t size,
+               std::uint8_t permissions, std::string* error = nullptr);
+  bool Unmap(std::uint64_t address, std::uint64_t size,
+             std::string* error = nullptr);
+
   // Maps all PT_LOAD segments from an already validated image. Page permissions
   // are the union of segments sharing a page, as is required for ELF layouts
   // where adjacent segments share a hardware page.
