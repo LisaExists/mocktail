@@ -620,6 +620,146 @@ bool ResolveDynamicSymbol(const A64LoadedImage& image,
   return true;
 }
 
+bool ResolveTlsDynamicSymbol(
+    const A64LoadedImage& image, const DynamicMetadata& metadata,
+    const A64ElfLoadOptions& options, std::uint64_t symbol_index,
+    A64TlsSymbol* result, std::string* error) {
+  auto fail = [&](const char* message) {
+    *error = message;
+    return false;
+  };
+  if (symbol_index == 0) {
+    if (!image.tls || image.tls->module_id == 0) {
+      return fail("module-local TLS relocation requires a prepared PT_TLS module");
+    }
+    *result = A64TlsSymbol{image.tls->module_id, 0,
+                           image.tls->static_offset_from_tp};
+    return true;
+  }
+  if (!metadata.symtab_address || !metadata.symtab_entry_size ||
+      *metadata.symtab_entry_size != sizeof(Elf64_Sym)) {
+    return fail("TLS relocation requires DT_SYMTAB and a valid DT_SYMENT");
+  }
+
+  std::uint64_t symbol_count = 0;
+  if (!GetDynamicSymbolCount(image, metadata, options, &symbol_count, error)) {
+    return false;
+  }
+  if (symbol_index >= symbol_count || symbol_index >= options.max_symbols) {
+    return fail("TLS relocation symbol index is outside the dynamic symbol table");
+  }
+  if (symbol_index >
+      std::numeric_limits<std::uint64_t>::max() / sizeof(Elf64_Sym)) {
+    return fail("TLS dynamic symbol table offset overflows");
+  }
+  const auto symbol_offset = symbol_index * sizeof(Elf64_Sym);
+  if (AddOverflows(*metadata.symtab_address, symbol_offset) ||
+      AddOverflows(image.load_bias,
+                   *metadata.symtab_address + symbol_offset)) {
+    return fail("TLS dynamic symbol address overflows");
+  }
+  Elf64_Sym symbol{};
+  if (!image.Read(image.load_bias + *metadata.symtab_address + symbol_offset,
+                  &symbol, sizeof(symbol))) {
+    return fail("TLS dynamic symbol entry is outside loaded PT_LOAD segments");
+  }
+  if (ELF64_ST_TYPE(symbol.st_info) != STT_TLS) {
+    return fail("TLS relocation references a non-STT_TLS symbol");
+  }
+
+  std::string requested_version;
+  std::string requested_provider;
+  if (metadata.versym_address) {
+    if (symbol_index >
+        std::numeric_limits<std::uint64_t>::max() / sizeof(Elf64_Half)) {
+      return fail("TLS symbol-version offset overflows");
+    }
+    const auto version_offset = symbol_index * sizeof(Elf64_Half);
+    if (AddOverflows(*metadata.versym_address, version_offset) ||
+        AddOverflows(image.load_bias,
+                     *metadata.versym_address + version_offset)) {
+      return fail("TLS symbol-version address overflows");
+    }
+    Elf64_Half version_entry = 0;
+    if (!image.Read(image.load_bias + *metadata.versym_address + version_offset,
+                    &version_entry, sizeof(version_entry))) {
+      return fail("TLS DT_VERSYM entry is outside loaded PT_LOAD segments");
+    }
+    const auto version_index =
+        static_cast<std::uint16_t>(version_entry & 0x7fffU);
+    if (version_index > 1) {
+      const auto& versions = symbol.st_shndx == SHN_UNDEF
+                                 ? metadata.required_versions
+                                 : metadata.defined_versions;
+      const auto version = versions.find(version_index);
+      if (version == versions.end()) {
+        return fail("TLS symbol-version index has no matching GNU version record");
+      }
+      requested_version = version->second.name;
+      requested_provider = version->second.provider;
+    } else if (version_index == 0 && symbol.st_shndx != SHN_UNDEF) {
+      return fail("defined TLS symbol uses the local DT_VERSYM index");
+    }
+  }
+
+  if (symbol.st_shndx == SHN_UNDEF) {
+    if (ELF64_ST_BIND(symbol.st_info) != STB_GLOBAL &&
+        ELF64_ST_BIND(symbol.st_info) != STB_WEAK) {
+      return fail("undefined TLS symbol is not global or weak");
+    }
+    if (!metadata.strtab_address || !metadata.strtab_size ||
+        symbol.st_name >= *metadata.strtab_size) {
+      return fail("undefined TLS symbol requires a valid DT_STRTAB entry");
+    }
+    std::string name;
+    if (!ReadDynamicString(image, image.load_bias, *metadata.strtab_address,
+                           *metadata.strtab_size, symbol.st_name, &name,
+                           error)) {
+      return false;
+    }
+    if (name.empty()) return fail("undefined TLS symbol has an empty name");
+
+    std::optional<A64TlsSymbol> resolved;
+    if (options.resolve_tls_symbol) {
+      resolved = options.resolve_tls_symbol(
+          A64SymbolRequest{name, requested_version, requested_provider});
+    }
+    if (resolved) {
+      *result = *resolved;
+      return true;
+    }
+    if (ELF64_ST_BIND(symbol.st_info) == STB_WEAK) {
+      *result = {};
+      return true;
+    }
+    *error = "unresolved AArch64 TLS symbol: " + name;
+    if (!requested_version.empty()) {
+      *error += "@" + requested_version;
+      if (!requested_provider.empty()) *error += " from " + requested_provider;
+    }
+    return false;
+  }
+
+  if (symbol.st_shndx == SHN_COMMON || symbol.st_shndx == SHN_XINDEX ||
+      symbol.st_shndx == SHN_ABS) {
+    return fail("TLS symbol has an unsupported dynamic section index");
+  }
+  if (!image.tls || image.tls->module_id == 0) {
+    return fail("defined TLS symbol belongs to a module without prepared PT_TLS");
+  }
+  if (symbol.st_value > image.tls->memory_size ||
+      symbol.st_size > image.tls->memory_size - symbol.st_value) {
+    return fail("defined TLS symbol is outside its PT_TLS block");
+  }
+  if (AddOverflows(image.tls->static_offset_from_tp, symbol.st_value)) {
+    return fail("defined TLS symbol TP-relative offset overflows");
+  }
+  *result = A64TlsSymbol{
+      image.tls->module_id, symbol.st_value,
+      image.tls->static_offset_from_tp + symbol.st_value};
+  return true;
+}
+
 std::string CollectDynamicExports(
     A64LoadedImage* image, const DynamicMetadata& metadata,
     const A64ElfLoadOptions& options) {
