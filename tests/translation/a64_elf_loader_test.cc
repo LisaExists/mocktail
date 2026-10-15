@@ -89,8 +89,11 @@ std::vector<std::uint8_t> BuildElfWithSymbolVersion(
     entry.d_un.d_val = value;
     WriteDynamicEntry(file, index, entry);
   };
-  const auto version_offset = static_cast<std::uint32_t>(
-      std::strstr(strings, "MOCK_ABI_1.0") - strings);
+  // The string table intentionally starts with a NUL byte, so strstr()
+  // cannot scan it as a conventional C string. This prefix size is the exact
+  // byte offset of the appended version name.
+  constexpr std::uint32_t version_offset =
+      sizeof("\0libc.so\0libmock.so\0test_symbol");
 
   const Elf64_Half versym[] = {
       0,
