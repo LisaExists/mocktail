@@ -542,7 +542,7 @@ int main(int argc, char** argv) {
               << ", expected 42\n";
     return 1;
   }
-  if (require_tls) {
+  if (require_tls || require_tlsdesc) {
     constexpr std::uint64_t kExpectedInitialTls = 0x1122334455667788ULL;
     if (cpu.GetRegister(1) != kExpectedInitialTls) {
       std::cerr << "guest TPIDR_EL0 TLS read returned " << cpu.GetRegister(1)
@@ -561,7 +561,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if (require_tls && !tls_runtime.DestroyThread(&thread_tls, &memory_error)) {
+  if ((require_tls || require_tlsdesc) && !tls_runtime.DestroyThread(&thread_tls, &memory_error)) {
     std::cerr << "AArch64 guest TLS cleanup failed: " << memory_error << '\n';
     return 1;
   }
