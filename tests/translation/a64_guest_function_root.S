@@ -8,7 +8,10 @@
 .global guest_exported_entry
 .type guest_exported_entry, %function
 guest_exported_entry:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
     bl guest_add_one
+    ldp x29, x30, [sp], #16
     ret
 .size guest_exported_entry, .-guest_exported_entry
 
