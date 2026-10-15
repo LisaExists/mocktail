@@ -33,6 +33,17 @@ struct A64ExportedSymbol final {
   std::uint8_t visibility = 0;
 };
 
+// PT_TLS image template for one ELF module. template_bytes is memory_size bytes
+// long: file-backed initial data followed by the zero-filled TLS BSS tail.
+// This records module TLS metadata only; a platform-specific per-thread TLS
+// block and TLSDESC/static TLS relocations must be implemented separately.
+struct A64TlsSegment final {
+  std::uint64_t file_size = 0;
+  std::uint64_t memory_size = 0;
+  std::uint64_t alignment = 1;
+  std::vector<std::uint8_t> template_bytes;
+};
+
 // A validated ELF image backed by ordinary host-owned memory. Guest addresses
 // are numeric AArch64 addresses and must never be cast to host pointers.
 struct A64LoadedImage final {
@@ -51,10 +62,11 @@ struct A64LoadedImage final {
   // pointers; callers must execute them only after dependencies are mapped.
   std::vector<std::uint64_t> initializers;
   std::vector<std::uint64_t> finalizers;
+  std::optional<A64TlsSegment> tls;
   std::vector<A64LoadSegment> segments;
 
   // Reads loaded segments, including across adjacent segments. Returns false
-  // for holes or address overflow. Stack, heap and TLS mappings come later.
+  // for holes or address overflow. Stack, heap and per-thread TLS allocation are separate.
   bool Read(std::uint64_t address, void* destination,
             std::size_t length) const noexcept;
 
