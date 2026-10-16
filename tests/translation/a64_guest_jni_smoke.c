@@ -31,6 +31,7 @@ typedef const char *(*GetStringUTFCharsFunction)(
 typedef void (*ReleaseStringUTFCharsFunction)(
     struct JNIEnv_ *, void *, const char *);
 typedef unsigned char (*ExceptionCheckFunction)(struct JNIEnv_ *);
+typedef void (*ExceptionClearFunction)(struct JNIEnv_ *);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -74,31 +75,46 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       (ReleaseStringUTFCharsFunction)jni_functions[170];
   ExceptionCheckFunction exception_check =
       (ExceptionCheckFunction)jni_functions[228];
+  ExceptionClearFunction exception_clear =
+      (ExceptionClearFunction)jni_functions[17];
   RegisterNativesFunction register_natives =
       (RegisterNativesFunction)jni_functions[215];
   if (get_version == 0 || find_class == 0 || new_string_utf == 0 ||
       get_string_utf_length == 0 || get_string_utf_chars == 0 ||
       release_string_utf_chars == 0 || exception_check == 0 ||
-      register_natives == 0) {
+      exception_clear == 0 || register_natives == 0) {
     return -4;
   }
   if (get_version(env) < 0x00010006) return -5;
 
   // Exercise JNI's modified-UTF string path from actual translated guest code.
   // The fixture uses ASCII so its modified-UTF and UTF-8 byte sequence match.
+  // Invalid guest pointers must become JNI exceptions, never host faults.
+  if (new_string_utf(env, (const char *)(unsigned long long)0xDEADBEEF) != 0 ||
+      exception_check(env) != 1) return -8;
+  exception_clear(env);
+  if (exception_check(env) != 0) return -9;
+
   void *sample_string = new_string_utf(env, "mocktail-native");
-  if (sample_string == 0) return -8;
-  if (get_string_utf_length(env, sample_string) != 15) return -9;
+  if (sample_string == 0) return -10;
+  if (get_string_utf_length(env, sample_string) != 15) return -11;
+  if (get_string_utf_chars(
+          env, sample_string,
+          (unsigned char *)(unsigned long long)0xDEADBEEF) != 0 ||
+      exception_check(env) != 1) return -12;
+  exception_clear(env);
+  if (exception_check(env) != 0) return -13;
+
   unsigned char is_copy = 0;
   const char *sample_chars =
       get_string_utf_chars(env, sample_string, &is_copy);
   if (sample_chars == 0 || is_copy != 1 ||
       sample_chars[0] != 'm' || sample_chars[7] != 'l' ||
       sample_chars[14] != 'e' || sample_chars[15] != '\0') {
-    return -10;
+    return -14;
   }
   release_string_utf_chars(env, sample_string, sample_chars);
-  if (exception_check(env) != 0) return -11;
+  if (exception_check(env) != 0) return -15;
 
   void *clazz = find_class(env, "com/mocktail/Smoke");
   if (clazz == 0) return -6;
