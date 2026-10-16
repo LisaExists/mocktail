@@ -384,6 +384,20 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_tlsdesc_smoke.S"
       VERBATIM
     )
+    set(MOCKTAIL_A64_TLS_GET_ADDR_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/mocktail-a64-guest-tls-get-addr.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_TLS_GET_ADDR_FIXTURE}"
+      COMMAND "${MOCKTAIL_AARCH64_GCC_EXECUTABLE}"
+              -nostdlib -fPIC -shared
+              -Wl,-e,_start
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-a64-guest-tls-get-addr.so
+              -o "${MOCKTAIL_A64_TLS_GET_ADDR_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_tls_get_addr_smoke.S"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_tls_get_addr_smoke.S"
+      VERBATIM
+    )
     set(MOCKTAIL_A64_INIT_FIXTURE
       "${CMAKE_CURRENT_BINARY_DIR}/mocktail-a64-guest-init.so")
     add_custom_command(
@@ -404,6 +418,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_SYSCALL_FIXTURE}"
         "${MOCKTAIL_A64_TLS_FIXTURE}"
         "${MOCKTAIL_A64_TLSDESC_FIXTURE}"
+        "${MOCKTAIL_A64_TLS_GET_ADDR_FIXTURE}"
         "${MOCKTAIL_A64_INIT_FIXTURE}"
         "${MOCKTAIL_A64_HOST_CALL_FIXTURE}")
 
@@ -498,6 +513,9 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       add_test(NAME RobloxArmTranslation.RealElfTlsDescSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 --require-tlsdesc "${MOCKTAIL_A64_TLSDESC_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.RealElfTlsGetAddrSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
+                --require-tls-get-addr "${MOCKTAIL_A64_TLS_GET_ADDR_FIXTURE}")
       add_test(NAME RobloxArmTranslation.RealElfInitializerSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_translation_smoke>
                 --run-initializers "${MOCKTAIL_A64_INIT_FIXTURE}")
