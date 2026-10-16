@@ -24,6 +24,13 @@ struct JNINativeMethod {
 typedef int32_t (*GetEnvFunction)(struct JavaVM_ *, void **, int32_t);
 typedef int32_t (*GetVersionFunction)(struct JNIEnv_ *);
 typedef void *(*FindClassFunction)(struct JNIEnv_ *, const char *);
+typedef void *(*NewStringUTFFunction)(struct JNIEnv_ *, const char *);
+typedef int32_t (*GetStringUTFLengthFunction)(struct JNIEnv_ *, void *);
+typedef const char *(*GetStringUTFCharsFunction)(
+    struct JNIEnv_ *, void *, unsigned char *);
+typedef void (*ReleaseStringUTFCharsFunction)(
+    struct JNIEnv_ *, void *, const char *);
+typedef unsigned char (*ExceptionCheckFunction)(struct JNIEnv_ *);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -57,12 +64,41 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       (GetVersionFunction)jni_functions[4];
   FindClassFunction find_class =
       (FindClassFunction)jni_functions[6];
+  NewStringUTFFunction new_string_utf =
+      (NewStringUTFFunction)jni_functions[167];
+  GetStringUTFLengthFunction get_string_utf_length =
+      (GetStringUTFLengthFunction)jni_functions[168];
+  GetStringUTFCharsFunction get_string_utf_chars =
+      (GetStringUTFCharsFunction)jni_functions[169];
+  ReleaseStringUTFCharsFunction release_string_utf_chars =
+      (ReleaseStringUTFCharsFunction)jni_functions[170];
+  ExceptionCheckFunction exception_check =
+      (ExceptionCheckFunction)jni_functions[228];
   RegisterNativesFunction register_natives =
       (RegisterNativesFunction)jni_functions[215];
-  if (get_version == 0 || find_class == 0 || register_natives == 0) {
+  if (get_version == 0 || find_class == 0 || new_string_utf == 0 ||
+      get_string_utf_length == 0 || get_string_utf_chars == 0 ||
+      release_string_utf_chars == 0 || exception_check == 0 ||
+      register_natives == 0) {
     return -4;
   }
   if (get_version(env) < 0x00010006) return -5;
+
+  // Exercise JNI's modified-UTF string path from actual translated guest code.
+  // The fixture uses ASCII so its modified-UTF and UTF-8 byte sequence match.
+  void *sample_string = new_string_utf(env, "mocktail-native");
+  if (sample_string == 0) return -8;
+  if (get_string_utf_length(env, sample_string) != 15) return -9;
+  unsigned char is_copy = 0;
+  const char *sample_chars =
+      get_string_utf_chars(env, sample_string, &is_copy);
+  if (sample_chars == 0 || is_copy != 1 ||
+      sample_chars[0] != 'm' || sample_chars[7] != 'l' ||
+      sample_chars[14] != 'e' || sample_chars[15] != '\0') {
+    return -10;
+  }
+  release_string_utf_chars(env, sample_string, sample_chars);
+  if (exception_check(env) != 0) return -11;
 
   void *clazz = find_class(env, "com/mocktail/Smoke");
   if (clazz == 0) return -6;
