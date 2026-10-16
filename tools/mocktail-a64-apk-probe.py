@@ -226,6 +226,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--list-exports", action="store_true", help="list loaded ELF exports")
     parser.add_argument("--call", metavar="SYMBOL", help="explicitly execute an exported guest symbol")
     parser.add_argument(
+        "--jni-onload",
+        action="store_true",
+        help="call JNI_OnLoad with a guest JavaVM/JNIEnv bridge",
+    )
+    parser.add_argument(
+        "--java-class",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="class available to JNI FindClass when using --jni-onload (repeatable)",
+    )
+    parser.add_argument(
         "--external-dependency",
         action="append",
         default=[],
@@ -261,9 +273,22 @@ def main(argv: list[str] | None = None) -> int:
     if not 16 <= args.memory_mib <= 16384:
         print("error: --memory-mib must be between 16 and 16384", file=sys.stderr)
         return 2
-    if args.run_initializers and not args.call:
-        print("error: --run-initializers requires --call", file=sys.stderr)
+    if args.jni_onload and args.call:
+        print("error: --jni-onload cannot be combined with --call", file=sys.stderr)
         return 2
+    if args.java_class and not args.jni_onload:
+        print("error: --java-class requires --jni-onload", file=sys.stderr)
+        return 2
+    if args.run_initializers and not (args.call or args.jni_onload):
+        print("error: --run-initializers requires --call or --jni-onload", file=sys.stderr)
+        return 2
+    for class_name in args.java_class:
+        if not class_name or "." in class_name:
+            print(
+                f"error: invalid JNI class name {class_name!r}; use slash form, e.g. com/example/Native",
+                file=sys.stderr,
+            )
+            return 2
     for soname in args.external_dependency:
         if (
             len(soname) < 4
@@ -310,6 +335,10 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--list-exports")
         if args.call:
             command.extend(["--call", args.call])
+        if args.jni_onload:
+            command.append("--jni-onload")
+            for class_name in args.java_class:
+                command.extend(["--java-class", class_name])
         if args.run_initializers:
             command.append("--run-initializers")
         if args.budget is not None:
