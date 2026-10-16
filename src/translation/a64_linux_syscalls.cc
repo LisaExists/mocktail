@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstring>
 #include <limits>
+#include <sched.h>
 #include <string>
 #include <time.h>
 
@@ -222,14 +223,25 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
 #endif
     }
 
-    case kClockGetTime: {
+    case kClockGetTime:
+    case kClockGetRes: {
       clockid_t host_clock = 0;
       if (!ConvertGuestClockId(arguments[0], &host_clock)) {
         return ErrorResult(EINVAL);
       }
       struct timespec host_time {};
-      if (::clock_gettime(host_clock, &host_time) != 0) {
+      const int clock_result =
+          number == kClockGetTime
+              ? ::clock_gettime(host_clock, &host_time)
+              : ::clock_getres(host_clock, &host_time);
+      if (clock_result != 0) {
         return ErrorResult(errno == 0 ? EINVAL : errno);
+      }
+      // Linux permits clock_getres(clock, nullptr).
+      if (number == kClockGetRes && arguments[1] == 0) {
+        A64LinuxSyscallResult result;
+        result.value = 0;
+        return result;
       }
       const A64GuestTimespec guest_time{
           static_cast<std::int64_t>(host_time.tv_sec),
@@ -237,6 +249,35 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
       if (!memory_.Write(arguments[1], &guest_time, sizeof(guest_time))) {
         return ErrorResult(EFAULT);
       }
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
+    case kGetPid:
+    case kGetPpid:
+    case kGetUid:
+    case kGetEuid:
+    case kGetGid:
+    case kGetEgid:
+    case kGetTid: {
+      A64LinuxSyscallResult result;
+      switch (number) {
+        case kGetPid: result.value = kGuestProcessId; break;
+        case kGetPpid: result.value = kGuestParentProcessId; break;
+        case kGetUid:
+        case kGetEuid: result.value = kGuestUid; break;
+        case kGetGid:
+        case kGetEgid: result.value = kGuestGid; break;
+        case kGetTid: result.value = kGuestThreadId; break;
+        default: return ErrorResult(ENOSYS);
+      }
+      return result;
+    }
+
+    case kSchedYield: {
+      // Guest threads are not scheduled independently yet. Yielding therefore
+      // becomes a deterministic no-op instead of yielding the entire host.
       A64LinuxSyscallResult result;
       result.value = 0;
       return result;
