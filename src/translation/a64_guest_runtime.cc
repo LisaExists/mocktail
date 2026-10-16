@@ -14,6 +14,7 @@
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
 #include "translation/a64_guest_host_calls.h"
+#include "translation/a64_guest_jni.h"
 #include "translation/a64_guest_memory.h"
 #include "translation/a64_guest_tls.h"
 #include "translation/a64_linux_syscalls.h"
@@ -47,7 +48,12 @@ class A64GuestRuntime::Impl final {
         memory_(options_.max_guest_memory_bytes),
         tls_runtime_(memory_, options_.max_tls_bytes),
         host_calls_(memory_),
-        syscalls_(memory_) {}
+        syscalls_(memory_) {
+    if (options_.enable_jni_bridge) {
+      jni_bridge_ = std::make_unique<A64GuestJniBridge>(
+          memory_, host_calls_, options_.jni_available_classes);
+    }
+  }
 
   ~Impl() {
     if (main_thread_tls_.valid()) {
@@ -326,6 +332,9 @@ class A64GuestRuntime::Impl final {
                                         "libc.so", "", &diagnostic)) {
       return fail("failed to register __tls_get_addr: " + diagnostic);
     }
+    if (jni_bridge_ && !jni_bridge_->Register(&diagnostic)) {
+      return fail("failed to register guest JNI handlers: " + diagnostic);
+    }
     if (options_.configure_host_calls &&
         !options_.configure_host_calls(host_calls_, &diagnostic)) {
       return fail("custom guest host-call registration failed: " + diagnostic);
@@ -428,6 +437,12 @@ class A64GuestRuntime::Impl final {
     config.hook_hint_instructions = true;
     jit_ = std::make_unique<Dynarmic::A64::Jit>(config);
     callbacks_->Attach(jit_.get());
+
+    // Populate read-only JNI tables after guest mappings exist, avoiding
+    // collisions with ELF images, the stack, stubs, and the return trap.
+    if (jni_bridge_ && !jni_bridge_->Initialize(&diagnostic)) {
+      return fail("failed to initialize guest JNI tables: " + diagnostic);
+    }
 
     loaded_ = true;
     if (error != nullptr) error->clear();
@@ -588,6 +603,34 @@ class A64GuestRuntime::Impl final {
     return Call(*address, arguments, instruction_budget);
   }
 
+  A64GuestCallResult CallJniOnLoad(std::uint64_t instruction_budget) {
+    A64GuestCallResult result;
+    if (!loaded_) {
+      result.error = "AArch64 guest runtime is not loaded";
+      return result;
+    }
+    if (!jni_bridge_ || jni_bridge_->java_vm_address() == 0) {
+      result.error = "guest JNI bridge is disabled";
+      return result;
+    }
+    Arguments arguments{};
+    arguments[0] = jni_bridge_->java_vm_address();
+    return CallSymbol("JNI_OnLoad", arguments, instruction_budget);
+  }
+
+  std::uint64_t java_vm_address() const noexcept {
+    return jni_bridge_ ? jni_bridge_->java_vm_address() : 0;
+  }
+
+  std::uint64_t jni_environment_address() const noexcept {
+    return jni_bridge_ ? jni_bridge_->jni_environment_address() : 0;
+  }
+
+  std::vector<A64GuestJniNativeRegistration> registered_jni_natives() const {
+    return jni_bridge_ ? jni_bridge_->registered_natives()
+                       : std::vector<A64GuestJniNativeRegistration>{};
+  }
+
   bool loaded() const noexcept { return loaded_; }
   const A64GuestModuleSet* modules() const noexcept {
     return modules_ ? &*modules_ : nullptr;
@@ -606,6 +649,7 @@ class A64GuestRuntime::Impl final {
   A64GuestThreadTls main_thread_tls_;
   A64GuestHostCalls host_calls_;
   A64LinuxSyscalls syscalls_;
+  std::unique_ptr<A64GuestJniBridge> jni_bridge_;
   std::optional<A64GuestModuleSet> modules_;
   std::unique_ptr<Callbacks> callbacks_;
   std::unique_ptr<Dynarmic::A64::Jit> jit_;
@@ -652,6 +696,24 @@ A64GuestCallResult A64GuestRuntime::CallSymbol(
     const A64SymbolRequest& request, const Arguments& arguments,
     std::uint64_t instruction_budget) {
   return impl_->CallSymbol(request, arguments, instruction_budget);
+}
+
+A64GuestCallResult A64GuestRuntime::CallJniOnLoad(
+    std::uint64_t instruction_budget) {
+  return impl_->CallJniOnLoad(instruction_budget);
+}
+
+std::uint64_t A64GuestRuntime::java_vm_address() const noexcept {
+  return impl_->java_vm_address();
+}
+
+std::uint64_t A64GuestRuntime::jni_environment_address() const noexcept {
+  return impl_->jni_environment_address();
+}
+
+std::vector<A64GuestJniNativeRegistration>
+A64GuestRuntime::registered_jni_natives() const {
+  return impl_->registered_jni_natives();
 }
 
 bool A64GuestRuntime::loaded() const noexcept { return impl_->loaded(); }
