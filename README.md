@@ -152,6 +152,14 @@ python3 tools/mocktail-a64-apk-probe.py \
   --root libroblox.so path/to/client.apk
 ```
 
+When an ELF declares a `DT_NEEDED` library that is not packaged in the APK,
+you can explicitly allow that dependency name with a repeatable
+`--external-dependency libNAME.so` option. This only tells the experimental
+loader that the dependency is external; it does **not** implement the library
+or resolve any missing symbols. Supply a matching Android ARM64 library with
+`--library-dir PATH` whenever possible, and use the ELF audit report to
+identify unresolved platform APIs rather than allowing dependencies blindly.
+
 The probe extracts `lib/arm64-v8a/*.so` files and attempts to load the chosen
 root library and its packaged dependency closure. For split installs, pass each
 split APK as a positional input. Android platform libraries are not generally
