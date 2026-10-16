@@ -3,10 +3,13 @@
 
 #include "translation/a64_guest_runtime.h"
 
+#include <elf.h>
+
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <utility>
@@ -24,6 +27,14 @@ namespace {
 
 using DynarmicAddress = Dynarmic::A64::VAddr;
 constexpr std::uint32_t kA64BreakpointInstruction = 0xD4200000U;
+constexpr std::uint64_t kDlopenHandleBase = 0x444C4F50454E0000ULL;
+constexpr std::size_t kMaximumDlfcnStringBytes = 4096;
+constexpr std::size_t kMaximumDlErrorBytes = 1024;
+constexpr std::uint64_t kRtldLazy = 0x1;
+constexpr std::uint64_t kRtldNow = 0x2;
+constexpr std::uint64_t kRtldNoLoad = 0x4;
+constexpr std::uint64_t kRtldGlobal = 0x100;
+constexpr std::uint64_t kRtldNodelete = 0x1000;
 
 bool AddOverflows(std::uint64_t left, std::uint64_t right) noexcept {
   return right > std::numeric_limits<std::uint64_t>::max() - left;
@@ -37,6 +48,34 @@ bool ReadLittleEndian(A64GuestMemory& memory, std::uint64_t address,
 bool WriteLittleEndian(A64GuestMemory& memory, std::uint64_t address,
                        const std::uint8_t* bytes, std::size_t length) {
   return memory.Write(address, bytes, length);
+}
+
+bool ReadBoundedGuestCString(A64GuestMemory& memory, std::uint64_t address,
+                             std::size_t maximum, std::string* value,
+                             std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (address == 0 || value == nullptr || maximum == 0) {
+    return fail("guest C-string address/output/limit is invalid");
+  }
+  value->clear();
+  for (std::size_t offset = 0; offset < maximum; ++offset) {
+    if (offset > std::numeric_limits<std::uint64_t>::max() - address) {
+      return fail("guest C-string address overflows");
+    }
+    char ch = '\0';
+    if (!memory.Read(address + offset, &ch, sizeof(ch))) {
+      return fail("guest C-string points outside readable guest memory");
+    }
+    if (ch == '\0') {
+      if (error != nullptr) error->clear();
+      return true;
+    }
+    value->push_back(ch);
+  }
+  return fail("guest C-string exceeds the configured length limit");
 }
 
 bool ParseJniTypeDescriptor(const std::string& descriptor,
@@ -371,6 +410,215 @@ class A64GuestRuntime::Impl final {
     std::string failure_;
   };
 
+  void SetDlError(std::string message) {
+    if (message.size() > kMaximumDlErrorBytes) {
+      message.resize(kMaximumDlErrorBytes);
+    }
+    dl_error_ = std::move(message);
+    dl_error_pending_ = true;
+  }
+
+  A64HostCallResult GuestDlopen(const A64GuestHostCalls::Arguments& arguments) {
+    if (!modules_ || modules_->modules.empty()) {
+      SetDlError("dlopen called before the guest module set was loaded");
+      return {true, 0, {}};
+    }
+    const auto flags = arguments[1];
+    constexpr std::uint64_t kAllowedFlags =
+        kRtldLazy | kRtldNow | kRtldNoLoad | kRtldGlobal | kRtldNodelete;
+    const auto mode = flags & (kRtldLazy | kRtldNow);
+    if ((flags & ~kAllowedFlags) != 0 ||
+        (mode != kRtldLazy && mode != kRtldNow)) {
+      SetDlError("dlopen received unsupported flags");
+      return {true, 0, {}};
+    }
+
+    std::size_t module_index = modules_->root_index;
+    if (arguments[0] != 0) {
+      std::string filename;
+      std::string diagnostic;
+      if (!ReadBoundedGuestCString(memory_, arguments[0],
+                                   kMaximumDlfcnStringBytes,
+                                   &filename, &diagnostic) ||
+          filename.empty()) {
+        SetDlError(diagnostic.empty() ? "dlopen filename is empty"
+                                      : diagnostic);
+        return {true, 0, {}};
+      }
+      const auto* module = modules_->FindModule(filename);
+      if (module == nullptr) {
+        SetDlError("dlopen only supports preloaded guest modules; unavailable: " +
+                   filename);
+        return {true, 0, {}};
+      }
+      module_index = static_cast<std::size_t>(module - modules_->modules.data());
+    }
+    if (module_index >= modules_->modules.size()) {
+      SetDlError("dlopen resolved an invalid guest module index");
+      return {true, 0, {}};
+    }
+
+    // Opaque guest integer handles; loaded images remain mapped for this runtime.
+    const auto handle = kDlopenHandleBase + module_index + 1U;
+    dl_handles_[handle] = module_index;
+    return {true, handle, {}};
+  }
+
+  std::optional<std::uint64_t> ResolveDlsymFromRoots(
+      const std::vector<std::size_t>& roots, const std::string& name,
+      std::string* error) const {
+    auto fail = [&](const std::string& message)
+        -> std::optional<std::uint64_t> {
+      if (error != nullptr) *error = message;
+      return std::nullopt;
+    };
+    if (!modules_) return fail("dlsym called before loading guest modules");
+
+    std::vector<std::size_t> pending;
+    std::vector<bool> visited(modules_->modules.size(), false);
+    pending.reserve(modules_->modules.size());
+    for (const auto root : roots) {
+      if (root >= modules_->modules.size()) {
+        return fail("dlsym received an invalid guest module handle");
+      }
+      pending.push_back(root);
+    }
+
+    for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
+      const auto index = pending[cursor];
+      if (visited[index]) continue;
+      visited[index] = true;
+      const auto& module = modules_->modules[index];
+      for (const auto& symbol : module.image.exported_symbols) {
+        if (symbol.name != name ||
+            (!symbol.version.empty() && symbol.version_hidden)) {
+          continue;
+        }
+        if (symbol.type == STT_TLS) {
+          return fail("dlsym of TLS symbols is unsupported by the static-TLS prototype");
+        }
+        if (symbol.type == STT_GNU_IFUNC) {
+          return fail("dlsym of GNU IFUNC symbols is unsupported");
+        }
+        if (symbol.guest_address == 0) {
+          return fail("dlsym found a symbol without a guest address");
+        }
+        if (error != nullptr) error->clear();
+        return symbol.guest_address;
+      }
+
+      // Handle-based lookup traverses only this module's preloaded DT_NEEDED closure.
+      for (const auto& dependency : module.image.dependencies) {
+        const auto* dependency_module = modules_->FindModule(dependency);
+        if (dependency_module == nullptr) continue;
+        const auto dependency_index = static_cast<std::size_t>(
+            dependency_module - modules_->modules.data());
+        if (dependency_index < modules_->modules.size() &&
+            !visited[dependency_index]) {
+          pending.push_back(dependency_index);
+        }
+      }
+    }
+    return fail("dlsym could not find guest symbol: " + name);
+  }
+
+  A64HostCallResult GuestDlsym(const A64GuestHostCalls::Arguments& arguments) {
+    if (!modules_) {
+      SetDlError("dlsym called before the guest module set was loaded");
+      return {true, 0, {}};
+    }
+    std::string name;
+    std::string diagnostic;
+    if (!ReadBoundedGuestCString(memory_, arguments[1],
+                                 kMaximumDlfcnStringBytes,
+                                 &name, &diagnostic) || name.empty()) {
+      SetDlError(diagnostic.empty() ? "dlsym symbol name is empty" : diagnostic);
+      return {true, 0, {}};
+    }
+
+    std::vector<std::size_t> roots;
+    if (arguments[0] == 0) {
+      // RTLD_DEFAULT searches the whole initial namespace.
+      roots.reserve(modules_->modules.size());
+      if (modules_->root_index < modules_->modules.size()) {
+        roots.push_back(modules_->root_index);
+      }
+      for (std::size_t index = 0; index < modules_->modules.size(); ++index) {
+        if (index != modules_->root_index) roots.push_back(index);
+      }
+    } else {
+      const auto handle = dl_handles_.find(arguments[0]);
+      if (handle == dl_handles_.end()) {
+        SetDlError("dlsym received an invalid handle (RTLD_NEXT is unsupported)");
+        return {true, 0, {}};
+      }
+      roots.push_back(handle->second);
+    }
+
+    const auto symbol = ResolveDlsymFromRoots(roots, name, &diagnostic);
+    if (!symbol) {
+      SetDlError(diagnostic.empty() ? "dlsym could not resolve guest symbol"
+                                    : diagnostic);
+      return {true, 0, {}};
+    }
+    return {true, *symbol, {}};
+  }
+
+  A64HostCallResult GuestDlclose(
+      const A64GuestHostCalls::Arguments& arguments) {
+    if (dl_handles_.find(arguments[0]) == dl_handles_.end()) {
+      SetDlError("dlclose received an invalid guest module handle");
+      return {true, static_cast<std::uint64_t>(-1LL), {}};
+    }
+    // The closure is preloaded into a fixed address space. dlclose is a safe
+    // no-op instead of unmapping code that other guest modules may still call.
+    return {true, 0, {}};
+  }
+
+  A64HostCallResult GuestDlerror() {
+    if (!dl_error_pending_) return {true, 0, {}};
+    if (dl_error_buffer_address_ == 0) {
+      std::string diagnostic;
+      if (!memory_.MapAnywhere(
+              A64GuestMemory::kPageSize,
+              A64GuestMemory::kRead | A64GuestMemory::kWrite,
+              &dl_error_buffer_address_, &diagnostic)) {
+        return {true, 0, {}};
+      }
+    }
+    const auto length = std::min(dl_error_.size(), kMaximumDlErrorBytes);
+    if (!memory_.Write(dl_error_buffer_address_, dl_error_.c_str(), length + 1U)) {
+      return {true, 0, {}};
+    }
+    dl_error_pending_ = false;
+    return {true, dl_error_buffer_address_, {}};
+  }
+
+  bool RegisterDynamicLinkerApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libdl.so", "", std::move(handler),
+                                  error);
+    };
+    if (!register_one("dlopen", [this](
+            const A64GuestHostCalls::Arguments& arguments) {
+          return GuestDlopen(arguments);
+        })) return false;
+    if (!register_one("dlsym", [this](
+            const A64GuestHostCalls::Arguments& arguments) {
+          return GuestDlsym(arguments);
+        })) return false;
+    if (!register_one("dlclose", [this](
+            const A64GuestHostCalls::Arguments& arguments) {
+          return GuestDlclose(arguments);
+        })) return false;
+    if (!register_one("dlerror", [this](
+            const A64GuestHostCalls::Arguments&) {
+          return GuestDlerror();
+        })) return false;
+    return true;
+  }
+
   bool Load(const std::vector<A64GuestModuleSource>& sources,
             const std::string& root_name, std::string* error) {
     auto fail = [&](std::string message) {
@@ -421,6 +669,10 @@ class A64GuestRuntime::Impl final {
     if (jni_bridge_ && !jni_bridge_->Register(&diagnostic)) {
       return fail("failed to register guest JNI handlers: " + diagnostic);
     }
+    if (!RegisterDynamicLinkerApi(&diagnostic)) {
+      return fail("failed to register preloaded-module dlopen/dlsym thunks: " +
+                  diagnostic);
+    }
     if (options_.configure_host_calls &&
         !options_.configure_host_calls(host_calls_, &diagnostic)) {
       return fail("custom guest host-call registration failed: " + diagnostic);
@@ -445,6 +697,12 @@ class A64GuestRuntime::Impl final {
                   module_options.external_dependencies.end(), "libc.so") ==
             module_options.external_dependencies.end()) {
       module_options.external_dependencies.push_back("libc.so");
+    }
+    // libdl.so is represented by guest shims, not the host process's libdl.
+    if (std::find(module_options.external_dependencies.begin(),
+                  module_options.external_dependencies.end(), "libdl.so") ==
+        module_options.external_dependencies.end()) {
+      module_options.external_dependencies.push_back("libdl.so");
     }
     module_options.elf.tlsdesc_resolver_address = *tlsdesc_resolver;
 
@@ -808,6 +1066,10 @@ class A64GuestRuntime::Impl final {
   A64LinuxSyscalls syscalls_;
   std::unique_ptr<A64GuestJniBridge> jni_bridge_;
   std::optional<A64GuestModuleSet> modules_;
+  std::map<std::uint64_t, std::size_t> dl_handles_;
+  std::string dl_error_;
+  std::uint64_t dl_error_buffer_address_ = 0;
+  bool dl_error_pending_ = false;
   std::unique_ptr<Callbacks> callbacks_;
   std::unique_ptr<Dynarmic::A64::Jit> jit_;
   bool load_attempted_ = false;
