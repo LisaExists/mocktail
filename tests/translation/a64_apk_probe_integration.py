@@ -2,6 +2,7 @@
 """Exercise APK -> extracted AArch64 ELF -> Dynarmic, including Android APS2 ELF."""
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 import tempfile
@@ -65,7 +66,7 @@ def main() -> int:
             apk.write(dependency_elf, f"lib/arm64-v8a/{dependency_elf.name}")
 
         command = [
-            sys.executable, str(wrapper, ),
+            sys.executable, str(wrapper),
             "--probe", str(probe),
             "--root", root_elf.name,
             "--call", "guest_exported_entry",
@@ -79,6 +80,42 @@ def main() -> int:
             command,
             ("Prepared 2 ARM64 library/libraries", "X0=0x2a", "42"),
             "synthetic APK extracted both real AArch64 libraries and ran the dependency-linked guest function",
+        )
+
+        # Also use the delivery format produced by bundletool: an .apks archive
+        # that contains nested split APKs. Put the root and dependency in
+        # different splits to verify the extracted closure is linked end-to-end.
+        def make_split(entries: list[tuple[str, Path]]) -> bytes:
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as split:
+                for member, source in entries:
+                    split.write(source, member)
+            return stream.getvalue()
+
+        split_set = temp_dir / "synthetic-arm64-client.apks"
+        with zipfile.ZipFile(split_set, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr(
+                "splits/base-master.apk",
+                make_split([(f"lib/arm64-v8a/{root_elf.name}", root_elf)]),
+            )
+            bundle.writestr(
+                "splits/config.arm64_v8a.apk",
+                make_split([(f"lib/arm64-v8a/{dependency_elf.name}", dependency_elf)]),
+            )
+
+        apks_command = [
+            sys.executable, str(wrapper),
+            "--probe", str(probe),
+            "--root", root_elf.name,
+            "--call", "guest_exported_entry",
+            "--arg0", "41",
+            "--budget", "10000",
+            str(split_set),
+        ]
+        ok &= run_probe(
+            apks_command,
+            ("Prepared 2 ARM64 library/libraries", "X0=0x2a", "42"),
+            "APKS split set extracted root/dependency libraries and executed through Dynarmic",
         )
 
         if android_style_elf is not None:
