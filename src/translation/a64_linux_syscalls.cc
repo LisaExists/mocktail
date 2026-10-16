@@ -10,6 +10,10 @@
 #include <string>
 #include <time.h>
 
+#if defined(__linux__)
+#include <sys/random.h>
+#endif
+
 #include "translation/a64_guest_memory.h"
 
 namespace mocktail::translation {
@@ -154,6 +158,70 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
     std::uint64_t number,
     const std::array<std::uint64_t, 6>& arguments) {
   switch (number) {
+    case kGetRandom: {
+#if defined(__linux__)
+      constexpr std::uint64_t kMaximumGetRandomReturn = 32ULL * 1024ULL * 1024ULL;
+      constexpr std::uint64_t kAllowedGetRandomFlags = 0x1ULL | 0x2ULL | 0x4ULL;
+      const auto requested = arguments[1];
+      const auto flags = arguments[2];
+      if ((flags & ~kAllowedGetRandomFlags) != 0 ||
+          flags > std::numeric_limits<unsigned int>::max()) {
+        return ErrorResult(EINVAL);
+      }
+      if (requested == 0) {
+        A64LinuxSyscallResult result;
+        result.value = 0;
+        return result;
+      }
+
+      // Linux returns at most 32 MiB from one getrandom call. Use bounded
+      // chunks and copy only through guest memory, never a guest pointer cast.
+      const auto target = std::min(requested, kMaximumGetRandomReturn);
+      std::array<std::uint8_t, 4096> buffer{};
+      std::uint64_t copied = 0;
+      while (copied < target) {
+        const auto amount = static_cast<std::size_t>(
+            std::min<std::uint64_t>(buffer.size(), target - copied));
+        const auto count = ::getrandom(buffer.data(), amount,
+                                       static_cast<unsigned int>(flags));
+        if (count < 0) {
+          if (copied != 0) {
+            A64LinuxSyscallResult result;
+            result.value = copied;
+            return result;
+          }
+          return ErrorResult(errno == 0 ? EIO : errno);
+        }
+        if (count == 0) {
+          if (copied != 0) {
+            A64LinuxSyscallResult result;
+            result.value = copied;
+            return result;
+          }
+          return ErrorResult(EIO);
+        }
+        if (arguments[0] >
+                std::numeric_limits<std::uint64_t>::max() - copied ||
+            !memory_.Write(arguments[0] + copied, buffer.data(),
+                           static_cast<std::size_t>(count))) {
+          if (copied != 0) {
+            A64LinuxSyscallResult result;
+            result.value = copied;
+            return result;
+          }
+          return ErrorResult(EFAULT);
+        }
+        copied += static_cast<std::uint64_t>(count);
+        if (static_cast<std::size_t>(count) < amount) break;
+      }
+      A64LinuxSyscallResult result;
+      result.value = copied;
+      return result;
+#else
+      return ErrorResult(ENOSYS);
+#endif
+    }
+
     case kClockGetTime: {
       clockid_t host_clock = 0;
       if (!ConvertGuestClockId(arguments[0], &host_clock)) {
