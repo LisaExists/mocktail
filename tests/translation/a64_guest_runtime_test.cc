@@ -17,8 +17,8 @@ bool ReadFile(const std::string& path,
               std::vector<std::uint8_t>* bytes) {
   std::ifstream input(path, std::ios::binary);
   if (!input) return false;
-  std::vector<char> raw(std::istreambuf_iterator<char>(input),
-                        std::istreambuf_iterator<char>());
+  std::vector<char> raw{std::istreambuf_iterator<char>(input),
+                        std::istreambuf_iterator<char>()};
   if (raw.empty()) return false;
   bytes->assign(raw.begin(), raw.end());
   return true;
