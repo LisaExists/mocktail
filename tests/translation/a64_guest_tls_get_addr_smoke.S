@@ -21,6 +21,7 @@ _start:
 .section .data,"aw",%progbits
 .p2align 3
 .global guest_tls_index
+.hidden guest_tls_index
 .type guest_tls_index, %object
 guest_tls_index:
     .xword 1
