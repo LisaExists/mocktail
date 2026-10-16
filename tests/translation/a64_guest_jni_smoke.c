@@ -33,6 +33,7 @@ int guest_native_sum(int left, int right) {
 }
 
 __attribute__((visibility("default")))
+__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   (void)reserved;
   if (vm == 0 || vm->functions == 0) return -1;
