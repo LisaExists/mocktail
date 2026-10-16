@@ -95,6 +95,13 @@ A64GuestHostCalls::A64GuestHostCalls(A64GuestMemory& memory,
                                      std::uint64_t stub_base) noexcept
     : memory_(memory), stub_base_(stub_base) {}
 
+A64GuestHostCalls::~A64GuestHostCalls() noexcept {
+  if (errno_address_ != 0) {
+    static_cast<void>(memory_.Unmap(
+        errno_address_, A64GuestMemory::kPageSize));
+  }
+}
+
 bool A64GuestHostCalls::Register(std::string name, std::string provider,
                                  std::string version, Handler handler,
                                  std::string* error) {
@@ -131,9 +138,39 @@ bool A64GuestHostCalls::Register(std::string name, std::string provider,
 }
 
 bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (errno_address_ != 0) {
+    return fail("guest errno storage has already been registered");
+  }
+  std::string errno_map_error;
+  if (!memory_.MapAnywhere(
+          sizeof(std::int32_t),
+          A64GuestMemory::kRead | A64GuestMemory::kWrite,
+          &errno_address_, &errno_map_error)) {
+    return fail("failed to allocate guest errno storage: " +
+                errno_map_error);
+  }
+  const std::int32_t initial_errno = 0;
+  if (!memory_.Write(errno_address_, &initial_errno, sizeof(initial_errno))) {
+    static_cast<void>(memory_.Unmap(
+        errno_address_, A64GuestMemory::kPageSize));
+    errno_address_ = 0;
+    return fail("failed to initialize guest errno storage");
+  }
+
   auto register_one = [&](const char* name, Handler handler) {
     return Register(name, "libc.so", "", std::move(handler), error);
   };
+  const auto errno_address = errno_address_;
+  if (!register_one("__errno", [errno_address](const Arguments&) {
+        return A64HostCallResult{true, errno_address, {}};
+      })) return false;
+  if (!register_one("__errno_location", [errno_address](const Arguments&) {
+        return A64HostCallResult{true, errno_address, {}};
+      })) return false;
 
   auto read_bytes = [this](std::uint64_t address, std::size_t size,
                            std::vector<std::uint8_t>* bytes,
