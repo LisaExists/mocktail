@@ -335,6 +335,21 @@ int main() {
           "applies a decoded APS2 R_AARCH64_RELATIVE relocation");
   }
 
+  auto android_relaent_only =
+      mocktail::translation::test::
+          BuildA64ElfWithAndroidPackedRelaEntrySizeOnly();
+  auto loaded_android_relaent_only = LoadA64Elf(android_relaent_only);
+  Check(static_cast<bool>(loaded_android_relaent_only),
+        "accepts Android APS2 relocations with a DT_RELAENT-only placeholder");
+  if (loaded_android_relaent_only) {
+    std::uint64_t actual = 0;
+    const auto target = loaded_android_relaent_only.image->load_bias + 0x1500;
+    Check(loaded_android_relaent_only.image->Read(
+              target, &actual, sizeof(actual)) &&
+              actual == loaded_android_relaent_only.image->load_bias + 0x1000,
+          "applies APS2 relocations without an ordinary DT_RELA table");
+  }
+
   auto relr = mocktail::translation::test::BuildA64ElfWithRelrRelocation();
   auto loaded_relr = LoadA64Elf(relr);
   Check(static_cast<bool>(loaded_relr), "loads a DT_RELR pointer-relocation table");
