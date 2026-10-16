@@ -4,8 +4,10 @@
 #include "translation/a64_linux_syscalls.h"
 
 #include <cerrno>
+#include <cstring>
 #include <limits>
 #include <string>
+#include <time.h>
 
 #include "translation/a64_guest_memory.h"
 
@@ -62,6 +64,86 @@ bool ConvertProtection(std::uint64_t protection,
   return true;
 }
 
+bool ConvertGuestClockId(std::uint64_t guest_id, clockid_t* host_id) noexcept {
+  switch (guest_id) {
+    case 0:
+      *host_id = CLOCK_REALTIME;
+      return true;
+    case 1:
+      *host_id = CLOCK_MONOTONIC;
+      return true;
+#ifdef CLOCK_PROCESS_CPUTIME_ID
+    case 2:
+      *host_id = CLOCK_PROCESS_CPUTIME_ID;
+      return true;
+#endif
+#ifdef CLOCK_THREAD_CPUTIME_ID
+    case 3:
+      *host_id = CLOCK_THREAD_CPUTIME_ID;
+      return true;
+#endif
+#ifdef CLOCK_MONOTONIC_RAW
+    case 4:
+      *host_id = CLOCK_MONOTONIC_RAW;
+      return true;
+#endif
+#ifdef CLOCK_REALTIME_COARSE
+    case 5:
+      *host_id = CLOCK_REALTIME_COARSE;
+      return true;
+#endif
+#ifdef CLOCK_MONOTONIC_COARSE
+    case 6:
+      *host_id = CLOCK_MONOTONIC_COARSE;
+      return true;
+#endif
+#ifdef CLOCK_BOOTTIME
+    case 7:
+      *host_id = CLOCK_BOOTTIME;
+      return true;
+#endif
+#ifdef CLOCK_REALTIME_ALARM
+    case 8:
+      *host_id = CLOCK_REALTIME_ALARM;
+      return true;
+#endif
+#ifdef CLOCK_BOOTTIME_ALARM
+    case 9:
+      *host_id = CLOCK_BOOTTIME_ALARM;
+      return true;
+#endif
+#ifdef CLOCK_TAI
+    case 11:
+      *host_id = CLOCK_TAI;
+      return true;
+#endif
+    default:
+      return false;
+  }
+}
+
+struct A64GuestTimespec final {
+  std::int64_t seconds = 0;
+  std::int64_t nanoseconds = 0;
+};
+
+struct A64GuestUtsname final {
+  char sysname[65]{};
+  char nodename[65]{};
+  char release[65]{};
+  char version[65]{};
+  char machine[65]{};
+  char domainname[65]{};
+};
+
+void SetUtsField(char* field, std::size_t field_size,
+                 const char* value) noexcept {
+  if (field_size == 0) return;
+  const auto length = std::min(std::strlen(value), field_size - 1);
+  std::memcpy(field, value, length);
+  field[length] = '\\0';
+}
+
 }  // namespace
 
 A64LinuxSyscalls::A64LinuxSyscalls(A64GuestMemory& memory) noexcept
@@ -71,6 +153,44 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
     std::uint64_t number,
     const std::array<std::uint64_t, 6>& arguments) {
   switch (number) {
+    case kClockGetTime: {
+      clockid_t host_clock = 0;
+      if (!ConvertGuestClockId(arguments[0], &host_clock)) {
+        return ErrorResult(EINVAL);
+      }
+      struct timespec host_time {};
+      if (::clock_gettime(host_clock, &host_time) != 0) {
+        return ErrorResult(errno == 0 ? EINVAL : errno);
+      }
+      const A64GuestTimespec guest_time{
+          static_cast<std::int64_t>(host_time.tv_sec),
+          static_cast<std::int64_t>(host_time.tv_nsec)};
+      if (!memory_.Write(arguments[1], &guest_time, sizeof(guest_time))) {
+        return ErrorResult(EFAULT);
+      }
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
+    case kUname: {
+      A64GuestUtsname value{};
+      // Report the guest ABI, not the x86-64 host architecture. Keep the
+      // strings stable and bounded like Linux's fixed-width utsname fields.
+      SetUtsField(value.sysname, sizeof(value.sysname), "Linux");
+      SetUtsField(value.nodename, sizeof(value.nodename), "mocktail-guest");
+      SetUtsField(value.release, sizeof(value.release), "5.15.0-mocktail");
+      SetUtsField(value.version, sizeof(value.version), "#1 SMP Mocktail");
+      SetUtsField(value.machine, sizeof(value.machine), "aarch64");
+      SetUtsField(value.domainname, sizeof(value.domainname), "(none)");
+      if (!memory_.Write(arguments[0], &value, sizeof(value))) {
+        return ErrorResult(EFAULT);
+      }
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
     case kBrk: {
       // Linux brk returns the current break on failure instead of -errno.
       // This private guest heap never maps or exposes host process memory.
