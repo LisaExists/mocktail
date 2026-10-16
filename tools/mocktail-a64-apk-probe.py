@@ -178,6 +178,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--list-exports", action="store_true", help="list loaded ELF exports")
     parser.add_argument("--call", metavar="SYMBOL", help="explicitly execute an exported guest symbol")
+    parser.add_argument(
+        "--external-dependency",
+        action="append",
+        default=[],
+        metavar="SONAME",
+        help="allow an absent DT_NEEDED library (repeatable; does not provide its symbols)",
+    )
     parser.add_argument("--run-initializers", action="store_true", help="run guest constructors before --call")
     parser.add_argument("--budget", type=int, help="instruction budget for --call")
     parser.add_argument("--memory-mib", type=int, default=1024, help="guest memory limit (16-16384 MiB)")
@@ -207,6 +214,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.run_initializers and not args.call:
         print("error: --run-initializers requires --call", file=sys.stderr)
         return 2
+    for soname in args.external_dependency:
+        if (
+            len(soname) < 4
+            or PurePosixPath(soname).name != soname
+            or not soname.endswith(".so")
+        ):
+            print(
+                f"error: invalid --external-dependency SONAME: {soname!r}",
+                file=sys.stderr,
+            )
+            return 2
     if any(getattr(args, f"arg{i}") is not None for i in range(8)) and not args.call:
         print("error: --arg0 through --arg7 require --call", file=sys.stderr)
         return 2
@@ -236,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
 
         command = [str(args.probe), "--root", root_name,
                    "--memory-mib", str(args.memory_mib)]
+        for soname in args.external_dependency:
+            command.extend(["--external-dependency", soname])
         if args.list_exports:
             command.append("--list-exports")
         if args.call:
