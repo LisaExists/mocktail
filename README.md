@@ -161,11 +161,12 @@ or resolve any missing symbols. Supply a matching Android ARM64 library with
 identify unresolved platform APIs rather than allowing dependencies blindly.
 
 The probe extracts `lib/arm64-v8a/*.so` files and attempts to load the chosen
-root library and its packaged dependency closure. For split installs, pass each
-split APK as a positional input. Android platform libraries are not generally
-packaged in the APK; provide a matching ARM64 Android runtime library directory
-with one or more `--library-dir PATH` options when available. Library basenames
-must be unambiguous.
+root library and its packaged dependency closure. You can pass a single APK, an
+`.apks` bundle directly, or multiple split APKs as positional inputs. For
+Android platform libraries not packaged with the app, provide matching ARM64
+runtime libraries with repeated `--library-dir PATH` options; the APK input can
+be omitted when using library directories alone. The loader currently requires
+unambiguous library basenames.
 
 By default, the probe loads the guest modules but does not call a guest
 function. A known test entrypoint can be called explicitly with `--call SYMBOL`,
