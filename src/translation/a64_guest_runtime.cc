@@ -856,6 +856,40 @@ class A64GuestRuntime::Impl final {
         error);
   }
 
+  bool RegisterAndroidPlatformApi(std::string* error) {
+    return host_calls_.Register(
+        "android_get_device_api_level", "libandroid.so", "",
+        [this](const A64GuestHostCalls::Arguments&) -> A64HostCallResult {
+          const auto found =
+              options_.android_system_properties.find("ro.build.version.sdk");
+          if (found == options_.android_system_properties.end() ||
+              found->second.empty()) {
+            static_cast<void>(host_calls_.SetGuestErrno(ENOENT));
+            return {true, 0, {}};
+          }
+          // Parse the configured SDK without allowing signs, suffixes or
+          // overflow to turn a malformed profile into a host-side integer.
+          std::uint32_t api_level = 0;
+          for (const char character : found->second) {
+            if (character < '0' || character > '9') {
+              static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+              return {true, 0, {}};
+            }
+            const auto digit = static_cast<std::uint32_t>(character - '0');
+            if (api_level >
+                (static_cast<std::uint32_t>(
+                     std::numeric_limits<std::int32_t>::max()) - digit) /
+                    10U) {
+              static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+              return {true, 0, {}};
+            }
+            api_level = api_level * 10U + digit;
+          }
+          return {true, api_level, {}};
+        },
+        error);
+  }
+
   bool RegisterDynamicLinkerApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -936,6 +970,10 @@ class A64GuestRuntime::Impl final {
         !RegisterGuestAuxiliaryVector(&diagnostic)) {
       return fail("failed to register guest getauxval: " + diagnostic);
     }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidPlatformApi(&diagnostic)) {
+      return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
     if (!host_calls_.RegisterTlsGetAddr(tls_runtime_, main_thread_tls_,
                                         "libc.so", "", &diagnostic)) {
       return fail("failed to register __tls_get_addr: " + diagnostic);
@@ -977,6 +1015,12 @@ class A64GuestRuntime::Impl final {
                   module_options.external_dependencies.end(), "libdl.so") ==
         module_options.external_dependencies.end()) {
       module_options.external_dependencies.push_back("libdl.so");
+    }
+    if (options_.register_builtin_libc &&
+        std::find(module_options.external_dependencies.begin(),
+                  module_options.external_dependencies.end(), "libandroid.so") ==
+            module_options.external_dependencies.end()) {
+      module_options.external_dependencies.push_back("libandroid.so");
     }
     module_options.elf.tlsdesc_resolver_address = *tlsdesc_resolver;
 
