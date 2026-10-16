@@ -1459,11 +1459,21 @@ std::string ApplyDynamicMetadataAndRelocations(
   // Android linkers can emit DT_RELASZ=0 as a placeholder when all ordinary
   // RELA entries were moved into APS2-packed RELA and/or RELR. Accept that
   // empty placeholder without inventing an absent DT_RELA/DT_RELAENT table.
+  // Some Android-targeted linkers keep DT_RELAENT as the declared
+  // relocation entry size even when every ordinary RELA relocation was
+  // emitted only into APS2/RELR tables. Accept that type-only placeholder,
+  // as well as the common DT_RELASZ=0 form, but only with a real alternate
+  // relocation table present.
+  const bool relaent_only_placeholder =
+      !metadata.rela_address && !metadata.rela_size &&
+      metadata.rela_entry_size &&
+      *metadata.rela_entry_size == sizeof(Elf64_Rela);
   const bool empty_rela_placeholder =
-      metadata.rela_size && *metadata.rela_size == 0 &&
-      (!metadata.rela_entry_size ||
-       *metadata.rela_entry_size == sizeof(Elf64_Rela)) &&
-      has_alternative_relocation_table;
+      has_alternative_relocation_table &&
+      (relaent_only_placeholder ||
+       (metadata.rela_size && *metadata.rela_size == 0 &&
+        (!metadata.rela_entry_size ||
+         *metadata.rela_entry_size == sizeof(Elf64_Rela))));
   if (any_rela_tag &&
       (!metadata.rela_address || !metadata.rela_size ||
        !metadata.rela_entry_size) &&
@@ -1542,7 +1552,9 @@ std::string ApplyDynamicMetadataAndRelocations(
       metadata.relr_address && metadata.relr_size && *metadata.relr_size != 0;
   const bool has_plt_relocations =
       metadata.plt_relocation_size && *metadata.plt_relocation_size != 0;
-  const bool has_main_relocations = any_rela_tag && *metadata.rela_size != 0;
+  const bool has_main_relocations =
+      metadata.rela_address && metadata.rela_size &&
+      *metadata.rela_size != 0;
   if (!has_android_rela && !has_relr &&
       !has_main_relocations && !has_plt_relocations) {
     return CollectDynamicInitializersAndFinalizers(image, metadata, options);
