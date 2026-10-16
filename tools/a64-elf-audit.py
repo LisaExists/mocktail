@@ -253,8 +253,9 @@ ANDROID_PLATFORM_LIBRARIES = {
 # Kept in sync with the explicit functions registered by
 # A64GuestHostCalls::RegisterBuiltinLibc and RegisterTlsGetAddr.
 PROTOTYPE_HOST_CALLS = {
-    "memcpy", "memmove", "memset", "memcmp", "strlen", "strcmp",
-    "strncmp", "malloc", "calloc", "free", "realloc", "abort",
+    "memcpy", "memmove", "memset", "memcmp", "strlen", "strnlen",
+    "strcmp", "strncmp", "strcpy", "strncpy", "strchr", "strrchr",
+    "strstr", "strdup", "malloc", "calloc", "free", "realloc", "abort",
     "__tls_get_addr", "__mocktail_tlsdesc_static", "__stack_chk_fail",
 }
 

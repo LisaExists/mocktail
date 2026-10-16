@@ -83,17 +83,28 @@ int main() {
   Check(calls.Install(&error), "installs RX AArch64 SVC/RET thunks");
 
   const auto strlen_stub = calls.ResolveSymbol("strlen");
+  const auto strnlen_stub = calls.ResolveSymbol("strnlen");
+  const auto strcpy_stub = calls.ResolveSymbol("strcpy");
+  const auto strncpy_stub = calls.ResolveSymbol("strncpy");
+  const auto strchr_stub = calls.ResolveSymbol("strchr");
+  const auto strrchr_stub = calls.ResolveSymbol("strrchr");
+  const auto strstr_stub = calls.ResolveSymbol("strstr");
+  const auto strdup_stub = calls.ResolveSymbol("strdup");
   const auto tls_get_addr_stub = calls.ResolveSymbol("__tls_get_addr");
   const auto memcpy_stub = calls.ResolveSymbol("memcpy");
   const auto strcmp_stub = calls.ResolveSymbol("strcmp");
   const auto malloc_stub = calls.ResolveSymbol("malloc");
   const auto realloc_stub = calls.ResolveSymbol("realloc");
   const auto free_stub = calls.ResolveSymbol("free");
-  Check(strlen_stub && tls_get_addr_stub && memcpy_stub && strcmp_stub &&
+  Check(strlen_stub && strnlen_stub && strcpy_stub && strncpy_stub &&
+            strchr_stub && strrchr_stub && strstr_stub && strdup_stub &&
+            tls_get_addr_stub && memcpy_stub && strcmp_stub &&
             malloc_stub && realloc_stub && free_stub,
         "resolves registered symbols to guest stub addresses");
 
-  if (!strlen_stub || !tls_get_addr_stub || !memcpy_stub || !strcmp_stub ||
+  if (!strlen_stub || !strnlen_stub || !strcpy_stub || !strncpy_stub ||
+      !strchr_stub || !strrchr_stub || !strstr_stub || !strdup_stub ||
+      !tls_get_addr_stub || !memcpy_stub || !strcmp_stub ||
       !malloc_stub || !realloc_stub || !free_stub) {
     std::cout << failures << " guest host-call test(s) failed\n";
     return 1;
@@ -150,6 +161,87 @@ int main() {
   const auto length = calls.DispatchSvc(strlen_svc, arguments);
   Check(length.success && length.value == 5,
         "strlen reads a string through guest-memory validation");
+
+  arguments = {};
+  arguments[0] = kSource;
+  arguments[1] = 3;
+  const auto bounded_length = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strnlen_stub), arguments);
+  Check(bounded_length.success && bounded_length.value == 3,
+        "strnlen stops at its caller-supplied bound");
+
+  constexpr std::uint64_t kStringCopyDestination = kDestination + 0x100;
+  arguments = {};
+  arguments[0] = kStringCopyDestination;
+  arguments[1] = kSource;
+  const auto string_copy = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strcpy_stub), arguments);
+  std::array<char, sizeof(kMessage)> strcpy_result{};
+  Check(string_copy.success && string_copy.value == kStringCopyDestination &&
+            memory.Read(kStringCopyDestination, strcpy_result.data(),
+                        strcpy_result.size()) &&
+            std::memcmp(strcpy_result.data(), kMessage, sizeof(kMessage)) == 0,
+        "strcpy copies and terminates strings in guest memory");
+
+  constexpr std::uint64_t kStrncpyDestination = kDestination + 0x200;
+  arguments = {};
+  arguments[0] = kStrncpyDestination;
+  arguments[1] = kSource;
+  arguments[2] = 7;
+  const auto string_n_copy = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strncpy_stub), arguments);
+  std::array<char, 7> strncpy_result{};
+  const std::array<char, 7> expected_strncpy{'h', 'e', 'l', 'l', 'o', '\0', '\0'};
+  Check(string_n_copy.success && string_n_copy.value == kStrncpyDestination &&
+            memory.Read(kStrncpyDestination, strncpy_result.data(),
+                        strncpy_result.size()) &&
+            strncpy_result == expected_strncpy,
+        "strncpy zero-pads the destination after the source terminator");
+
+  arguments = {};
+  arguments[0] = kSource;
+  arguments[1] = static_cast<std::uint64_t>('l');
+  const auto first_character = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strchr_stub), arguments);
+  Check(first_character.success && first_character.value == kSource + 2,
+        "strchr returns a guest address for the first matching byte");
+
+  arguments[1] = static_cast<std::uint64_t>('l');
+  const auto last_character = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strrchr_stub), arguments);
+  Check(last_character.success && last_character.value == kSource + 3,
+        "strrchr returns a guest address for the last matching byte");
+
+  arguments[1] = 0;
+  const auto terminator_character = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strchr_stub), arguments);
+  Check(terminator_character.success &&
+            terminator_character.value == kSource + sizeof(kMessage) - 1,
+        "strchr can return the guest string terminator");
+
+  constexpr std::uint64_t kNeedleAddress = kTestBase + 0x500;
+  constexpr char kNeedle[] = "ll";
+  Check(memory.Write(kNeedleAddress, kNeedle, sizeof(kNeedle)),
+        "writes a guest substring search needle");
+  arguments = {};
+  arguments[0] = kSource;
+  arguments[1] = kNeedleAddress;
+  const auto substring = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strstr_stub), arguments);
+  Check(substring.success && substring.value == kSource + 2,
+        "strstr returns the guest address of the first substring match");
+
+  arguments = {};
+  arguments[0] = kSource;
+  const auto duplicated_string = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strdup_stub), arguments);
+  std::array<char, sizeof(kMessage)> duplicated_string_result{};
+  Check(duplicated_string.success && duplicated_string.value != 0 &&
+            memory.Read(duplicated_string.value, duplicated_string_result.data(),
+                        duplicated_string_result.size()) &&
+            std::memcmp(duplicated_string_result.data(), kMessage,
+                        sizeof(kMessage)) == 0,
+        "strdup returns an owned guest allocation containing a full C string");
 
   arguments = {};
   arguments[0] = kDestination;
@@ -216,6 +308,14 @@ int main() {
       {"strlen", "LIBC_PRIVATE", "libc.so"});
   Check(!versioned,
         "refuses to satisfy unknown versioned imports with an unversioned thunk");
+
+  arguments = {};
+  arguments[0] = duplicated_string.value;
+  const auto freed_string = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *free_stub), arguments);
+  Check(duplicated_string.success && duplicated_string.value != 0 &&
+            freed_string.success && !memory.IsMapped(duplicated_string.value, 1),
+        "free releases a pointer allocated by strdup");
 
   const auto abort_stub = calls.ResolveSymbol("abort");
   Check(abort_stub.has_value(), "registers a diagnostic abort thunk");

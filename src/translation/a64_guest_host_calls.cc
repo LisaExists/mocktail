@@ -328,6 +328,116 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
                           static_cast<std::int64_t>(result)), {}};
       })) return false;
 
+  if (!register_one("strnlen", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        const auto maximum = arguments[1];
+        if (maximum > kMaximumCStringBytes) {
+          return Failure("strnlen length exceeds the host-call string limit");
+        }
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0],
+                             static_cast<std::size_t>(maximum), false,
+                             &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        return {true, value.size(), {}};
+      })) return false;
+
+  if (!register_one("strcpy", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[1], kMaximumCStringBytes,
+                             true, &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        if (!memory_.Write(arguments[0], value.c_str(), value.size() + 1)) {
+          return Failure("strcpy destination is outside writable guest memory");
+        }
+        return {true, arguments[0], {}};
+      })) return false;
+
+  if (!register_one("strncpy", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        const auto count = arguments[2];
+        if (count > kMaximumTransferBytes) {
+          return Failure("strncpy length exceeds the host-call transfer limit");
+        }
+        if (count == 0) return {true, arguments[0], {}};
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[1],
+                             static_cast<std::size_t>(count), false,
+                             &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        std::vector<std::uint8_t> bytes;
+        try {
+          bytes.assign(static_cast<std::size_t>(count), 0);
+        } catch (const std::bad_alloc&) {
+          return Failure("not enough host memory for strncpy buffer");
+        }
+        const auto copy_count = std::min(value.size(), bytes.size());
+        if (copy_count != 0) {
+          std::memcpy(bytes.data(), value.data(), copy_count);
+        }
+        if (!memory_.Write(arguments[0], bytes.data(), bytes.size())) {
+          return Failure("strncpy destination is outside writable guest memory");
+        }
+        return {true, arguments[0], {}};
+      })) return false;
+
+  if (!register_one("strchr", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        const auto character = static_cast<unsigned char>(arguments[1] & 0xffU);
+        if (character == 0) return {true, arguments[0] + value.size(), {}};
+        const auto offset = value.find(static_cast<char>(character));
+        return {true, offset == std::string::npos
+                          ? 0
+                          : arguments[0] + offset, {}};
+      })) return false;
+
+  if (!register_one("strrchr", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        const auto character = static_cast<unsigned char>(arguments[1] & 0xffU);
+        if (character == 0) return {true, arguments[0] + value.size(), {}};
+        const auto offset = value.rfind(static_cast<char>(character));
+        return {true, offset == std::string::npos
+                          ? 0
+                          : arguments[0] + offset, {}};
+      })) return false;
+
+  if (!register_one("strstr", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string haystack;
+        std::string needle;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &haystack, &diagnostic) ||
+            !ReadGuestString(memory_, arguments[1], kMaximumCStringBytes,
+                             true, &needle, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        if (needle.empty()) return {true, arguments[0], {}};
+        const auto offset = haystack.find(needle);
+        return {true, offset == std::string::npos
+                          ? 0
+                          : arguments[0] + offset, {}};
+      })) return false;
+
   if (!register_one("malloc", [allocate](const Arguments& arguments) {
         return allocate(arguments[0]);
       })) return false;
@@ -379,6 +489,23 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
 
   if (!register_one("free", [free_allocation](const Arguments& arguments) {
         return free_allocation(arguments[0]);
+      })) return false;
+
+  if (!register_one("strdup", [this, allocate, free_allocation](
+          const Arguments& arguments) -> A64HostCallResult {
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &value, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        auto allocation = allocate(value.size() + 1);
+        if (!allocation.success || allocation.value == 0) return allocation;
+        if (!memory_.Write(allocation.value, value.c_str(), value.size() + 1)) {
+          static_cast<void>(free_allocation(allocation.value));
+          return Failure("strdup could not initialize its guest allocation");
+        }
+        return allocation;
       })) return false;
 
   if (!register_one("realloc", [this, allocate, read_bytes, free_allocation](
