@@ -8,8 +8,10 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <utility>
 
 #include "translation/a64_guest_memory.h"
+#include "translation/a64_guest_tls.h"
 
 namespace {
 
@@ -46,6 +48,10 @@ std::uint32_t ReadSvcImmediate(
 int main() {
   using mocktail::translation::A64GuestHostCalls;
   using mocktail::translation::A64GuestMemory;
+  using mocktail::translation::A64GuestModule;
+  using mocktail::translation::A64GuestModuleSet;
+  using mocktail::translation::A64GuestThreadTls;
+  using mocktail::translation::A64GuestTlsRuntime;
 
   A64GuestMemory memory(2U * 1024U * 1024U);
   constexpr std::uint64_t kTestBase = 0x20000000ULL;
@@ -54,22 +60,40 @@ int main() {
                    A64GuestMemory::kRead | A64GuestMemory::kWrite, &error),
         "maps an isolated guest data area");
 
+  A64GuestModuleSet tls_modules;
+  A64GuestModule tls_module;
+  tls_module.source_name = "libtls.so";
+  tls_module.image.tls = mocktail::translation::A64TlsSegment{
+      8, 16, 16, 0, 0,
+      {0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+       0, 0, 0, 0, 0, 0, 0, 0}};
+  tls_modules.modules.push_back(std::move(tls_module));
+  A64GuestTlsRuntime tls_runtime(memory);
+  A64GuestThreadTls tls_thread;
+  Check(tls_runtime.Prepare(tls_modules, &error) &&
+            tls_runtime.CreateThread(&tls_thread, &error),
+        "prepares a static TLS block for the host-call integration test");
+
   A64GuestHostCalls calls(memory);
   Check(calls.RegisterBuiltinLibc(&error),
         "registers the explicit guest-safe libc subset");
+  Check(calls.RegisterTlsGetAddr(tls_runtime, tls_thread, "libc.so", "",
+                                 &error),
+        "registers a guest-safe preloaded-module __tls_get_addr thunk");
   Check(calls.Install(&error), "installs RX AArch64 SVC/RET thunks");
 
   const auto strlen_stub = calls.ResolveSymbol("strlen");
+  const auto tls_get_addr_stub = calls.ResolveSymbol("__tls_get_addr");
   const auto memcpy_stub = calls.ResolveSymbol("memcpy");
   const auto strcmp_stub = calls.ResolveSymbol("strcmp");
   const auto malloc_stub = calls.ResolveSymbol("malloc");
   const auto realloc_stub = calls.ResolveSymbol("realloc");
   const auto free_stub = calls.ResolveSymbol("free");
-  Check(strlen_stub && memcpy_stub && strcmp_stub && malloc_stub &&
-            realloc_stub && free_stub,
+  Check(strlen_stub && tls_get_addr_stub && memcpy_stub && strcmp_stub &&
+            malloc_stub && realloc_stub && free_stub,
         "resolves registered symbols to guest stub addresses");
 
-  if (!strlen_stub || !memcpy_stub || !strcmp_stub ||
+  if (!strlen_stub || !tls_get_addr_stub || !memcpy_stub || !strcmp_stub ||
       !malloc_stub || !realloc_stub || !free_stub) {
     std::cout << failures << " guest host-call test(s) failed\n";
     return 1;
@@ -85,12 +109,43 @@ int main() {
         "SVC immediate identifies a registered host call");
 
   constexpr std::uint64_t kSource = kTestBase + 0x100;
+  constexpr std::uint64_t kTlsIndexAddress = kTestBase + 0x300;
   constexpr std::uint64_t kDestination = kTestBase + A64GuestMemory::kPageSize + 0x100;
   constexpr char kMessage[] = "hello";
   Check(memory.Write(kSource, kMessage, sizeof(kMessage)),
         "writes a guest C string");
 
+  const std::array<std::uint64_t, 2> tls_index{
+      tls_modules.modules[0].image.tls->module_id, 0};
+  Check(memory.Write(kTlsIndexAddress, tls_index.data(), sizeof(tls_index)),
+        "writes an ELF tls_index structure into guest memory");
   A64GuestHostCalls::Arguments arguments{};
+  arguments[0] = kTlsIndexAddress;
+  const auto tls_resolved = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *tls_get_addr_stub), arguments);
+  std::uint64_t tls_initial_value = 0;
+  Check(tls_resolved.success &&
+            tls_resolved.value ==
+                tls_thread.thread_pointer +
+                    tls_modules.modules[0].image.tls->static_offset_from_tp &&
+            memory.Read(tls_resolved.value, &tls_initial_value,
+                        sizeof(tls_initial_value)) &&
+            tls_initial_value == 0x1122334455667788ULL,
+        "__tls_get_addr resolves a tls_index through guest memory and per-thread TLS");
+
+  const std::array<std::uint64_t, 2> invalid_tls_index{999, 0};
+  Check(memory.Write(kTlsIndexAddress, invalid_tls_index.data(),
+                     sizeof(invalid_tls_index)),
+        "writes an invalid guest TLS module index");
+  arguments = {};
+  arguments[0] = kTlsIndexAddress;
+  const auto invalid_tls_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *tls_get_addr_stub), arguments);
+  Check(!invalid_tls_result.success &&
+            invalid_tls_result.error.find("module ID") != std::string::npos,
+        "rejects invalid __tls_get_addr module IDs");
+
+  arguments = {};
   arguments[0] = kSource;
   const auto length = calls.DispatchSvc(strlen_svc, arguments);
   Check(length.success && length.value == 5,
@@ -170,6 +225,10 @@ int main() {
     Check(!abort_result.success,
           "guest abort fails explicitly without aborting the host process");
   }
+
+  std::string tls_cleanup_error;
+  Check(tls_runtime.DestroyThread(&tls_thread, &tls_cleanup_error),
+        "cleans up TLS mapping owned by the host-call test");
 
   std::cout << failures << " guest host-call test(s) failed\n";
   return failures == 0 ? 0 : 1;
