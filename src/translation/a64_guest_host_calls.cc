@@ -455,17 +455,9 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
 bool A64GuestHostCalls::RegisterTlsGetAddr(
     const A64GuestTlsRuntime& runtime, const A64GuestThreadTls& thread,
     std::string provider, std::string version, std::string* error) {
-  if (!runtime.prepared()) {
-    if (error != nullptr) {
-      *error = "guest TLS runtime must be prepared before __tls_get_addr registration";
-    }
-    return false;
-  }
-  if (!thread.valid()) {
-    if (error != nullptr) *error = "guest TLS thread descriptor is invalid";
-    return false;
-  }
-
+  // Register before module loading so an ELF relocation can point at this
+  // thunk. The handler validates the runtime/thread descriptor when called,
+  // after the module set has been loaded and static TLS has been prepared.
   return Register(
       "__tls_get_addr", std::move(provider), std::move(version),
       [this, &runtime, &thread](const Arguments& arguments)
