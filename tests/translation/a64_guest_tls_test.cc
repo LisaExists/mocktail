@@ -108,6 +108,18 @@ int main() {
             0xDEADBEEFU,
         "copies initialized TLS data for the second module");
 
+  std::uint64_t resolved_tls_address = 0;
+  Check(runtime.ResolveAddress(thread_one, 1, 0, &resolved_tls_address, &error) &&
+            resolved_tls_address == thread_one.thread_pointer + first_offset,
+        "resolves a preloaded module TLS index for a specific guest thread");
+  Check(runtime.ResolveAddress(thread_two, 2, 4, &resolved_tls_address, &error) &&
+            resolved_tls_address == thread_two.thread_pointer + second_offset + 4,
+        "resolves module-relative offsets into another thread's TLS block");
+  Check(!runtime.ResolveAddress(thread_one, 999, 0, &resolved_tls_address, &error),
+        "rejects a TLS module ID outside the preloaded module set");
+  Check(!runtime.ResolveAddress(thread_one, 1, 16, &resolved_tls_address, &error),
+        "rejects a module-relative offset outside PT_TLS memory");
+
   const std::uint64_t changed = 0x0123456789ABCDEFULL;
   Check(memory.Write(thread_one.thread_pointer + first_offset, &changed,
                      sizeof(changed)),
