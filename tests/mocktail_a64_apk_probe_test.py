@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import os
 import struct
 import tempfile
@@ -81,6 +82,39 @@ class ApkProbeInputTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "multiple different ARM64 libraries"):
                 MODULE.collect_apk_libraries([first, second], [])
+
+    def test_extracts_native_libraries_from_apks_split_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def apk_bytes(entries: dict[str, bytes]) -> bytes:
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, "w") as apk:
+                    for name, data in entries.items():
+                        apk.writestr(name, data)
+                return stream.getvalue()
+
+            base = apk_bytes({"classes.dex": b"dex"})
+            arm64_split = apk_bytes({
+                "lib/arm64-v8a/libroblox.so": elf_header(183),
+                "lib/arm64-v8a/libc++_shared.so": elf_header(183),
+            })
+            apks_path = Path(directory) / "roblox.apks"
+            with zipfile.ZipFile(apks_path, "w") as bundle:
+                bundle.writestr("splits/base-master.apk", base)
+                bundle.writestr("splits/config.arm64_v8a.apk", arm64_split)
+
+            libraries = MODULE.collect_apk_libraries([apks_path], [])
+            self.assertEqual(
+                set(libraries),
+                {"libroblox.so", "libc++_shared.so"},
+            )
+            self.assertIn("config.arm64_v8a.apk", libraries["libroblox.so"][1])
+
+    def test_library_directory_can_be_used_without_positional_apks(self):
+        args = MODULE.parse_args([
+            "--root", "libroot.so", "--library-dir", "/tmp/guest-libs"
+        ])
+        self.assertEqual(args.apks, [])
+        self.assertEqual(args.root, "libroot.so")
 
     def test_reports_when_no_arm64_library_is_available(self):
         with tempfile.TemporaryDirectory() as directory:
