@@ -497,7 +497,7 @@ class A64GuestRuntime::Impl final {
       }
       const auto& module = modules_->modules[module_index];
       for (const auto address : module.image.initializers) {
-        const auto result = Call(address, no_arguments);
+        const auto result = Call(address, no_arguments, 0);
         if (!result) {
           return fail("guest initializer in '" + module.source_name +
                       "' failed: " + result.error);
@@ -529,7 +529,7 @@ class A64GuestRuntime::Impl final {
       }
       const auto& module = modules_->modules[module_index];
       for (const auto address : module.image.finalizers) {
-        const auto result = Call(address, no_arguments);
+        const auto result = Call(address, no_arguments, 0);
         if (!result) {
           return fail("guest finalizer in '" + module.source_name +
                       "' failed: " + result.error);
