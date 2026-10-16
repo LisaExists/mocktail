@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end synthetic APK -> extracted ARM64 ELF -> Dynarmic guest call test."""
+"""Exercise APK -> extracted AArch64 ELF -> Dynarmic, including Android APS2 ELF."""
 from __future__ import annotations
 
 import subprocess
@@ -9,10 +9,33 @@ import zipfile
 from pathlib import Path
 
 
+def run_probe(command: list[str], expected: tuple[str, ...], label: str) -> bool:
+    try:
+        completed = subprocess.run(
+            command, check=False, capture_output=True, text=True, timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        print(f"[FAIL] {label}: guest probe exceeded the 30-second test limit", file=sys.stderr)
+        return False
+    output = completed.stdout + completed.stderr
+    if completed.returncode != 0:
+        print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
+        print(f"[FAIL] {label}: probe returned {completed.returncode}", file=sys.stderr)
+        return False
+    missing = [fragment for fragment in expected if fragment not in output]
+    if missing:
+        print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
+        print(f"[FAIL] {label}: output missing markers {missing}", file=sys.stderr)
+        return False
+    print(f"[PASS] {label}")
+    return True
+
+
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(
-            "usage: a64_apk_probe_integration.py PROBE ROOT_ELF DEP_ELF WRAPPER",
+            "usage: a64_apk_probe_integration.py PROBE ROOT_ELF DEP_ELF WRAPPER "
+            "[ANDROID_STYLE_ELF]",
             file=sys.stderr,
         )
         return 2
@@ -21,61 +44,68 @@ def main() -> int:
     root_elf = Path(sys.argv[2]).resolve()
     dependency_elf = Path(sys.argv[3]).resolve()
     wrapper = Path(sys.argv[4]).resolve()
+    android_style_elf = Path(sys.argv[5]).resolve() if len(sys.argv) == 6 else None
 
-    for path in (probe, root_elf, dependency_elf, wrapper):
+    inputs = [probe, root_elf, dependency_elf, wrapper]
+    if android_style_elf is not None:
+        inputs.append(android_style_elf)
+    for path in inputs:
         if not path.is_file():
             print(f"required probe fixture does not exist: {path}", file=sys.stderr)
             return 2
 
-    # This APK deliberately contains actual cross-compiled AArch64 ELF fixtures,
-    # not fabricated ELF headers. The root's DT_NEEDED edge resolves against the
-    # dependency extracted from the same APK just as packaged native libraries do.
+    ok = True
     with tempfile.TemporaryDirectory(prefix="mocktail-a64-apk-integration-") as temp:
-        apk_path = Path(temp) / "synthetic-arm64-client.apk"
+        temp_dir = Path(temp)
+        # These are genuine linker-produced AArch64 ELFs. The root's DT_NEEDED
+        # edge resolves to the second library extracted from the same APK.
+        apk_path = temp_dir / "synthetic-arm64-client.apk"
         with zipfile.ZipFile(apk_path, "w", compression=zipfile.ZIP_DEFLATED) as apk:
             apk.write(root_elf, f"lib/arm64-v8a/{root_elf.name}")
             apk.write(dependency_elf, f"lib/arm64-v8a/{dependency_elf.name}")
 
         command = [
-            sys.executable,
-            str(wrapper),
-            "--probe",
-            str(probe),
-            "--root",
-            root_elf.name,
-            "--call",
-            "guest_exported_entry",
-            "--arg0",
-            "41",
-            "--budget",
-            "10000",
+            sys.executable, str(wrapper, ),
+            "--probe", str(probe),
+            "--root", root_elf.name,
+            "--call", "guest_exported_entry",
+            "--arg0", "41",
+            "--budget", "10000",
             str(apk_path),
         ]
-        completed = subprocess.run(
+        # Keep the command vector assembled from separate argv elements. This
+        # integration intentionally does not involve a shell.
+        ok &= run_probe(
             command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
+            ("Prepared 2 ARM64 library/libraries", "X0=0x2a", "42"),
+            "synthetic APK extracted both real AArch64 libraries and ran the dependency-linked guest function",
         )
-        output = completed.stdout + completed.stderr
-        if completed.returncode != 0:
-            print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
-            print(
-                f"APK probe returned exit status {completed.returncode}",
-                file=sys.stderr,
-            )
-            return 1
-        expected = ("Prepared 2 ARM64 library/libraries", "X0=0x2a", "42")
-        missing = [fragment for fragment in expected if fragment not in output]
-        if missing:
-            print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
-            print(f"APK probe output missing expected markers: {missing}", file=sys.stderr)
-            return 1
 
-        print("[PASS] synthetic APK was extracted and both AArch64 modules were loaded")
-        print("[PASS] guest_exported_entry executed through Dynarmic and returned 42")
-        return 0
+        if android_style_elf is not None:
+            android_apk = temp_dir / "synthetic-android-linker.apk"
+            with zipfile.ZipFile(
+                android_apk, "w", compression=zipfile.ZIP_DEFLATED
+            ) as apk:
+                apk.write(
+                    android_style_elf,
+                    f"lib/arm64-v8a/{android_style_elf.name}",
+                )
+            android_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_style_elf.name,
+                "--call", "guest_android_abi_smoke",
+                "--arg0", "1",
+                "--budget", "10000",
+                str(android_apk),
+            ]
+            ok &= run_probe(
+                android_command,
+                ("Prepared 1 ARM64 library/libraries", "X0=0x2a", "42"),
+                "Android-targeted APS2/RELR ELF extracted from an APK and executed on x86-64",
+            )
+
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
