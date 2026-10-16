@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -779,6 +780,82 @@ class A64GuestRuntime::Impl final {
         error);
   }
 
+  bool RegisterGuestAuxiliaryVector(std::string* error) {
+    return host_calls_.Register(
+        "getauxval", "libc.so", "",
+        [this](const A64GuestHostCalls::Arguments& arguments)
+            -> A64HostCallResult {
+          // A conservative baseline: AArch64 FP and ASIMD are available to
+          // translated code. Do not advertise optional ISA extensions unless
+          // the guest translator explicitly enables them.
+          switch (arguments[0]) {
+            case 6:   // AT_PAGESZ
+              return {true, A64GuestMemory::kPageSize, {}};
+            case 11:  // AT_UID
+            case 12:  // AT_EUID
+            case 13:  // AT_GID
+            case 14:  // AT_EGID
+              return {true, 10000, {}};
+            case 15: {  // AT_PLATFORM
+              std::string diagnostic;
+              const auto platform =
+                  GuestDlfcnString("aarch64", &diagnostic);
+              if (!platform) {
+                static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+                return {true, 0, {}};
+              }
+              return {true, *platform, {}};
+            }
+            case 16:  // AT_HWCAP: HWCAP_FP | HWCAP_ASIMD
+              return {true, 0x3, {}};
+            case 17:  // AT_CLKTCK
+              return {true, 100, {}};
+            case 23:  // AT_SECURE
+              return {true, 0, {}};
+            case 25: {  // AT_RANDOM: 16 random bytes in guest memory.
+              if (guest_auxv_random_address_ == 0) {
+                std::string diagnostic;
+                if (!memory_.MapAnywhere(
+                        16U, A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                        &guest_auxv_random_address_, &diagnostic)) {
+                  static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+                  return {true, 0, {}};
+                }
+                const std::array<std::uint64_t, 6> random_arguments{
+                    guest_auxv_random_address_, 16U, 0, 0, 0, 0};
+                const auto result = syscalls_.Dispatch(
+                    A64LinuxSyscalls::kGetRandom, random_arguments);
+                if (result.value != 16U) {
+                  static_cast<void>(memory_.Unmap(
+                      guest_auxv_random_address_,
+                      A64GuestMemory::kPageSize));
+                  guest_auxv_random_address_ = 0;
+                  static_cast<void>(host_calls_.SetGuestErrno(EIO));
+                  return {true, 0, {}};
+                }
+              }
+              return {true, guest_auxv_random_address_, {}};
+            }
+            case 26:  // AT_HWCAP2: no optional extensions are advertised.
+              return {true, 0, {}};
+            case 31: {  // AT_EXECFN
+              std::string diagnostic;
+              const auto executable =
+                  GuestDlfcnString("mocktail-android-guest", &diagnostic);
+              if (!executable) {
+                static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+                return {true, 0, {}};
+              }
+              return {true, *executable, {}};
+            }
+            default:
+              static_cast<void>(host_calls_.SetGuestErrno(ENOENT));
+              return {true, 0, {}};
+          }
+        },
+        error);
+  }
+
   bool RegisterDynamicLinkerApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -854,6 +931,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidSystemProperties(&diagnostic)) {
       return fail("failed to register synthetic Android properties: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterGuestAuxiliaryVector(&diagnostic)) {
+      return fail("failed to register guest getauxval: " + diagnostic);
     }
     if (!host_calls_.RegisterTlsGetAddr(tls_runtime_, main_thread_tls_,
                                         "libc.so", "", &diagnostic)) {
@@ -1260,6 +1341,7 @@ class A64GuestRuntime::Impl final {
   std::unique_ptr<A64GuestJniBridge> jni_bridge_;
   std::optional<A64GuestModuleSet> modules_;
   std::map<std::uint64_t, std::size_t> dl_handles_;
+  std::uint64_t guest_auxv_random_address_ = 0;
   std::string dl_error_;
   std::uint64_t dl_error_buffer_address_ = 0;
   // Stable guest copies returned by dladdr; capped to avoid unbounded guest

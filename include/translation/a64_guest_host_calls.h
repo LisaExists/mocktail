@@ -57,6 +57,9 @@ class A64GuestHostCalls final {
   // This deliberately does not expose arbitrary host function pointers.
   bool RegisterBuiltinLibc(std::string* error = nullptr);
 
+  // Updates the guest process errno cell without touching host thread-local errno.
+  bool SetGuestErrno(std::int32_t value) noexcept;
+
   // Registers __tls_get_addr for a prepared, preloaded static TLS set. The
   // provider/version must match the requested import identity.
   bool RegisterTlsGetAddr(const A64GuestTlsRuntime& runtime,

@@ -34,6 +34,8 @@ typedef unsigned char (*ExceptionCheckFunction)(struct JNIEnv_ *);
 typedef void (*ExceptionClearFunction)(struct JNIEnv_ *);
 typedef int32_t (*SystemPropertyGetFunction)(const char *, char *);
 extern int32_t __system_property_get(const char *, char *);
+extern unsigned long getauxval(unsigned long type);
+extern int *__errno(void);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -97,6 +99,26 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   char missing_property[92] = {'x'};
   if (__system_property_get("ro.mocktail.property_missing", missing_property) != 0 ||
       missing_property[0] != '\0') return -17;
+
+  // Minimal Android auxiliary-vector compatibility: page size, baseline AArch64
+  // ISA capabilities and guest-resident platform/exec/random entries.
+  if (getauxval(6UL) != 4096UL || getauxval(16UL) != 3UL ||
+      getauxval(26UL) != 0UL) return -18;
+  const char *platform =
+      (const char *)(unsigned long long)getauxval(15UL);
+  if (platform == (const char *)0 || platform[0] != 'a' ||
+      platform[7] != '\0') return -19;
+  const char *execfn =
+      (const char *)(unsigned long long)getauxval(31UL);
+  if (execfn == (const char *)0 || execfn[0] != 'm') return -20;
+  const volatile unsigned char *random_bytes =
+      (const volatile unsigned char *)(unsigned long long)getauxval(25UL);
+  if (random_bytes == (const volatile unsigned char *)0) return -21;
+  const unsigned char random_probe = random_bytes[0];
+  (void)random_probe;
+  if (getauxval(0xFFFFFFFFUL) != 0UL) return -22;
+  int *guest_errno = __errno();
+  if (guest_errno == (int *)0 || *guest_errno != 2) return -23;
 
   // Exercise JNI's modified-UTF string path from actual translated guest code.
   // The fixture uses ASCII so its modified-UTF and UTF-8 byte sequence match.

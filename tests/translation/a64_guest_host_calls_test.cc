@@ -134,6 +134,14 @@ int main() {
   Check(read_errno && errno_result.value != 0 && guest_errno == 0 &&
             memory.IsMapped(errno_result.value, sizeof(guest_errno)),
         "__errno returns a valid, zero-initialized guest errno cell");
+  Check(calls.SetGuestErrno(77) &&
+            memory.Read(errno_result.value, &guest_errno, sizeof(guest_errno)) &&
+            guest_errno == 77,
+        "runtime can set guest errno without mutating host errno");
+  Check(calls.SetGuestErrno(0) &&
+            memory.Read(errno_result.value, &guest_errno, sizeof(guest_errno)) &&
+            guest_errno == 0,
+        "runtime can clear the guest errno cell");
   const std::int32_t expected_errno = 13;
   Check(memory.Write(errno_result.value, &expected_errno, sizeof(expected_errno)),
         "guest code can set errno without modifying host thread errno");

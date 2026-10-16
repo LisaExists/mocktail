@@ -842,6 +842,12 @@ bool A64GuestHostCalls::Install(std::string* error) {
   return true;
 }
 
+bool A64GuestHostCalls::SetGuestErrno(
+    std::int32_t value) noexcept {
+  if (errno_address_ == 0) return false;
+  return memory_.Write(errno_address_, &value, sizeof(value));
+}
+
 std::optional<std::uint64_t> A64GuestHostCalls::ResolveSymbol(
     const std::string& name) const noexcept {
   std::lock_guard<std::mutex> lock(mutex_);
