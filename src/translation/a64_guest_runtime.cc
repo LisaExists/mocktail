@@ -422,7 +422,9 @@ class A64GuestRuntime::Impl final {
     Dynarmic::A64::UserConfig config{};
     config.callbacks = callbacks_.get();
     config.tpidr_el0 = &main_thread_tls_.tpidr_el0;
-    config.enable_cycle_counting = false;
+    // AddTicks is the instruction-budget enforcement point. Dynarmic must
+    // report guest execution ticks or looping guest code cannot be stopped.
+    config.enable_cycle_counting = true;
     config.hook_hint_instructions = true;
     jit_ = std::make_unique<Dynarmic::A64::Jit>(config);
     callbacks_->Attach(jit_.get());
