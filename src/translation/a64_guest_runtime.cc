@@ -385,11 +385,23 @@ class A64GuestRuntime::Impl final {
     if (options_.max_guest_memory_bytes < A64GuestMemory::kPageSize) {
       return fail("guest memory budget is smaller than one page");
     }
+    constexpr std::uint32_t kMaximumStackGuardPages = 64;
+    if (options_.stack_guard_pages > kMaximumStackGuardPages) {
+      return fail("guest stack guard page count exceeds the configured limit");
+    }
+    const auto stack_guard_size =
+        static_cast<std::uint64_t>(options_.stack_guard_pages) *
+        A64GuestMemory::kPageSize;
     if (options_.stack_size == 0 ||
         options_.stack_base % A64GuestMemory::kPageSize != 0 ||
         options_.stack_size % A64GuestMemory::kPageSize != 0 ||
+        options_.stack_base < stack_guard_size ||
         AddOverflows(options_.stack_base, options_.stack_size)) {
-      return fail("guest stack range must be page-aligned and non-overflowing");
+      return fail("guest stack range and lower guard must be page-aligned and non-overflowing");
+    }
+    const auto stack_end = options_.stack_base + options_.stack_size;
+    if (AddOverflows(stack_end, stack_guard_size)) {
+      return fail("guest stack upper guard address overflows");
     }
     if (options_.return_trap_address % 4U != 0 ||
         AddOverflows(options_.return_trap_address,
@@ -482,10 +494,19 @@ class A64GuestRuntime::Impl final {
                     "': " + diagnostic);
       }
     }
+    if (stack_guard_size != 0 &&
+        !memory_.Map(options_.stack_base - stack_guard_size,
+                     stack_guard_size, 0, &diagnostic)) {
+      return fail("failed to allocate lower guest stack guard: " + diagnostic);
+    }
     if (!memory_.Map(options_.stack_base, options_.stack_size,
                      A64GuestMemory::kRead | A64GuestMemory::kWrite,
                      &diagnostic)) {
       return fail("failed to allocate guest stack: " + diagnostic);
+    }
+    if (stack_guard_size != 0 &&
+        !memory_.Map(stack_end, stack_guard_size, 0, &diagnostic)) {
+      return fail("failed to allocate upper guest stack guard: " + diagnostic);
     }
 
     if (!memory_.Map(options_.return_trap_address,
