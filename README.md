@@ -123,6 +123,58 @@ caused by `Color3` errors in the newer SDUI page. An explicit
 To see the most Frequently Asked Question go check [FAQ.md](FAQ.md)
 
 
+## Experimental ARM64-on-x86 native probe
+
+The `experimental/roblox-arm-translation` branch contains an opt-in
+AArch64 guest runtime for x86-64 hosts. It uses Dynarmic to translate guest
+instructions and has a bounded ELF loader, dependency resolver, sparse guest
+memory, a limited Linux syscall dispatcher, static TLS support, and explicit
+host-call thunks. It is separate from the normal Mocktail build.
+
+On an x86-64 Linux host with Boost development headers installed, configure and
+run its tests:
+
+```bash
+cmake -S . -B build-arm-translation \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DBUILD_TESTING=ON \
+  -DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON
+cmake --build build-arm-translation --parallel
+ctest --test-dir build-arm-translation \
+  -R 'RobloxArmTranslation' --output-on-failure
+```
+
+To inspect a real APK before attempting to load its native objects:
+
+```bash
+python3 tools/a64-elf-audit.py --json path/to/client.apk
+python3 tools/mocktail-a64-apk-probe.py \
+  --root libroblox.so path/to/client.apk
+```
+
+The probe extracts `lib/arm64-v8a/*.so` files and attempts to load the chosen
+root library and its packaged dependency closure. For split installs, pass each
+split APK as a positional input. Android platform libraries are not generally
+packaged in the APK; provide a matching ARM64 Android runtime library directory
+with one or more `--library-dir PATH` options when available. Library basenames
+must be unambiguous.
+
+By default, the probe loads the guest modules but does not call a guest
+function. A known test entrypoint can be called explicitly with `--call SYMBOL`,
+optional `--arg0` through `--arg7` register values, and a bounded
+`--budget`. `--run-initializers` explicitly executes ELF constructors before
+that call. Do not use arbitrary application entrypoints as test functions:
+JNI and Android lifecycle entrypoints require the Android objects and runtime
+services they expect.
+
+**This is not yet a complete Android APK launcher.** It does not implement the
+full Bionic system library set, ART/JNI environment, Android framework services,
+Activity lifecycle, or Roblox graphics/window integration in the AArch64 guest
+process. Real Roblox libraries may still stop at unsupported relocations or
+unresolved platform imports. The probe is intended to turn those failures into
+reproducible next steps; passing the synthetic tests alone does not mean Roblox
+is runnable.
+
 ## Building
 
 Linux `x86_64` is supported. Linux `aarch64` builds are available, with Roblox
