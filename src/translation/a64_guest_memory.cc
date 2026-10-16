@@ -319,6 +319,14 @@ bool A64GuestMemory::Read(std::uint64_t address, void* destination,
       address, destination, length, kRead, false, false);
 }
 
+bool A64GuestMemory::ReadExecutable(std::uint64_t address,
+                                    void* destination,
+                                    std::size_t length) const noexcept {
+  if (length == 0) return false;
+  return const_cast<A64GuestMemory*>(this)->Transfer(
+      address, destination, length, kExecute, false, false);
+}
+
 bool A64GuestMemory::Write(std::uint64_t address, const void* source,
                            std::size_t length) noexcept {
   return Transfer(address, const_cast<void*>(source), length, kWrite, false,

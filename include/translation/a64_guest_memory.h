@@ -58,6 +58,10 @@ class A64GuestMemory final {
   // adjacent mapped pages, but they never implicitly map a missing page.
   bool Read(std::uint64_t address, void* destination,
             std::size_t length) const noexcept;
+  // Instruction fetch requires execute permission and does not implicitly
+  // require guest data-read permission (important for execute-only mappings).
+  bool ReadExecutable(std::uint64_t address, void* destination,
+                      std::size_t length) const noexcept;
   bool Write(std::uint64_t address, const void* source,
              std::size_t length) noexcept;
   bool IsExecutable(std::uint64_t address,

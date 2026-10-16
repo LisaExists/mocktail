@@ -163,6 +163,25 @@ int main() {
                                       A64GuestMemory::kRead, nullptr, &error),
         "requires a guest address output for anonymous mappings");
 
+  A64GuestMemory execute_only;
+  constexpr std::uint64_t kExecuteOnlyBase = 0x5000000000ULL;
+  const std::array<std::uint8_t, 4> execute_only_code{
+      0x40, 0x05, 0x80, 0xD2};
+  Check(execute_only.Map(kExecuteOnlyBase, A64GuestMemory::kPageSize,
+                         A64GuestMemory::kExecute, &error),
+        "maps an execute-only guest page");
+  Check(execute_only.Initialize(kExecuteOnlyBase, execute_only_code.data(),
+                                execute_only_code.size()),
+        "initializes code in an execute-only mapping");
+  std::array<std::uint8_t, 4> fetched_code{};
+  Check(!execute_only.Read(kExecuteOnlyBase, fetched_code.data(),
+                           fetched_code.size()),
+        "blocks ordinary data reads from execute-only memory");
+  Check(execute_only.ReadExecutable(kExecuteOnlyBase, fetched_code.data(),
+                                    fetched_code.size()) &&
+            fetched_code == execute_only_code,
+        "allows instruction fetch from execute-only memory");
+
   std::cout << failures << " guest-memory test(s) failed\n";
   return failures == 0 ? 0 : 1;
 }

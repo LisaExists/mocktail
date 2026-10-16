@@ -52,11 +52,15 @@ class SmokeMemory final : public Dynarmic::A64::UserCallbacks {
   }
 
   std::optional<std::uint32_t> MemoryReadCode(Address address) override {
-    if (!memory_.IsExecutable(address, sizeof(std::uint32_t))) {
+    std::uint8_t bytes[4]{};
+    if (!memory_.ReadExecutable(address, bytes, sizeof(bytes))) {
       Fail("guest instruction fetch outside executable memory");
       return std::nullopt;
     }
-    return MemoryRead32(address);
+    return static_cast<std::uint32_t>(bytes[0]) |
+           (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[3]) << 24U);
   }
 
   std::uint8_t MemoryRead8(Address address) override {
