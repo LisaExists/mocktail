@@ -242,6 +242,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   )
   target_link_libraries(mocktail_a64_guest_host_calls PUBLIC
     mocktail_a64_guest_memory
+    mocktail_a64_guest_tls
   )
   target_compile_features(mocktail_a64_guest_host_calls PUBLIC cxx_std_17)
 
