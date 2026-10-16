@@ -630,6 +630,12 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 --root libmocktail-android-style-smoke.so
                 --call guest_android_abi_smoke --arg0 1 --budget 10000
                 "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.AndroidStyleElfAudit
+        COMMAND "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_style_elf_test.py"
+                "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
+      set_tests_properties(RobloxArmTranslation.AndroidStyleElfAudit
+        PROPERTIES TIMEOUT 15)
     endif()
   endif()
 
