@@ -1,5 +1,8 @@
 import importlib.util
+import json
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -258,6 +261,24 @@ class ELFReportTests(unittest.TestCase):
                          "libnotbundled.so")
         self.assertTrue(any(item["soname"] == "libsame.so"
                             for item in catalog["soname_conflicts"]))
+
+    def test_json_cli_reports_a_conservative_package_readiness_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            apk_path = Path(directory) / "client.apk"
+            with zipfile.ZipFile(apk_path, "w") as apk:
+                apk.writestr("lib/arm64-v8a/libtiny.so",
+                             bytes(make_elf([(MODULE.DT_NULL, 0)])))
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--json", str(apk_path)],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(len(payload["reports"]), 1)
+            self.assertEqual(payload["catalog"]["library_count"], 1)
+            self.assertFalse(payload["catalog"]["ready_to_launch"])
+            self.assertEqual(payload["errors"], [])
 
     def test_apk_set_nested_apk_is_audited(self):
         child_bytes = None
