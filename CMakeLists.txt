@@ -246,11 +246,34 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
   )
   target_compile_features(mocktail_a64_guest_host_calls PUBLIC cxx_std_17)
 
+  add_library(mocktail_a64_guest_runtime STATIC
+    src/translation/a64_guest_runtime.cc
+  )
+  target_include_directories(mocktail_a64_guest_runtime PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  target_link_libraries(mocktail_a64_guest_runtime PUBLIC
+    dynarmic
+    mocktail_a64_guest_memory
+    mocktail_a64_guest_module_loader
+    mocktail_a64_guest_tls
+    mocktail_a64_linux_syscalls
+    mocktail_a64_guest_host_calls
+  )
+  target_compile_features(mocktail_a64_guest_runtime PUBLIC cxx_std_17)
+
   add_executable(mocktail_a64_guest_host_calls_test
     tests/translation/a64_guest_host_calls_test.cc
   )
   target_link_libraries(mocktail_a64_guest_host_calls_test PRIVATE
     mocktail_a64_guest_host_calls
+  )
+
+  add_executable(mocktail_a64_guest_runtime_test
+    tests/translation/a64_guest_runtime_test.cc
+  )
+  target_link_libraries(mocktail_a64_guest_runtime_test PRIVATE
+    mocktail_a64_guest_runtime
   )
 
   add_executable(mocktail_a64_linux_syscalls_test
@@ -477,6 +500,9 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_MODULE_ROOT_FIXTURE}"
         "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
         "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+    add_dependencies(mocktail_a64_guest_runtime_test
+      mocktail_a64_guest_module_fixtures
+      mocktail_a64_guest_elf_fixture)
     add_dependencies(mocktail_a64_translation_smoke
       mocktail_a64_guest_elf_fixture
       mocktail_a64_guest_module_fixtures)
@@ -528,6 +554,19 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 --symbol guest_exported_entry
                 "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
                 "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.GuestRuntimeExportedCall
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_runtime_test>
+                --symbol guest_exported_entry
+                "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+                "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.GuestRuntimeInstructionBudget
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_runtime_test>
+                --budget-exhaustion
+                "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+                "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.GuestRuntimeInitializer
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_runtime_test>
+                --initializers "${MOCKTAIL_A64_INIT_FIXTURE}")
     endif()
   endif()
 
