@@ -223,6 +223,35 @@ inline std::vector<std::uint8_t> BuildA64ElfWithAndroidPackedRela() {
   return file;
 }
 
+// Android-targeted linkers can retain DT_RELAENT even when they emit no
+// ordinary DT_RELA/DT_RELASZ entries because all dynamic relocations are packed.
+inline std::vector<std::uint8_t>
+BuildA64ElfWithAndroidPackedRelaEntrySizeOnly() {
+  auto file = BuildA64ElfWithAndroidPackedRela();
+  std::vector<Elf64_Dyn> compact;
+  for (std::size_t index = 0; index < 13; ++index) {
+    const auto entry = ReadDynamicEntry(file, index);
+    if (entry.d_tag == DT_RELA || entry.d_tag == DT_RELASZ) continue;
+    compact.push_back(entry);
+    if (entry.d_tag == DT_NULL) break;
+  }
+  for (std::size_t index = 0; index < compact.size(); ++index) {
+    WriteDynamicEntry(file, index, compact[index]);
+  }
+
+  const auto header = ReadElfHeader(file);
+  Elf64_Phdr dynamic_header{};
+  const std::size_t dynamic_phdr_offset =
+      static_cast<std::size_t>(header.e_phoff) + header.e_phentsize;
+  std::memcpy(&dynamic_header, file.data() + dynamic_phdr_offset,
+              sizeof(dynamic_header));
+  dynamic_header.p_filesz = compact.size() * sizeof(Elf64_Dyn);
+  dynamic_header.p_memsz = dynamic_header.p_filesz;
+  std::memcpy(file.data() + dynamic_phdr_offset, &dynamic_header,
+              sizeof(dynamic_header));
+  return file;
+}
+
 inline std::vector<std::uint8_t> BuildA64ElfWithRelrRelocation() {
   auto file = BuildA64ElfWithRelativeRelocation();
   constexpr std::size_t kRelrOffset = 0x1100;
