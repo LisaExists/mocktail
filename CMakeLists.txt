@@ -650,7 +650,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
           "${CMAKE_SOURCE_DIR}/tools/mocktail-a64-apk-probe.py")
         if(MOCKTAIL_ANDROID_CLANG_EXECUTABLE)
           list(APPEND MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS
-            "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
+            "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}"
+            "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}")
         endif()
         add_test(NAME RobloxArmTranslation.ApkProbeIntegration
           COMMAND ${MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS})
