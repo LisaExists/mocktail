@@ -840,12 +840,6 @@ std::size_t A64GuestJniBridge::registered_native_count() const noexcept {
   return registered_natives_.size();
 }
 
-bool A64GuestJniBridge::IsStringHandle(
-    std::uint64_t handle) const noexcept {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return string_values_by_handle_.find(handle) != string_values_by_handle_.end();
-}
-
 void A64GuestJniBridge::ClearMappings() noexcept {
   for (const auto& allocation : string_chars_allocations_) {
     static_cast<void>(
