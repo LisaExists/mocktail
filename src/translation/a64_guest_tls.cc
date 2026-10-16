@@ -198,6 +198,53 @@ bool A64GuestTlsRuntime::CreateThread(A64GuestThreadTls* thread,
   return true;
 }
 
+bool A64GuestTlsRuntime::ResolveAddress(
+    const A64GuestThreadTls& thread, std::uint64_t module_id,
+    std::uint64_t module_offset, std::uint64_t* guest_address,
+    std::string* error) const {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (!prepared_) return fail("guest TLS runtime must be prepared first");
+  if (guest_address == nullptr) {
+    return fail("guest TLS resolver output pointer is null");
+  }
+  if (!thread.valid()) return fail("guest TLS thread descriptor is invalid");
+  if (AddOverflows(thread.allocation_base, thread.allocation_size) ||
+      AddOverflows(thread.thread_pointer, total_tls_size_) ||
+      thread.thread_pointer < thread.allocation_base ||
+      thread.thread_pointer + total_tls_size_ >
+          thread.allocation_base + thread.allocation_size) {
+    return fail("guest TLS thread descriptor does not cover its prepared layout");
+  }
+  if (module_id == 0) return fail("guest TLS module ID zero is reserved");
+
+  const auto module = std::find_if(
+      templates_.begin(), templates_.end(),
+      [&](const ModuleTemplate& item) { return item.module_id == module_id; });
+  if (module == templates_.end()) {
+    return fail("guest TLS module ID is not present in the preloaded module set");
+  }
+  if (module_offset >= module->bytes.size()) {
+    return fail("guest TLS module offset is outside its PT_TLS block");
+  }
+  if (AddOverflows(module->offset_from_tp, module_offset)) {
+    return fail("guest TLS module-relative address overflows");
+  }
+  const auto thread_offset = module->offset_from_tp + module_offset;
+  if (AddOverflows(thread.thread_pointer, thread_offset)) {
+    return fail("guest TLS thread-relative address overflows");
+  }
+  const auto address = thread.thread_pointer + thread_offset;
+  if (!memory_.IsMapped(address, 1)) {
+    return fail("resolved guest TLS address is not mapped for this thread");
+  }
+  *guest_address = address;
+  if (error != nullptr) error->clear();
+  return true;
+}
+
 bool A64GuestTlsRuntime::DestroyThread(A64GuestThreadTls* thread,
                                        std::string* error) {
   if (thread == nullptr || !thread->valid()) {
