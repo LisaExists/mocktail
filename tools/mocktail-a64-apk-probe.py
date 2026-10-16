@@ -8,6 +8,7 @@ surface ownership, or the complete Bionic system image.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import struct
 import subprocess
@@ -22,6 +23,8 @@ DEFAULT_PROBE = REPO_ROOT / "build-arm-translation" / "mocktail_a64_guest_probe"
 MAX_LIBRARY_SIZE = 512 * 1024 * 1024
 MAX_TOTAL_LIBRARY_SIZE = 2 * 1024 * 1024 * 1024
 MAX_LIBRARY_COUNT = 256
+MAX_NESTED_APK_SIZE = 512 * 1024 * 1024
+MAX_APK_SET_SIZE = 2 * 1024 * 1024 * 1024
 
 
 def is_aarch64_elf(data: bytes) -> bool:
@@ -74,6 +77,34 @@ def _add_library(
     libraries[name] = (data, source)
 
 
+def _collect_archive_libraries(
+    apk: zipfile.ZipFile,
+    label: str,
+    libraries: dict[str, tuple[bytes, str]],
+) -> bool:
+    """Collect ARM64 library entries from one APK ZIP. Return whether any were found."""
+    candidates = [
+        info for info in apk.infolist()
+        if not info.is_dir()
+        and info.filename.endswith(".so")
+        and PurePosixPath(info.filename).parts[:2] == ("lib", "arm64-v8a")
+    ]
+    for info in candidates:
+        if info.file_size > MAX_LIBRARY_SIZE:
+            raise ValueError(
+                f"{label}:{info.filename} exceeds the 512 MiB size limit"
+            )
+        data = apk.read(info)
+        _add_library(
+            libraries,
+            PurePosixPath(info.filename).name,
+            data,
+            f"{label}:{info.filename}",
+            require_aarch64=True,
+        )
+    return bool(candidates)
+
+
 def collect_apk_libraries(
     apk_paths: Iterable[Path],
     library_dirs: Iterable[Path],
@@ -82,44 +113,60 @@ def collect_apk_libraries(
 
     for apk_path in apk_paths:
         try:
-            with zipfile.ZipFile(apk_path) as apk:
-                candidates = [
-                    info for info in apk.infolist()
-                    if not info.is_dir()
-                    and info.filename.endswith(".so")
-                    and PurePosixPath(info.filename).parts[:2] == ("lib", "arm64-v8a")
-                ]
-                if not candidates:
-                    # Do not silently mistake split APK bundles/APKS for an APK
-                    # with no ARM64 native code.
-                    names = apk.namelist()
-                    nested_apks = [name for name in names if name.lower().endswith(".apk")]
-                    if nested_apks and apk_path.suffix.lower() != ".apk":
+            with zipfile.ZipFile(apk_path) as archive:
+                if apk_path.suffix.lower() == ".apks":
+                    nested_apks = [
+                        info for info in archive.infolist()
+                        if not info.is_dir() and info.filename.lower().endswith(".apk")
+                    ]
+                    if not nested_apks:
                         raise ValueError(
-                            f"{apk_path}: looks like an APK set/bundle containing "
-                            "nested APKs; pass the extracted split APK files individually"
+                            f"{apk_path}: APK-set archive contains no nested .apk files"
                         )
-                    print(
-                        f"warning: {apk_path} contains no lib/arm64-v8a/*.so entries",
-                        file=sys.stderr,
-                    )
-                for info in candidates:
-                    if info.file_size > MAX_LIBRARY_SIZE:
+                    nested_total = sum(info.file_size for info in nested_apks)
+                    if nested_total > MAX_APK_SET_SIZE:
                         raise ValueError(
-                            f"{apk_path}:{info.filename} exceeds the 512 MiB size limit"
+                            f"{apk_path}: expanded APK set exceeds the 2 GiB safety limit"
                         )
-                    data = apk.read(info)
-                    _add_library(
-                        libraries,
-                        PurePosixPath(info.filename).name,
-                        data,
-                        f"{apk_path}:{info.filename}",
-                        require_aarch64=True,
-                    )
+                    for info in nested_apks:
+                        if info.file_size > MAX_NESTED_APK_SIZE:
+                            raise ValueError(
+                                f"{apk_path}:{info.filename} exceeds the 512 MiB "
+                                "per-split size limit"
+                            )
+                        nested_data = archive.read(info)
+                        try:
+                            with zipfile.ZipFile(io.BytesIO(nested_data)) as split:
+                                _collect_archive_libraries(
+                                    split, f"{apk_path}:{info.filename}", libraries
+                                )
+                        except zipfile.BadZipFile as exc:
+                            raise ValueError(
+                                f"{apk_path}:{info.filename} is not a valid nested APK: {exc}"
+                            ) from exc
+                else:
+                    if not _collect_archive_libraries(archive, str(apk_path), libraries):
+                        names = archive.namelist()
+                        nested_apks = [
+                            name for name in names if name.lower().endswith(".apk")
+                        ]
+                        if nested_apks:
+                            print(
+                                f"warning: {apk_path} appears to be a ZIP/APK set; "
+                                "rename it to .apks or pass its split APK files "
+                                "individually to inspect nested ARM64 libraries",
+                                file=sys.stderr,
+                            )
+                        else:
+                            print(
+                                f"warning: {apk_path} contains no "
+                                "lib/arm64-v8a/*.so entries",
+                                file=sys.stderr,
+                            )
         except zipfile.BadZipFile as exc:
             raise ValueError(f"{apk_path} is not a valid ZIP/APK archive: {exc}") from exc
-        except OSError as exc:
-            raise ValueError(f"cannot read APK {apk_path}: {exc}") from exc
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"cannot read APK archive {apk_path}: {exc}") from exc
 
     for directory in library_dirs:
         if not directory.is_dir():
@@ -144,8 +191,8 @@ def collect_apk_libraries(
 
     if not libraries:
         raise ValueError(
-            "no AArch64 native libraries found; supply an APK with "
-            "lib/arm64-v8a/*.so or an --library-dir containing ARM64 .so files"
+            "no AArch64 native libraries found; supply an APK/APKS file with "
+            "lib/arm64-v8a/*.so entries or an --library-dir containing ARM64 .so files"
         )
     return libraries
 
@@ -157,7 +204,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "experimental x86-64 AArch64 guest runtime."
         )
     )
-    parser.add_argument("apks", nargs="+", type=Path, help="APK files (pass every split APK)")
+    parser.add_argument("apks", nargs="*", type=Path, help="APK files, an .apks split set, or individual split APKs")
     parser.add_argument(
         "--root",
         required=True,
@@ -198,6 +245,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if not args.apks and not args.library_dir:
+        print("error: supply at least one APK/APKS file or --library-dir", file=sys.stderr)
+        return 2
     if not args.probe.is_file() or not os.access(args.probe, os.X_OK):
         print(
             f"error: guest probe is not executable: {args.probe}\n"
