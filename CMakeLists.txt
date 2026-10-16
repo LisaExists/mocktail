@@ -277,6 +277,13 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_guest_runtime
   )
 
+  add_executable(mocktail_a64_guest_jni_test
+    tests/translation/a64_guest_jni_test.cc
+  )
+  target_link_libraries(mocktail_a64_guest_jni_test PRIVATE
+    mocktail_a64_guest_runtime
+  )
+
   add_executable(mocktail_a64_guest_probe
     src/translation/a64_guest_probe.cc
   )
@@ -367,6 +374,26 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       DEPENDS "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
     add_dependencies(mocktail_a64_guest_probe
       mocktail_a64_android_style_elf_fixture)
+
+    set(MOCKTAIL_A64_ANDROID_JNI_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-android-jni-smoke.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -fno-stack-protector -fno-builtin -O2
+              -Wl,--hash-style=both
+              -Wl,-soname,libmocktail-android-jni-smoke.so
+              -o "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
+      VERBATIM
+    )
+    add_custom_target(mocktail_a64_android_jni_fixture
+      DEPENDS "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}")
+    add_dependencies(mocktail_a64_guest_jni_test
+      mocktail_a64_android_jni_fixture)
   endif()
 
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
@@ -643,6 +670,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
       set_tests_properties(RobloxArmTranslation.AndroidStyleElfAudit
         PROPERTIES TIMEOUT 15)
+      add_test(NAME RobloxArmTranslation.AndroidJniOnLoadSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_jni_test>
+                "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}")
+      set_tests_properties(RobloxArmTranslation.AndroidJniOnLoadSmoke
+        PROPERTIES TIMEOUT 30)
     endif()
   endif()
 
