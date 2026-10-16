@@ -21,6 +21,8 @@ MAX_ELF_BYTES = 512 * 1024 * 1024
 MAX_SYMBOLS = 1_000_000
 MAX_PROGRAM_HEADERS = 4096
 MAX_DYNAMIC_ENTRIES = 1_000_000
+MAX_RELOCATIONS = 4_000_000
+MAX_PACKED_RELA_BYTES = 64 * 1024 * 1024
 
 EM_AARCH64, ET_EXEC, ET_DYN = 183, 2, 3
 PT_LOAD, PT_DYNAMIC, PT_TLS = 1, 2, 7
@@ -165,6 +167,118 @@ def first_tag(tags: dict[int, list[int]], tag: int, blockers: list[str],
     if len(values) > 1:
         blockers.append(f"duplicate {label} dynamic tags")
     return values[0] if values else None
+
+
+def read_sleb128(data: bytes, position: int) -> tuple[int, int]:
+    """Decode one bounded signed LEB128 value as a signed 64-bit integer."""
+    value = 0
+    shift = 0
+    for _ in range(10):
+        if position >= len(data):
+            raise AuditError("truncated SLEB128 value")
+        byte = data[position]
+        position += 1
+        payload = byte & 0x7F
+        if shift == 63:
+            if payload not in {0, 0x7F}:
+                raise AuditError("SLEB128 value overflows signed 64-bit range")
+            value |= (payload & 1) << 63
+        elif shift < 63:
+            value |= payload << shift
+        if not byte & 0x80:
+            total_shift = shift + 7
+            if total_shift < 64 and byte & 0x40:
+                value |= - (1 << total_shift)
+            value &= (1 << 64) - 1
+            if value & (1 << 63):
+                value -= 1 << 64
+            return value, position
+        shift += 7
+    raise AuditError("SLEB128 value exceeds ten bytes")
+
+
+def decode_android_packed_rela(
+    image: ELF64Image, address: int, size: int
+) -> list[tuple[int, int]]:
+    """Decode Android's APS2 RELA stream into (relocation type, symbol index)."""
+    if size < 4 or size > MAX_PACKED_RELA_BYTES:
+        raise AuditError("DT_ANDROID_RELA size is empty or exceeds the 64 MiB limit")
+    data = image.read_vaddr(address, size)
+    if data[:4] != b"APS2":
+        raise AuditError("DT_ANDROID_RELA has an invalid APS2 signature")
+
+    position = 4
+    relocation_count, position = read_sleb128(data, position)
+    initial_offset, position = read_sleb128(data, position)
+    if relocation_count < 0 or relocation_count > MAX_RELOCATIONS or initial_offset < 0:
+        raise AuditError("DT_ANDROID_RELA has invalid relocation count or initial offset")
+
+    running_offset = initial_offset
+    running_addend = 0
+    relocations: list[tuple[int, int]] = []
+    while len(relocations) < relocation_count:
+        group_size, position = read_sleb128(data, position)
+        flags, position = read_sleb128(data, position)
+        if group_size <= 0 or flags < 0 or flags & ~0xF:
+            raise AuditError("DT_ANDROID_RELA contains an invalid relocation group")
+        if group_size > relocation_count - len(relocations):
+            raise AuditError("DT_ANDROID_RELA group exceeds the declared relocation count")
+
+        grouped_by_info = bool(flags & 1)
+        grouped_by_offset_delta = bool(flags & 2)
+        grouped_by_addend = bool(flags & 4)
+        has_addend = bool(flags & 8)
+        if grouped_by_addend and not has_addend:
+            raise AuditError("DT_ANDROID_RELA groups addends without declaring them")
+
+        group_offset_delta = 0
+        group_info = 0
+        if grouped_by_offset_delta:
+            group_offset_delta, position = read_sleb128(data, position)
+            if group_offset_delta < 0:
+                raise AuditError("DT_ANDROID_RELA has a negative grouped offset delta")
+        if grouped_by_info:
+            group_info, position = read_sleb128(data, position)
+            if group_info < 0:
+                raise AuditError("DT_ANDROID_RELA has negative relocation info")
+
+        if not has_addend:
+            running_addend = 0
+        elif grouped_by_addend:
+            addend_delta, position = read_sleb128(data, position)
+            running_addend += addend_delta
+            if not -(1 << 63) <= running_addend < (1 << 63):
+                raise AuditError("DT_ANDROID_RELA grouped addend overflows signed 64-bit range")
+
+        for _ in range(group_size):
+            if grouped_by_offset_delta:
+                delta = group_offset_delta
+            else:
+                delta, position = read_sleb128(data, position)
+                if delta < 0:
+                    raise AuditError("DT_ANDROID_RELA has a negative relocation offset delta")
+            running_offset += delta
+            if running_offset > (1 << 64) - 1:
+                raise AuditError("DT_ANDROID_RELA relocation offset overflows")
+
+            if grouped_by_info:
+                info = group_info
+            else:
+                info, position = read_sleb128(data, position)
+                if info < 0:
+                    raise AuditError("DT_ANDROID_RELA has negative relocation info")
+
+            if has_addend and not grouped_by_addend:
+                addend_delta, position = read_sleb128(data, position)
+                running_addend += addend_delta
+                if not -(1 << 63) <= running_addend < (1 << 63):
+                    raise AuditError("DT_ANDROID_RELA relocation addend overflows signed 64-bit range")
+
+            relocations.append((info & 0xFFFFFFFF, info >> 32))
+
+    if position != len(data):
+        raise AuditError("DT_ANDROID_RELA has trailing or unconsumed APS2 data")
+    return relocations
 
 
 def dynamic_string(image: ELF64Image, tags: dict[int, list[int]],
@@ -441,17 +555,23 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     if DT_ANDROID_REL in tags or DT_ANDROID_RELSZ in tags:
         blockers.append("Android packed REL relocations are unsupported")
 
+    relocations: list[tuple[int, int]] = []
     android_rela_addr = first_tag(tags, DT_ANDROID_RELA, blockers, "DT_ANDROID_RELA")
     android_rela_size = first_tag(tags, DT_ANDROID_RELASZ, blockers, "DT_ANDROID_RELASZ")
     if (android_rela_addr is None) != (android_rela_size is None):
         blockers.append("DT_ANDROID_RELA and DT_ANDROID_RELASZ must be provided together")
-    elif android_rela_addr is not None and android_rela_size:
-        report["has_android_packed_rela"] = True
-        blockers.append(
-            "APS2 packed RELA is present; the audit cannot classify its relocation types"
-        )
+    elif android_rela_addr is not None and android_rela_size is not None:
+        if android_rela_size == 0:
+            blockers.append("DT_ANDROID_RELA is present with an empty relocation stream")
+        else:
+            report["has_android_packed_rela"] = True
+            try:
+                relocations.extend(
+                    decode_android_packed_rela(image, android_rela_addr, android_rela_size)
+                )
+            except AuditError as exc:
+                blockers.append(f"invalid APS2 packed RELA: {exc}")
 
-    relocations: list[tuple[int, int]] = []
     seen_tables: set[tuple[int, int, str]] = set()
 
     def scan_table(address_tag: int, size_tag: int, entry_tag: int | None,
