@@ -138,7 +138,7 @@ bool A64GuestHostCalls::Register(std::string name, std::string provider,
 }
 
 bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
-  auto fail = [&](const char* message) {
+  auto fail = [&](const std::string& message) {
     if (error != nullptr) *error = message;
     return false;
   };
