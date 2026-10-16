@@ -103,6 +103,7 @@ int main(int argc, char** argv) {
 
   std::string root_name;
   std::string call_symbol;
+  std::vector<std::string> external_dependencies;
   bool list_exports = false;
   bool run_initializers = false;
   bool has_call_arguments = false;
@@ -136,6 +137,16 @@ int main(int argc, char** argv) {
     }
     if (option == "--call") {
       if (!take_value("--call", &call_symbol)) return 2;
+      continue;
+    }
+    if (option == "--external-dependency") {
+      std::string soname;
+      if (!take_value("--external-dependency", &soname)) return 2;
+      if (soname.size() < 4 || Basename(soname) != soname ||
+          soname.compare(soname.size() - 3, 3, ".so") != 0) {
+        return Fail("--external-dependency must be a library SONAME such as libm.so");
+      }
+      external_dependencies.push_back(std::move(soname));
       continue;
     }
     if (option == "--budget" || option == "--memory-mib") {
@@ -239,6 +250,7 @@ int main(int argc, char** argv) {
   }
 
   A64GuestRuntimeOptions options;
+  options.module_load.external_dependencies = std::move(external_dependencies);
   options.max_guest_memory_bytes =
       static_cast<std::size_t>(memory_mib * kBytesPerMiB);
   if (instruction_budget != 0) options.instruction_budget = instruction_budget;
