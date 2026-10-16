@@ -1451,9 +1451,22 @@ std::string ApplyDynamicMetadataAndRelocations(
   const bool any_rela_tag = metadata.rela_address.has_value() ||
                             metadata.rela_size.has_value() ||
                             metadata.rela_entry_size.has_value();
+  const bool has_alternative_relocation_table =
+      (metadata.android_rela_address && metadata.android_rela_size &&
+       *metadata.android_rela_size != 0) ||
+      (metadata.relr_address && metadata.relr_size &&
+       *metadata.relr_size != 0);
+  // Android linkers can emit DT_RELASZ=0 as a placeholder when all ordinary
+  // RELA entries were moved into APS2-packed RELA and/or RELR. Accept that
+  // empty placeholder without inventing an absent DT_RELA/DT_RELAENT table.
+  const bool empty_rela_placeholder =
+      !metadata.rela_address && metadata.rela_size &&
+      *metadata.rela_size == 0 && !metadata.rela_entry_size &&
+      has_alternative_relocation_table;
   if (any_rela_tag &&
       (!metadata.rela_address || !metadata.rela_size ||
-       !metadata.rela_entry_size)) {
+       !metadata.rela_entry_size) &&
+      !empty_rela_placeholder) {
     return "DT_RELA, DT_RELASZ and DT_RELAENT must be provided together";
   }
 
