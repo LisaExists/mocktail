@@ -32,6 +32,17 @@ The prototype lays out each loaded module's `PT_TLS` template at an aligned stat
 
 When `aarch64-linux-gnu-gcc` is installed, CMake also generates a genuine AArch64 `.so` fixture and sends it through the ELF loader and Dynarmic, stopping at a controlled `BRK`. The dedicated branch workflow installs this cross-toolchain so that the real-ELF path is tested in CI. This demonstrates basic code execution from a linker-produced guest image, not compatibility with the Android linker or the Roblox client.
 
+## Auditing an actual APK/APKS package
+
+After obtaining the official ARM64 APK (or every APK split in an APK-set archive), run:
+
+```bash
+python3 tools/roblox-arm-preflight.py ~/Downloads/Roblox.apk
+python3 tools/a64-elf-audit.py --json ~/Downloads/Roblox.apk > roblox-arm64-audit.json
+```
+
+The ELF audit reads native libraries without extracting or executing them. Its package summary resolves bundled `DT_NEEDED` edges, reports duplicate SONAMEs, checks imports against the bundle's visible exports, and lists Android platform symbols that the current explicit host-call table does not implement. A green ELF-loader candidate flag only covers this prototype's supported ELF subset; `ready_to_launch` intentionally remains false until Android/Bionic startup, the required platform APIs, JNI and graphics have been validated.
+
 ## Architecture options to evaluate
 
 1. **In-process guest execution:** Dynarmic JIT + guest address-space management + an AArch64 ELF loader + explicit ABI thunks for callbacks into native x86-64 code. Guest pointers and host pointers must never be treated as interchangeable.

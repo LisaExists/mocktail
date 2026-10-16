@@ -577,6 +577,9 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
                 report["versioned_symbols"] = sum(
                     1 for version in version_indices if (version & 0x7FFF) > 1
                 )
+            if ((DT_VERNEED in tags or DT_VERNEEDNUM in tags or
+                 DT_VERDEF in tags or DT_VERDEFNUM in tags) and versym_addr is None):
+                blockers.append("DT_VERNEED/DT_VERDEF requires DT_VERSYM")
 
             symbol_types: list[int] = []
             symbol_rows: list[tuple[str, int, int, int, int, int]] = []
@@ -768,18 +771,28 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     if matched:
                         break
                 if not matched:
-                    unresolved_package_symbols.append({
-                        "source": source, "symbol": name,
-                        "version": version, "provider": provider or provider_names,
-                    })
+                    if external_providers:
+                        platform_symbol_requirements.append({
+                            "source": source, "symbol": name, "version": version,
+                            "provider": provider or external_providers[0],
+                            "prototype_host_call": False,
+                            "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
+                            "versioned_host_call_needs_registration":
+                                bool(version and name in PROTOTYPE_HOST_CALLS),
+                        })
+                    else:
+                        unresolved_package_symbols.append({
+                            "source": source, "symbol": name,
+                            "version": version, "provider": provider or provider_names,
+                        })
                     continue
 
             if matched:
                 continue
 
-            if name in PROTOTYPE_HOST_CALLS:
-                # The smoke runtime can satisfy this symbol through a guest SVC
-                # thunk. It does not imply the application's whole API is ready.
+            if name in PROTOTYPE_HOST_CALLS and not version:
+                # The current host-call table exports unversioned thunks only.
+                # A version requirement must be registered explicitly.
                 continue
 
             if external_providers or any(dep in ANDROID_PLATFORM_LIBRARIES for dep in needed):
@@ -787,6 +800,9 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     "source": source, "symbol": name, "version": version,
                     "provider": provider or (external_providers[0] if external_providers else ""),
                     "prototype_host_call": False,
+                    "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
+                    "versioned_host_call_needs_registration":
+                        bool(version and name in PROTOTYPE_HOST_CALLS),
                 })
             else:
                 unresolved_symbols.append({

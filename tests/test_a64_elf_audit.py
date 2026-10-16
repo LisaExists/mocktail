@@ -170,6 +170,40 @@ class ELFReportTests(unittest.TestCase):
         self.assertEqual(catalog["platform_symbol_requirements"][0]["symbol"], "open")
         self.assertFalse(catalog["ready_to_launch"])
 
+    def test_platform_import_is_not_mislabeled_when_other_package_dependency_exists(self):
+        provider = {
+            "source": "libprovider.so", "soname": "libprovider.so",
+            "needed": [], "imports": [],
+            "exports": [{"name": "inner_api", "version": "",
+                         "version_hidden": False}],
+        }
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libprovider.so", "libc.so"],
+            "imports": [{"name": "open", "version": "", "provider": "",
+                         "binding": "GLOBAL", "tls": False}],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer, provider])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertTrue(any(item["symbol"] == "open"
+                            for item in catalog["platform_symbol_requirements"]))
+
+    def test_versioned_hostcall_is_not_satisfied_by_name_only(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libc.so"],
+            "imports": [{"name": "memcpy", "version": "LIBC",
+                         "provider": "libc.so", "binding": "GLOBAL", "tls": False}],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertTrue(any(
+            item["symbol"] == "memcpy" and
+            item["versioned_host_call_needs_registration"]
+            for item in catalog["platform_symbol_requirements"]
+        ))
+
     def test_catalogue_reports_missing_dependency_and_ambiguous_soname(self):
         one = {"source": "split1/libsame.so", "soname": "libsame.so",
                "needed": ["libnotbundled.so"], "imports": [], "exports": []}
