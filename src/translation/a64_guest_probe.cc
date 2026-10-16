@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -43,7 +44,7 @@ bool ReadFile(const std::string& path, std::vector<std::uint8_t>* bytes,
     *error = "cannot open input library '" + path + "'";
     return false;
   }
-  const auto end = input.tellg();
+  const auto end = static_cast<std::streamoff>(input.tellg());
   if (end <= 0) {
     *error = "input library is empty or unreadable: '" + path + "'";
     return false;
@@ -273,7 +274,7 @@ int main(int argc, char** argv) {
       for (const auto& symbol : module.image.exported_symbols) {
         std::cout << "    " << symbol.name;
         if (!symbol.version.empty()) {
-          std::cout << (symbol.version_hidden ? '@' : '@')
+          std::cout << (symbol.version_hidden ? "@" : "@@")
                     << symbol.version;
           if (symbol.version_hidden) std::cout << " [non-default]";
         }
