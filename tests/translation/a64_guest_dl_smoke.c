@@ -12,6 +12,13 @@ __attribute__((visibility("default")))
 extern int dlclose(void *handle);
 __attribute__((visibility("default")))
 extern char *dlerror(void);
+struct DlInfo {
+  const char *dli_fname;
+  void *dli_fbase;
+  const char *dli_sname;
+  void *dli_saddr;
+};
+extern int dladdr(const void *address, struct DlInfo *info);
 
 typedef int (*guest_dl_target_fn)(int);
 
@@ -34,6 +41,14 @@ int guest_dlopen_smoke(void) {
   guest_dl_target_fn target =
       (guest_dl_target_fn)dlsym(handle, "guest_dl_target");
   if (target == (guest_dl_target_fn)0) return -5;
+
+  struct DlInfo info = {0};
+  if (dladdr((const void *)target, &info) != 1) return -7;
+  if (info.dli_fname == (const char *)0 ||
+      info.dli_fbase == (void *)0 ||
+      info.dli_sname == (const char *)0 ||
+      info.dli_saddr != (void *)target) return -8;
+  if (info.dli_fname[0] != 'l' || info.dli_sname[0] != 'g') return -9;
 
   const int result = target(41);
   if (dlclose(handle) != 0) return -6;

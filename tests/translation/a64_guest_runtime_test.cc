@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     return Fail("runtime load failed: " + error);
   }
 
-  const auto* guest_memory = runtime.memory();
+  auto* guest_memory = runtime.memory();
   if (guest_memory == nullptr) {
     return Fail("runtime did not expose its loaded guest memory");
   }

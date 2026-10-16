@@ -564,6 +564,136 @@ class A64GuestRuntime::Impl final {
     return {true, *symbol, {}};
   }
 
+  std::optional<std::uint64_t> GuestDlfcnString(
+      const std::string& value, std::string* error) {
+    auto fail = [&](const std::string& message)
+        -> std::optional<std::uint64_t> {
+      if (error != nullptr) *error = message;
+      return std::nullopt;
+    };
+    if (value.size() + 1U > kMaximumDlfcnStringBytes) {
+      return fail("libdl guest string exceeds the configured length limit");
+    }
+    const auto found = dl_guest_strings_.find(value);
+    if (found != dl_guest_strings_.end()) {
+      if (error != nullptr) error->clear();
+      return found->second;
+    }
+    if (dl_guest_strings_.size() >= 1024U) {
+      return fail("libdl guest string cache reached its bounded entry limit");
+    }
+
+    std::uint64_t mapped_size = 0;
+    if (!RoundPageSize(value.size() + 1U, &mapped_size)) {
+      return fail("libdl guest string allocation size overflows");
+    }
+    std::uint64_t address = 0;
+    std::string diagnostic;
+    if (!memory_.MapAnywhere(
+            value.size() + 1U,
+            A64GuestMemory::kRead | A64GuestMemory::kWrite,
+            &address, &diagnostic)) {
+      return fail("cannot allocate guest string for libdl result: " +
+                  diagnostic);
+    }
+    if (!memory_.Write(address, value.c_str(), value.size() + 1U)) {
+      static_cast<void>(memory_.Unmap(address, mapped_size));
+      return fail("cannot initialize guest string for libdl result");
+    }
+    try {
+      const auto inserted = dl_guest_strings_.emplace(value, address);
+      if (!inserted.second) {
+        static_cast<void>(memory_.Unmap(address, mapped_size));
+        address = inserted.first->second;
+      }
+    } catch (const std::bad_alloc&) {
+      static_cast<void>(memory_.Unmap(address, mapped_size));
+      return fail("not enough host memory to retain libdl guest strings");
+    }
+    if (error != nullptr) error->clear();
+    return address;
+  }
+
+  A64HostCallResult GuestDladdr(
+      const A64GuestHostCalls::Arguments& arguments) {
+    struct GuestDlInfo final {
+      std::uint64_t filename = 0;
+      std::uint64_t base = 0;
+      std::uint64_t symbol_name = 0;
+      std::uint64_t symbol_address = 0;
+    };
+
+    const auto requested_address = arguments[0];
+    const auto output_address = arguments[1];
+    if (!modules_ || requested_address == 0 || output_address == 0) {
+      SetDlError("dladdr requires a loaded guest image, address, and output");
+      return {true, 0, {}};
+    }
+
+    const A64GuestModule* owner = nullptr;
+    const A64LoadSegment* containing_segment = nullptr;
+    for (const auto& module : modules_->modules) {
+      for (const auto& segment : module.image.segments) {
+        if (requested_address >= segment.guest_address &&
+            requested_address - segment.guest_address < segment.bytes.size()) {
+          owner = &module;
+          containing_segment = &segment;
+          break;
+        }
+      }
+      if (owner != nullptr) break;
+    }
+    if (owner == nullptr || containing_segment == nullptr) {
+      // POSIX dladdr reports a normal lookup miss with 0 and does not fabricate
+      // metadata for an arbitrary guest pointer.
+      return {true, 0, {}};
+    }
+
+    const A64ExportedSymbol* nearest_symbol = nullptr;
+    for (const auto& symbol : owner->image.exported_symbols) {
+      if (symbol.guest_address == 0 ||
+          symbol.guest_address > requested_address ||
+          symbol.type == STT_TLS || symbol.type == STT_GNU_IFUNC ||
+          symbol.version_hidden ||
+          symbol.guest_address < containing_segment->guest_address ||
+          symbol.guest_address - containing_segment->guest_address >=
+              containing_segment->bytes.size()) {
+        continue;
+      }
+      if (nearest_symbol == nullptr ||
+          symbol.guest_address > nearest_symbol->guest_address) {
+        nearest_symbol = &symbol;
+      }
+    }
+
+    std::string diagnostic;
+    const auto filename = GuestDlfcnString(owner->source_name, &diagnostic);
+    if (!filename) {
+      SetDlError("dladdr failed to allocate image name: " + diagnostic);
+      return {true, 0, {}};
+    }
+
+    GuestDlInfo information{};
+    information.filename = *filename;
+    information.base = owner->image.base_address;
+    if (nearest_symbol != nullptr) {
+      const auto symbol_name =
+          GuestDlfcnString(nearest_symbol->name, &diagnostic);
+      if (!symbol_name) {
+        SetDlError("dladdr failed to allocate symbol name: " + diagnostic);
+        return {true, 0, {}};
+      }
+      information.symbol_name = *symbol_name;
+      information.symbol_address = nearest_symbol->guest_address;
+    }
+
+    if (!memory_.Write(output_address, &information, sizeof(information))) {
+      SetDlError("dladdr output does not point to writable guest memory");
+      return {true, 0, {}};
+    }
+    return {true, 1, {}};
+  }
+
   A64HostCallResult GuestDlclose(
       const A64GuestHostCalls::Arguments& arguments) {
     if (dl_handles_.find(arguments[0]) == dl_handles_.end()) {
@@ -615,6 +745,10 @@ class A64GuestRuntime::Impl final {
     if (!register_one("dlerror", [this](
             const A64GuestHostCalls::Arguments&) {
           return GuestDlerror();
+        })) return false;
+    if (!register_one("dladdr", [this](
+            const A64GuestHostCalls::Arguments& arguments) {
+          return GuestDladdr(arguments);
         })) return false;
     return true;
   }
@@ -1069,6 +1203,9 @@ class A64GuestRuntime::Impl final {
   std::map<std::uint64_t, std::size_t> dl_handles_;
   std::string dl_error_;
   std::uint64_t dl_error_buffer_address_ = 0;
+  // Stable guest copies returned by dladdr; capped to avoid unbounded guest
+  // mapping growth. Their lifetime is the runtime's lifetime.
+  std::map<std::string, std::uint64_t> dl_guest_strings_;
   bool dl_error_pending_ = false;
   std::unique_ptr<Callbacks> callbacks_;
   std::unique_ptr<Dynarmic::A64::Jit> jit_;
