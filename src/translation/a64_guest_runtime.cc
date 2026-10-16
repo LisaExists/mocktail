@@ -736,8 +736,8 @@ class A64GuestRuntime::Impl final {
       if (item.first.empty() ||
           item.first.size() >= kMaximumPropertyNameBytes ||
           item.second.size() >= kPropertyValueMax ||
-          item.first.find('\\0') != std::string::npos ||
-          item.second.find('\\0') != std::string::npos) {
+          item.first.find('\0') != std::string::npos ||
+          item.second.find('\0') != std::string::npos) {
         return fail("synthetic Android property name/value is invalid or too long");
       }
     }

@@ -93,10 +93,10 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   // must not leak the host machine's actual properties.
   char sdk[92] = {0};
   if (__system_property_get("ro.build.version.sdk", sdk) != 2 ||
-      sdk[0] != '3' || sdk[1] != '6' || sdk[2] != '\\0') return -16;
+      sdk[0] != '3' || sdk[1] != '6' || sdk[2] != '\0') return -16;
   char missing_property[92] = {'x'};
   if (__system_property_get("ro.mocktail.property_missing", missing_property) != 0 ||
-      missing_property[0] != '\\0') return -17;
+      missing_property[0] != '\0') return -17;
 
   // Exercise JNI's modified-UTF string path from actual translated guest code.
   // The fixture uses ASCII so its modified-UTF and UTF-8 byte sequence match.
