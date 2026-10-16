@@ -203,6 +203,55 @@ int main() {
           "uname rejects an unmapped guest output pointer");
   }
 
+  const auto guest_pid = syscalls.Dispatch(A64LinuxSyscalls::kGetPid, empty_arguments);
+  const auto guest_ppid = syscalls.Dispatch(A64LinuxSyscalls::kGetPpid, empty_arguments);
+  const auto guest_uid = syscalls.Dispatch(A64LinuxSyscalls::kGetUid, empty_arguments);
+  const auto guest_euid = syscalls.Dispatch(A64LinuxSyscalls::kGetEuid, empty_arguments);
+  const auto guest_gid = syscalls.Dispatch(A64LinuxSyscalls::kGetGid, empty_arguments);
+  const auto guest_egid = syscalls.Dispatch(A64LinuxSyscalls::kGetEgid, empty_arguments);
+  const auto guest_tid = syscalls.Dispatch(A64LinuxSyscalls::kGetTid, empty_arguments);
+  Check(guest_pid.value == A64LinuxSyscalls::kGuestProcessId &&
+            guest_ppid.value == A64LinuxSyscalls::kGuestParentProcessId &&
+            guest_uid.value == A64LinuxSyscalls::kGuestUid &&
+            guest_euid.value == A64LinuxSyscalls::kGuestUid &&
+            guest_gid.value == A64LinuxSyscalls::kGuestGid &&
+            guest_egid.value == A64LinuxSyscalls::kGuestGid &&
+            guest_tid.value == A64LinuxSyscalls::kGuestThreadId,
+        "process and credential syscalls expose the bounded unprivileged guest identity");
+  Check(syscalls.Dispatch(A64LinuxSyscalls::kSchedYield, empty_arguments).value == 0,
+        "sched_yield is a safe no-op until guest thread scheduling exists");
+
+  if (memory.IsMapped(kGuestSyscallScratch, A64GuestMemory::kPageSize)) {
+    const std::array<std::uint64_t, 6> clock_resolution{
+        1, kGuestSyscallScratch, 0, 0, 0, 0};
+    const auto resolution_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kClockGetRes, clock_resolution);
+    struct GuestTimespec final {
+      std::int64_t seconds;
+      std::int64_t nanoseconds;
+    } resolution{};
+    const bool read_resolution = memory.Read(
+        kGuestSyscallScratch, &resolution, sizeof(resolution));
+    Check(resolution_result.value == 0 && read_resolution &&
+              resolution.seconds >= 0 && resolution.nanoseconds >= 0 &&
+              resolution.nanoseconds < 1000000000,
+          "clock_getres writes a valid guest timespec");
+    auto invalid_resolution = clock_resolution;
+    invalid_resolution[0] = 10;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kClockGetRes,
+                                    invalid_resolution), EINVAL),
+          "clock_getres rejects unsupported guest clock IDs");
+    auto invalid_resolution_pointer = clock_resolution;
+    invalid_resolution_pointer[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kClockGetRes,
+                                    invalid_resolution_pointer), EFAULT),
+          "clock_getres validates a non-null guest timespec pointer");
+    auto null_resolution = clock_resolution;
+    null_resolution[1] = 0;
+    Check(syscalls.Dispatch(A64LinuxSyscalls::kClockGetRes, null_resolution).value == 0,
+          "clock_getres permits a null output pointer");
+  }
+
   Check(IsError(syscalls.Dispatch(999999, invalid_length), ENOSYS),
         "unsupported guest syscalls return -ENOSYS");
   const std::array<std::uint64_t, 6> exit_args{7, 0, 0, 0, 0, 0};
