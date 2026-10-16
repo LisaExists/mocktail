@@ -35,6 +35,10 @@ constexpr std::size_t kJniIsSameObject = 24;
 constexpr std::size_t kJniNewLocalRef = 25;
 constexpr std::size_t kJniEnsureLocalCapacity = 26;
 constexpr std::size_t kJniFindClass = 6;
+constexpr std::size_t kJniNewStringUTF = 167;
+constexpr std::size_t kJniGetStringUTFLength = 168;
+constexpr std::size_t kJniGetStringUTFChars = 169;
+constexpr std::size_t kJniReleaseStringUTFChars = 170;
 constexpr std::size_t kJniRegisterNatives = 215;
 constexpr std::size_t kJniGetJavaVm = 219;
 constexpr std::size_t kJniExceptionCheck = 228;
@@ -66,6 +70,10 @@ constexpr FunctionSpec kNativeFunctions[] = {
     {kJniNewLocalRef, "__mocktail_jni_NewLocalRef"},
     {kJniEnsureLocalCapacity, "__mocktail_jni_EnsureLocalCapacity"},
     {kJniFindClass, "__mocktail_jni_FindClass"},
+    {kJniNewStringUTF, "__mocktail_jni_NewStringUTF"},
+    {kJniGetStringUTFLength, "__mocktail_jni_GetStringUTFLength"},
+    {kJniGetStringUTFChars, "__mocktail_jni_GetStringUTFChars"},
+    {kJniReleaseStringUTFChars, "__mocktail_jni_ReleaseStringUTFChars"},
     {kJniRegisterNatives, "__mocktail_jni_RegisterNatives"},
     {kJniGetJavaVm, "__mocktail_jni_GetJavaVM"},
     {kJniExceptionCheck, "__mocktail_jni_ExceptionCheck"},
@@ -237,6 +245,175 @@ bool A64GuestJniBridge::Register(std::string* error) {
           }
           pending_exception_ = false;
         }
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+
+  if (!register_one("__mocktail_jni_NewStringUTF", [this](
+          const A64GuestHostCalls::Arguments& arguments) {
+        if (arguments[0] != jni_environment_address_ ||
+            arguments[1] == 0) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        std::string value;
+        std::string diagnostic;
+        if (!ReadGuestString(arguments[1], kMaximumJniStringBytes,
+                             &value, &diagnostic)) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+
+        std::uint64_t handle = 0;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (next_string_handle_ <=
+              std::numeric_limits<std::uint64_t>::max() - 16U) {
+            const auto candidate = next_string_handle_;
+            try {
+              const auto inserted =
+                  string_values_by_handle_.emplace(candidate, std::move(value));
+              if (inserted.second) {
+                handle = candidate;
+                next_string_handle_ += 16U;
+              }
+            } catch (const std::bad_alloc&) {
+              handle = 0;
+            }
+          }
+        }
+        SetPendingException(handle == 0);
+        return A64HostCallResult{true, handle, {}};
+      })) return false;
+
+  if (!register_one("__mocktail_jni_GetStringUTFLength", [this](
+          const A64GuestHostCalls::Arguments& arguments) {
+        if (arguments[0] != jni_environment_address_) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        std::size_t length = 0;
+        bool valid = false;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          const auto found = string_values_by_handle_.find(arguments[1]);
+          if (found != string_values_by_handle_.end()) {
+            length = found->second.size();
+            valid = true;
+          }
+        }
+        SetPendingException(!valid);
+        return A64HostCallResult{
+            true, valid ? static_cast<std::uint64_t>(length) : 0U, {}};
+      })) return false;
+
+  if (!register_one("__mocktail_jni_GetStringUTFChars", [this](
+          const A64GuestHostCalls::Arguments& arguments) {
+        if (arguments[0] != jni_environment_address_) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        std::string value;
+        bool valid = false;
+        try {
+          std::lock_guard<std::mutex> lock(mutex_);
+          const auto found = string_values_by_handle_.find(arguments[1]);
+          if (found != string_values_by_handle_.end()) {
+            value = found->second;
+            valid = true;
+          }
+        } catch (const std::bad_alloc&) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        if (!valid || value.size() >= kMaximumJniStringBytes) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+
+        const auto required_size = value.size() + 1U;
+        std::uint64_t allocation_size = 0;
+        if (!RoundPageSize(required_size, &allocation_size)) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        std::uint64_t guest_address = 0;
+        std::string diagnostic;
+        if (!memory_.MapAnywhere(required_size,
+                                 A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                                 &guest_address, &diagnostic) ||
+            !memory_.Write(guest_address, value.c_str(), required_size)) {
+          if (guest_address != 0) {
+            static_cast<void>(
+                memory_.Unmap(guest_address, allocation_size));
+          }
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+
+        const std::uint8_t is_copy = 1;
+        if (arguments[2] != 0 &&
+            !memory_.Write(arguments[2], &is_copy, sizeof(is_copy))) {
+          static_cast<void>(
+              memory_.Unmap(guest_address, allocation_size));
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+
+        bool tracked = false;
+        try {
+          std::lock_guard<std::mutex> lock(mutex_);
+          tracked = string_chars_allocations_
+                        .emplace(guest_address,
+                                 StringCharsAllocation{arguments[1],
+                                                       allocation_size})
+                        .second;
+        } catch (const std::bad_alloc&) {
+          tracked = false;
+        }
+        if (!tracked) {
+          static_cast<void>(
+              memory_.Unmap(guest_address, allocation_size));
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        SetPendingException(false);
+        return A64HostCallResult{true, guest_address, {}};
+      })) return false;
+
+  if (!register_one("__mocktail_jni_ReleaseStringUTFChars", [this](
+          const A64GuestHostCalls::Arguments& arguments) {
+        if (arguments[0] != jni_environment_address_) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        // JNI permits a null chars pointer as a no-op for release.
+        if (arguments[2] == 0) {
+          return A64HostCallResult{true, 0, {}};
+        }
+        StringCharsAllocation allocation{};
+        bool found_allocation = false;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          const auto found =
+              string_chars_allocations_.find(arguments[2]);
+          if (found != string_chars_allocations_.end() &&
+              found->second.string_handle == arguments[1]) {
+            allocation = found->second;
+            string_chars_allocations_.erase(found);
+            found_allocation = true;
+          }
+        }
+        if (!found_allocation) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        std::string diagnostic;
+        if (!memory_.Unmap(arguments[2], allocation.allocation_size,
+                           &diagnostic)) {
+          SetPendingException(true);
+          return A64HostCallResult{true, 0, {}};
+        }
+        SetPendingException(false);
         return A64HostCallResult{true, 0, {}};
       })) return false;
 
@@ -423,8 +600,11 @@ bool A64GuestJniBridge::Register(std::string* error) {
           return A64HostCallResult{true, 0, {}};
         }
         std::lock_guard<std::mutex> lock(mutex_);
-        const bool valid = class_names_by_handle_.find(arguments[1]) !=
-                           class_names_by_handle_.end();
+        const bool valid =
+            class_names_by_handle_.find(arguments[1]) !=
+                class_names_by_handle_.end() ||
+            string_values_by_handle_.find(arguments[1]) !=
+                string_values_by_handle_.end();
         // JNIInvalidRefType=0, JNILocalRefType=1.
         return A64HostCallResult{true, valid ? 1U : 0U, {}};
       })) return false;
@@ -660,7 +840,19 @@ std::size_t A64GuestJniBridge::registered_native_count() const noexcept {
   return registered_natives_.size();
 }
 
+bool A64GuestJniBridge::IsStringHandle(
+    std::uint64_t handle) const noexcept {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return string_values_by_handle_.find(handle) != string_values_by_handle_.end();
+}
+
 void A64GuestJniBridge::ClearMappings() noexcept {
+  for (const auto& allocation : string_chars_allocations_) {
+    static_cast<void>(
+        memory_.Unmap(allocation.first, allocation.second.allocation_size));
+  }
+  string_chars_allocations_.clear();
+  string_values_by_handle_.clear();
   for (auto it = mappings_.rbegin(); it != mappings_.rend(); ++it) {
     static_cast<void>(memory_.Unmap(it->address, it->size));
   }
