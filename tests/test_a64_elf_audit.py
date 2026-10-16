@@ -305,6 +305,29 @@ class ELFReportTests(unittest.TestCase):
         self.assertTrue(any(item["symbol"] == "open"
                             for item in catalog["platform_symbol_requirements"]))
 
+    def test_unversioned_guest_libc_thunks_are_in_the_known_runtime_set(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libc.so"],
+            "imports": [
+                {"name": "memchr", "version": "", "provider": "libc.so",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "strcat", "version": "", "provider": "libc.so",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "strcasecmp", "version": "", "provider": "libc.so",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "__errno", "version": "", "provider": "libc.so",
+                 "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        self.assertTrue({
+            "memchr", "strcat", "strcasecmp", "__errno"
+        }.issubset(set(catalog["prototype_host_call_symbols"])))
+
     def test_versioned_hostcall_is_not_satisfied_by_name_only(self):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
