@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -312,6 +313,154 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
           offset += amount;
         }
         return {true, 0, {}};
+      })) return false;
+
+  if (!register_one("memchr", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        const auto address = arguments[0];
+        const auto wanted = static_cast<std::uint8_t>(arguments[1] & 0xffU);
+        const auto length = arguments[2];
+        if (length > kMaximumTransferBytes) {
+          return Failure("memchr length exceeds the host-call transfer limit");
+        }
+        std::array<std::uint8_t, 4096> buffer{};
+        std::uint64_t offset = 0;
+        while (offset < length) {
+          const auto amount = static_cast<std::size_t>(
+              std::min<std::uint64_t>(buffer.size(), length - offset));
+          if (address > std::numeric_limits<std::uint64_t>::max() - offset ||
+              !memory_.Read(address + offset, buffer.data(), amount)) {
+            return Failure("memchr source points outside readable guest memory");
+          }
+          for (std::size_t index = 0; index < amount; ++index) {
+            if (buffer[index] == wanted) {
+              return {true, address + offset + index, {}};
+            }
+          }
+          offset += amount;
+        }
+        return {true, 0, {}};
+      })) return false;
+
+  if (!register_one("strcat", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string destination;
+        std::string source;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &destination, &diagnostic) ||
+            !ReadGuestString(memory_, arguments[1], kMaximumCStringBytes,
+                             true, &source, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        if (source.size() > kMaximumCStringBytes - destination.size() - 1U ||
+            arguments[0] > std::numeric_limits<std::uint64_t>::max() -
+                               destination.size()) {
+          return Failure("strcat result exceeds the guest string limit");
+        }
+        destination.append(source);
+        if (!memory_.Write(arguments[0], destination.c_str(),
+                           destination.size() + 1U)) {
+          return Failure("strcat destination is outside writable guest memory");
+        }
+        return {true, arguments[0], {}};
+      })) return false;
+
+  if (!register_one("strncat", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        const auto maximum = arguments[2];
+        if (maximum > kMaximumCStringBytes) {
+          return Failure("strncat length exceeds the host-call string limit");
+        }
+        std::string destination;
+        std::string source;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &destination, &diagnostic) ||
+            !ReadGuestString(memory_, arguments[1],
+                             static_cast<std::size_t>(maximum), false,
+                             &source, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        if (source.size() > maximum) source.resize(static_cast<std::size_t>(maximum));
+        if (source.size() > kMaximumCStringBytes - destination.size() - 1U ||
+            arguments[0] > std::numeric_limits<std::uint64_t>::max() -
+                               destination.size()) {
+          return Failure("strncat result exceeds the guest string limit");
+        }
+        destination.append(source);
+        if (!memory_.Write(arguments[0], destination.c_str(),
+                           destination.size() + 1U)) {
+          return Failure("strncat destination is outside writable guest memory");
+        }
+        return {true, arguments[0], {}};
+      })) return false;
+
+  if (!register_one("strcasecmp", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        std::string left;
+        std::string right;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0], kMaximumCStringBytes,
+                             true, &left, &diagnostic) ||
+            !ReadGuestString(memory_, arguments[1], kMaximumCStringBytes,
+                             true, &right, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        const auto common = std::min(left.size(), right.size());
+        for (std::size_t index = 0; index < common; ++index) {
+          const auto l = static_cast<unsigned char>(left[index]);
+          const auto r = static_cast<unsigned char>(right[index]);
+          const auto lower_l = std::tolower(l);
+          const auto lower_r = std::tolower(r);
+          if (lower_l != lower_r) {
+            const int result = lower_l < lower_r ? -1 : 1;
+            return {true, static_cast<std::uint64_t>(
+                              static_cast<std::int64_t>(result)), {}};
+          }
+        }
+        const int result = left.size() == right.size()
+                               ? 0
+                               : (left.size() < right.size() ? -1 : 1);
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(result)), {}};
+      })) return false;
+
+  if (!register_one("strncasecmp", [this](const Arguments& arguments)
+          -> A64HostCallResult {
+        const auto maximum = arguments[2];
+        if (maximum > kMaximumCStringBytes) {
+          return Failure("strncasecmp length exceeds the host-call string limit");
+        }
+        std::string left;
+        std::string right;
+        std::string diagnostic;
+        if (!ReadGuestString(memory_, arguments[0],
+                             static_cast<std::size_t>(maximum), false,
+                             &left, &diagnostic) ||
+            !ReadGuestString(memory_, arguments[1],
+                             static_cast<std::size_t>(maximum), false,
+                             &right, &diagnostic)) {
+          return Failure(std::move(diagnostic));
+        }
+        const auto common = std::min({left.size(), right.size(),
+                                      static_cast<std::size_t>(maximum)});
+        for (std::size_t index = 0; index < common; ++index) {
+          const auto l = static_cast<unsigned char>(left[index]);
+          const auto r = static_cast<unsigned char>(right[index]);
+          const auto lower_l = std::tolower(l);
+          const auto lower_r = std::tolower(r);
+          if (lower_l != lower_r) {
+            const int result = lower_l < lower_r ? -1 : 1;
+            return {true, static_cast<std::uint64_t>(
+                              static_cast<std::int64_t>(result)), {}};
+          }
+        }
+        const int result = left.size() == right.size()
+                               ? 0
+                               : (left.size() < right.size() ? -1 : 1);
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(result)), {}};
       })) return false;
 
   if (!register_one("strlen", [this](const Arguments& arguments)
