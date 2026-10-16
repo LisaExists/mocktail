@@ -10,6 +10,11 @@ __attribute__((constructor, used)) static void guest_initializer(void) {
   guest_init_state = 41;
 }
 
+__attribute__((visibility("default"), used)) unsigned long long
+guest_check_init(void) {
+  return guest_init_state + 1;
+}
+
 __attribute__((naked, noreturn, used)) void _start(void) {
   __asm__ volatile(
       "adrp x9, guest_init_state\n\t"
