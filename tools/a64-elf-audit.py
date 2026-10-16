@@ -372,6 +372,7 @@ PROTOTYPE_HOST_CALLS = {
     "strcpy", "strncpy", "strcat", "strncat", "strchr", "strrchr",
     "strstr", "strdup", "malloc", "calloc", "free", "realloc", "abort",
     "__errno", "__errno_location", "__tls_get_addr",
+    "dlopen", "dlsym", "dlclose", "dlerror",
     "__mocktail_tlsdesc_static", "__stack_chk_fail",
 }
 
