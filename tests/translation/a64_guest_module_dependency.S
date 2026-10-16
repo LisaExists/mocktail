@@ -11,4 +11,11 @@ guest_add_one:
     ret
 .size guest_add_one, .-guest_add_one
 
+.p2align 2
+.global guest_spin_forever
+.type guest_spin_forever, %function
+guest_spin_forever:
+    b guest_spin_forever
+.size guest_spin_forever, .-guest_spin_forever
+
 .section .note.GNU-stack,"",%progbits
