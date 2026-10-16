@@ -311,7 +311,7 @@ inline std::vector<std::uint8_t> BuildA64ElfWithSymbolVersion(
   // The string table begins with a NUL byte, so this prefix length is the
   // correct byte offset of MOCK_ABI_1.0 (strstr cannot scan this table).
   constexpr std::uint32_t kVersionNameOffset =
-      sizeof("\0libc.so\0libmock.so\0test_symbol");
+      sizeof("\0libc.so\0libmock.so\0test_symbol") - 1;
 
   const Elf64_Half versym[] = {
       0,
