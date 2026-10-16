@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "translation/a64_guest_memory.h"
+#include "translation/a64_guest_tls.h"
 
 namespace mocktail::translation {
 namespace {
@@ -449,6 +450,45 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
 
   if (error != nullptr) error->clear();
   return true;
+}
+
+bool A64GuestHostCalls::RegisterTlsGetAddr(
+    const A64GuestTlsRuntime& runtime, const A64GuestThreadTls& thread,
+    std::string provider, std::string version, std::string* error) {
+  if (!runtime.prepared()) {
+    if (error != nullptr) {
+      *error = "guest TLS runtime must be prepared before __tls_get_addr registration";
+    }
+    return false;
+  }
+  if (!thread.valid()) {
+    if (error != nullptr) *error = "guest TLS thread descriptor is invalid";
+    return false;
+  }
+
+  return Register(
+      "__tls_get_addr", std::move(provider), std::move(version),
+      [this, &runtime, &thread](const Arguments& arguments)
+          -> A64HostCallResult {
+        struct GuestTlsIndex final {
+          std::uint64_t module_id;
+          std::uint64_t module_offset;
+        };
+        GuestTlsIndex index{};
+        if (!memory_.Read(arguments[0], &index, sizeof(index))) {
+          return Failure(
+              "__tls_get_addr tls_index points outside readable guest memory");
+        }
+        std::uint64_t address = 0;
+        std::string diagnostic;
+        if (!runtime.ResolveAddress(thread, index.module_id,
+                                    index.module_offset, &address,
+                                    &diagnostic)) {
+          return Failure("__tls_get_addr failed: " + diagnostic);
+        }
+        return {true, address, {}};
+      },
+      error);
 }
 
 bool A64GuestHostCalls::Install(std::string* error) {
