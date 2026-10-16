@@ -554,6 +554,30 @@ class A64GuestRuntime::Impl final {
     return Call(*address, arguments, instruction_budget);
   }
 
+  A64GuestCallResult CallSymbol(const A64SymbolRequest& request,
+                                const Arguments& arguments,
+                                std::uint64_t instruction_budget) {
+    if (!modules_) {
+      A64GuestCallResult result;
+      result.error = "AArch64 guest runtime is not loaded";
+      return result;
+    }
+    const auto address = modules_->ResolveExportedSymbol(request);
+    if (!address) {
+      A64GuestCallResult result;
+      result.error = "AArch64 guest export was not found for symbol '" +
+                     request.name + "'";
+      if (!request.version.empty()) {
+        result.error += " with version '" + request.version + "'";
+      }
+      if (!request.provider.empty()) {
+        result.error += " from provider '" + request.provider + "'";
+      }
+      return result;
+    }
+    return Call(*address, arguments, instruction_budget);
+  }
+
   bool loaded() const noexcept { return loaded_; }
   const A64GuestModuleSet* modules() const noexcept {
     return modules_ ? &*modules_ : nullptr;
@@ -612,6 +636,12 @@ A64GuestCallResult A64GuestRuntime::CallSymbol(
     const std::string& symbol, const Arguments& arguments,
     std::uint64_t instruction_budget) {
   return impl_->CallSymbol(symbol, arguments, instruction_budget);
+}
+
+A64GuestCallResult A64GuestRuntime::CallSymbol(
+    const A64SymbolRequest& request, const Arguments& arguments,
+    std::uint64_t instruction_budget) {
+  return impl_->CallSymbol(request, arguments, instruction_budget);
 }
 
 bool A64GuestRuntime::loaded() const noexcept { return impl_->loaded(); }
