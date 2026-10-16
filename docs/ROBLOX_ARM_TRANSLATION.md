@@ -34,7 +34,7 @@ When `aarch64-linux-gnu-gcc` is installed, CMake also generates a genuine AArch6
 
 ## Auditing an actual APK/APKS package
 
-After obtaining the official ARM64 APK (or every APK split in an APK-set archive), run:
+After obtaining the official ARM64 APK, an `.apks` split-set archive, or each APK from a split install, run the read-only audit first:
 
 ```bash
 python3 tools/roblox-arm-preflight.py ~/Downloads/Roblox.apk
@@ -86,3 +86,6 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 ## Scope and trust
 
 Keep the existing payload acquisition, compatibility and integrity behavior unchanged while the architecture work is developed. CPU instruction translation is only one component of an Android compatibility runtime.
+
+
+The experimental native probe accepts a single APK, an `.apks` file directly, or multiple individual split APKs. It extracts only entries under `lib/arm64-v8a/`, checks that they are little-endian ELF64 AArch64 images, and rejects conflicting files with the same basename. Use `--library-dir` to add a directory of matching ARM64 Android runtime libraries (including when no APK positional argument is supplied). Explicit `--external-dependency SONAME` entries only allow a missing `DT_NEEDED` edge; they do not synthesize symbols or implement that library. The end-to-end APK test uses genuine cross-compiled test libraries in a synthetic APK and is not a Roblox compatibility claim.
