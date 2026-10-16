@@ -15,6 +15,27 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+def sleb128(value: int) -> bytes:
+    encoded = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        done = (value == 0 and not (byte & 0x40)) or (
+            value == -1 and bool(byte & 0x40)
+        )
+        encoded.append(byte if done else byte | 0x80)
+        if done:
+            return bytes(encoded)
+
+
+def android_packed_relative(offset: int = 0x700) -> bytes:
+    # One APS2 relocation: R_AARCH64_RELATIVE at the chosen offset, addend 0.
+    stream = b"APS2" + sleb128(1) + sleb128(0x100)
+    stream += sleb128(1) + sleb128(0)  # group count, flags
+    stream += sleb128(offset - 0x100) + sleb128(1027)  # offset delta, info
+    return stream
+
+
 def make_elf(dynamic, *, machine=183, extra_tls=False):
     data = bytearray(0x800)
     ident = bytearray(16)
@@ -79,6 +100,48 @@ class ELFReportTests(unittest.TestCase):
         self.assertTrue(report["prototype_loader_compatible"])
         self.assertEqual(report["relocation_counts"]["R_AARCH64_TLSDESC"], 1)
         self.assertNotIn("R_AARCH64_TLSDESC", report["unsupported_relocations"])
+
+    def test_android_aps2_packed_rela_is_decoded_and_classified(self):
+        packed = android_packed_relative()
+        data = make_elf([
+            (MODULE.DT_ANDROID_RELA, 0x300),
+            (MODULE.DT_ANDROID_RELASZ, len(packed)),
+            (MODULE.DT_SYMTAB, 0x500),
+            (MODULE.DT_SYMENT, 24),
+            (MODULE.DT_HASH, 0x540),
+            (MODULE.DT_STRTAB, 0x600),
+            (MODULE.DT_STRSZ, 1),
+            (MODULE.DT_NULL, 0),
+        ])
+        data[0x300:0x300 + len(packed)] = packed
+        # Minimal SysV hash table containing only the null symbol.
+        struct.pack_into("<IIII", data, 0x540, 1, 1, 0, 0)
+        data[0x600] = 0
+
+        report = MODULE.audit_elf(bytes(data), "libandroid-packed.so")
+        self.assertTrue(report["has_android_packed_rela"])
+        self.assertEqual(report["relocation_counts"]["R_AARCH64_RELATIVE"], 1)
+        self.assertTrue(
+            report["prototype_loader_compatible"],
+            report["prototype_loader_blockers"],
+        )
+        self.assertFalse(any("cannot classify" in blocker
+                             for blocker in report["prototype_loader_blockers"]))
+
+    def test_malformed_android_aps2_signature_is_rejected(self):
+        packed = b"NOPE" + sleb128(0) + sleb128(0)
+        data = make_elf([
+            (MODULE.DT_ANDROID_RELA, 0x300),
+            (MODULE.DT_ANDROID_RELASZ, len(packed)),
+            (MODULE.DT_NULL, 0),
+        ])
+        data[0x300:0x300 + len(packed)] = packed
+        report = MODULE.audit_elf(bytes(data), "libbad-aps2.so")
+        self.assertFalse(report["prototype_loader_compatible"])
+        self.assertTrue(any(
+            "invalid APS2 packed RELA" in blocker and "signature" in blocker
+            for blocker in report["prototype_loader_blockers"]
+        ))
 
     def test_jmprel_uses_dt_pltrel_as_format_not_entry_size(self):
         data = make_elf([
