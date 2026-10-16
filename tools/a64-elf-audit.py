@@ -794,9 +794,14 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     "provider": provider,
                 })
 
-    deduplicate = lambda items: [dict(t) for t in {
-        tuple(sorted(item.items())) for item in items
-    }]
+    def deduplicate(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # JSON gives deterministic hashable keys even when a diagnostic contains
+        # a list of candidate providers.
+        unique: dict[str, dict[str, Any]] = {}
+        for item in items:
+            unique[json.dumps(item, sort_keys=True)] = item
+        return list(unique.values())
+
     missing_dependencies = deduplicate(missing_dependencies)
     external_platform_dependencies = deduplicate(external_platform_dependencies)
     unresolved_package_symbols = deduplicate(unresolved_package_symbols)

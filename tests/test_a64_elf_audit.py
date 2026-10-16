@@ -134,7 +134,7 @@ class ELFReportTests(unittest.TestCase):
                          1, (1 << 4), 0, 0, 0, 0)
         data[0x600:0x618] = b"\x00host_api\x00export_api\x00\x00\x00\x00"
         struct.pack_into("<IBBHQQ", data, 0x500 + 0,
-                         11, (1 << 4), 0, 1, 0x700, 8)
+                         10, (1 << 4), 0, 1, 0x700, 8)
         report = MODULE.audit_elf(bytes(data), "libtiny.so")
         self.assertIn(
             {"name": "host_api", "version": "", "provider": "",
