@@ -81,6 +81,11 @@ class A64GuestJniBridge final {
     std::uint64_t function_pointer = 0;
   };
 
+  struct StringCharsAllocation final {
+    std::uint64_t string_handle = 0;
+    std::uint64_t allocation_size = 0;
+  };
+
   bool MapReadOnly(const void* bytes, std::size_t size,
                    std::uint64_t* address, std::string* error);
   bool ResolveStub(const char* name, std::uint64_t* address,
@@ -88,6 +93,7 @@ class A64GuestJniBridge final {
   bool ReadGuestString(std::uint64_t address, std::size_t maximum,
                        std::string* value, std::string* error) const;
   std::uint64_t FindOrCreateClassHandle(const std::string& class_name);
+  bool IsStringHandle(std::uint64_t handle) const noexcept;
   void SetPendingException(bool pending) noexcept;
   void ClearMappings() noexcept;
 
@@ -98,6 +104,8 @@ class A64GuestJniBridge final {
   std::map<std::string, std::uint64_t> class_handles_by_name_;
   std::map<std::uint64_t, std::string> class_names_by_handle_;
   std::vector<A64GuestJniNativeRegistration> registered_natives_;
+  std::map<std::uint64_t, std::string> string_values_by_handle_;
+  std::map<std::uint64_t, StringCharsAllocation> string_chars_allocations_;
   std::vector<Mapping> mappings_;
 
   std::uint64_t native_function_table_address_ = 0;
@@ -105,6 +113,7 @@ class A64GuestJniBridge final {
   std::uint64_t jni_environment_address_ = 0;
   std::uint64_t java_vm_address_ = 0;
   std::uint64_t next_class_handle_ = 0x4A4E490000000100ULL;
+  std::uint64_t next_string_handle_ = 0x4A4E530000000100ULL;
   bool registered_ = false;
   bool initialized_ = false;
   bool pending_exception_ = false;
