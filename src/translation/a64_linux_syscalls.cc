@@ -3,6 +3,7 @@
 
 #include "translation/a64_linux_syscalls.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <limits>
