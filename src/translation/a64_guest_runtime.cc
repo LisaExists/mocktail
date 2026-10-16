@@ -583,10 +583,14 @@ class A64GuestRuntime::Impl final {
       return fail("libdl guest string cache reached its bounded entry limit");
     }
 
-    std::uint64_t mapped_size = 0;
-    if (!RoundPageSize(value.size() + 1U, &mapped_size)) {
-      return fail("libdl guest string allocation size overflows");
-    }
+    constexpr std::uint64_t kPageMask =
+        A64GuestMemory::kPageSize - 1U;
+    const auto requested_size =
+        static_cast<std::uint64_t>(value.size() + 1U);
+    // The string length is already bounded above, so this rounding cannot
+    // overflow and never exceeds two guest pages.
+    const auto mapped_size =
+        (requested_size + kPageMask) & ~kPageMask;
     std::uint64_t address = 0;
     std::string diagnostic;
     if (!memory_.MapAnywhere(
