@@ -23,8 +23,25 @@ struct A64LinuxSyscallResult final {
 class A64LinuxSyscalls final {
  public:
   static constexpr std::uint64_t kClockGetTime = 113;
+  static constexpr std::uint64_t kClockGetRes = 114;
+  static constexpr std::uint64_t kSchedYield = 124;
+  static constexpr std::uint64_t kGetPid = 172;
+  static constexpr std::uint64_t kGetPpid = 173;
+  static constexpr std::uint64_t kGetUid = 174;
+  static constexpr std::uint64_t kGetEuid = 175;
+  static constexpr std::uint64_t kGetGid = 176;
+  static constexpr std::uint64_t kGetEgid = 177;
+  static constexpr std::uint64_t kGetTid = 178;
   static constexpr std::uint64_t kUname = 160;
   static constexpr std::uint64_t kGetRandom = 278;
+
+  // Synthetic unprivileged identity for the currently single-threaded guest.
+  // These are guest IDs only; they are never used as host credentials.
+  static constexpr std::uint64_t kGuestProcessId = 10000;
+  static constexpr std::uint64_t kGuestParentProcessId = 1;
+  static constexpr std::uint64_t kGuestThreadId = 10001;
+  static constexpr std::uint64_t kGuestUid = 10000;
+  static constexpr std::uint64_t kGuestGid = 10000;
   static constexpr std::uint64_t kExit = 93;
   static constexpr std::uint64_t kExitGroup = 94;
   static constexpr std::uint64_t kBrk = 214;
