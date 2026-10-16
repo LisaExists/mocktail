@@ -626,6 +626,10 @@ class A64GuestRuntime::Impl final {
     return jni_bridge_ ? jni_bridge_->jni_environment_address() : 0;
   }
 
+  bool jni_exception_pending() const noexcept {
+    return jni_bridge_ && jni_bridge_->pending_exception();
+  }
+
   std::vector<A64GuestJniNativeRegistration> registered_jni_natives() const {
     return jni_bridge_ ? jni_bridge_->registered_natives()
                        : std::vector<A64GuestJniNativeRegistration>{};
@@ -709,6 +713,10 @@ std::uint64_t A64GuestRuntime::java_vm_address() const noexcept {
 
 std::uint64_t A64GuestRuntime::jni_environment_address() const noexcept {
   return impl_->jni_environment_address();
+}
+
+bool A64GuestRuntime::jni_exception_pending() const noexcept {
+  return impl_->jni_exception_pending();
 }
 
 std::vector<A64GuestJniNativeRegistration>
