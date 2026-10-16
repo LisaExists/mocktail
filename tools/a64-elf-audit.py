@@ -611,8 +611,7 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     # Android linkers can leave a zero-sized DT_RELASZ placeholder after moving
     # conventional RELA entries into APS2-packed RELA and/or RELR tables.
     empty_rela_placeholder = (
-        DT_RELA not in tags
-        and tags.get(DT_RELASZ) == [0]
+        tags.get(DT_RELASZ) == [0]
         and (
             DT_RELAENT not in tags or tags.get(DT_RELAENT) == [24]
         )
