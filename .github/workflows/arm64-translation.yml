@@ -72,7 +72,7 @@ jobs:
 
       - name: Build loader and Dynarmic tests
         run: |
-          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_linux_syscalls_test mocktail_a64_guest_runtime_test mocktail_a64_guest_probe mocktail_a64_translation_smoke
+          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_linux_syscalls_test mocktail_a64_guest_runtime_test mocktail_a64_guest_jni_test mocktail_a64_guest_probe mocktail_a64_translation_smoke
 
       - name: Audit linker-generated ARM64 fixtures
         run: |
@@ -86,7 +86,8 @@ jobs:
             build-translation-ci/mocktail-a64-guest-tls.so \
             build-translation-ci/mocktail-a64-guest-tlsdesc.so \
             build-translation-ci/mocktail-a64-guest-tls-get-addr.so \
-            build-translation-ci/libmocktail-android-style-smoke.so
+            build-translation-ci/libmocktail-android-style-smoke.so \
+            build-translation-ci/libmocktail-android-jni-smoke.so
 
       - name: Run translation and preflight tests
         run: |
