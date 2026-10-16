@@ -116,6 +116,72 @@ class ELFReportTests(unittest.TestCase):
             self.assertEqual(len(inputs), 1)
             self.assertTrue(inputs[0][0].endswith("lib/arm64-v8a/libtiny.so"))
 
+    def test_extracts_referenced_undefined_symbols_and_exports(self):
+        data = make_elf([
+            (MODULE.DT_RELA, 0x300),
+            (MODULE.DT_RELASZ, 24),
+            (MODULE.DT_RELAENT, 24),
+            (MODULE.DT_SYMTAB, 0x500),
+            (MODULE.DT_SYMENT, 24),
+            (MODULE.DT_HASH, 0x540),
+            (MODULE.DT_STRTAB, 0x600),
+            (MODULE.DT_STRSZ, 24),
+            (MODULE.DT_NULL, 0),
+        ])
+        struct.pack_into("<QQq", data, 0x300, 0x700, (1 << 32) | 1026, 0)
+        struct.pack_into("<IIIII", data, 0x540, 1, 2, 1, 0, 0)
+        struct.pack_into("<IBBHQQ", data, 0x500 + 24,
+                         1, (1 << 4), 0, 0, 0, 0)
+        data[0x600:0x618] = b"\x00host_api\x00export_api\x00\x00\x00\x00"
+        struct.pack_into("<IBBHQQ", data, 0x500 + 0,
+                         11, (1 << 4), 0, 1, 0x700, 8)
+        report = MODULE.audit_elf(bytes(data), "libtiny.so")
+        self.assertIn(
+            {"name": "host_api", "version": "", "provider": "",
+             "binding": "GLOBAL", "tls": False},
+            report["imports"],
+        )
+        self.assertTrue(any(item["name"] == "export_api"
+                            for item in report["exports"]))
+
+    def test_catalogue_resolves_internal_symbols_and_reports_platform_gaps(self):
+        provider = {
+            "source": "libprovider.so", "soname": "libprovider.so",
+            "needed": [], "imports": [],
+            "exports": [{"name": "inner_api", "version": "",
+                         "version_hidden": False}],
+        }
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libprovider.so", "libc.so"],
+            "imports": [
+                {"name": "inner_api", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "open", "version": "", "provider": "libc.so",
+                 "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer, provider])
+        self.assertEqual(catalog["missing_package_dependencies"], [])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(len(catalog["external_platform_dependencies"]), 1)
+        self.assertEqual(len(catalog["platform_symbol_requirements"]), 1)
+        self.assertEqual(catalog["platform_symbol_requirements"][0]["symbol"], "open")
+        self.assertFalse(catalog["ready_to_launch"])
+
+    def test_catalogue_reports_missing_dependency_and_ambiguous_soname(self):
+        one = {"source": "split1/libsame.so", "soname": "libsame.so",
+               "needed": ["libnotbundled.so"], "imports": [], "exports": []}
+        two = {"source": "split2/libsame.so", "soname": "libsame.so",
+               "needed": [], "imports": [], "exports": []}
+        catalog = MODULE.audit_catalog([one, two])
+        self.assertEqual(len(catalog["missing_package_dependencies"]), 1)
+        self.assertEqual(catalog["missing_package_dependencies"][0]["dependency"],
+                         "libnotbundled.so")
+        self.assertTrue(any(item["soname"] == "libsame.so"
+                            for item in catalog["soname_conflicts"]))
+
     def test_apk_set_nested_apk_is_audited(self):
         child_bytes = None
         from io import BytesIO

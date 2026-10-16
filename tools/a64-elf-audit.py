@@ -240,11 +240,144 @@ def dynsym_count(image: ELF64Image, tags: dict[int, list[int]],
         return None
 
 
+
+ANDROID_PLATFORM_LIBRARIES = {
+    "libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so",
+    "libEGL.so", "libGLESv1_CM.so", "libGLESv2.so", "libvulkan.so",
+    "libOpenSLES.so", "libmediandk.so", "libjnigraphics.so", "libz.so",
+    "libc++_shared.so", "libstdc++.so", "libaaudio.so", "libcamera2ndk.so",
+    "libnativewindow.so", "libsync.so", "libui.so", "libutils.so",
+    "libbinder_ndk.so", "libcrypto.so", "libssl.so", "libicuuc.so",
+    "libicui18n.so", "libandroid_runtime.so",
+}
+# Kept in sync with the explicit functions registered by
+# A64GuestHostCalls::RegisterBuiltinLibc and RegisterTlsGetAddr.
+PROTOTYPE_HOST_CALLS = {
+    "memcpy", "memmove", "memset", "memcmp", "strlen", "strcmp",
+    "strncmp", "malloc", "calloc", "free", "realloc", "abort",
+    "__tls_get_addr", "__mocktail_tlsdesc_static", "__stack_chk_fail",
+}
+
+
+def version_requirements(image: ELF64Image, tags: dict[int, list[int]],
+                         blockers: list[str]) -> dict[int, dict[str, str]]:
+    address = first_tag(tags, DT_VERNEED, blockers, "DT_VERNEED")
+    count = first_tag(tags, DT_VERNEEDNUM, blockers, "DT_VERNEEDNUM")
+    if (address is None) != (count is None):
+        blockers.append("DT_VERNEED and DT_VERNEEDNUM must be provided together")
+        return {}
+    if address is None or count == 0:
+        return {}
+    if count is None or count > MAX_DYNAMIC_ENTRIES:
+        blockers.append("DT_VERNEEDNUM exceeds the audit record limit")
+        return {}
+
+    requirements: dict[int, dict[str, str]] = {}
+    current = address
+    try:
+        for record_index in range(count):
+            version, aux_count, provider_offset, aux_offset, next_offset = (
+                struct.unpack("<HHIII", image.read_vaddr(current, 16))
+            )
+            if version != 1 or aux_count == 0 or aux_count > MAX_SYMBOLS or aux_offset == 0:
+                raise AuditError("DT_VERNEED contains invalid record metadata")
+            provider = dynamic_string(image, tags, provider_offset, blockers)
+            if not provider:
+                raise AuditError("DT_VERNEED provider name is empty or invalid")
+            auxiliary = current + aux_offset
+            for aux_index in range(aux_count):
+                _hash, _flags, other, name_offset, aux_next = struct.unpack(
+                    "<IHHII", image.read_vaddr(auxiliary, 16)
+                )
+                version_index = other & 0x7FFF
+                version_name = dynamic_string(image, tags, name_offset, blockers)
+                if version_index < 2 or not version_name:
+                    raise AuditError("DT_VERNEED auxiliary has an invalid index/name")
+                if version_index in requirements:
+                    raise AuditError("DT_VERNEED repeats a symbol-version index")
+                requirements[version_index] = {
+                    "version": version_name,
+                    "provider": provider,
+                }
+                if aux_index + 1 < aux_count:
+                    if aux_next == 0:
+                        raise AuditError("DT_VERNEED auxiliary chain is truncated")
+                    auxiliary += aux_next
+                elif aux_next != 0:
+                    raise AuditError("DT_VERNEED auxiliary chain exceeds its count")
+            if record_index + 1 < count:
+                if next_offset == 0:
+                    raise AuditError("DT_VERNEED chain is shorter than DT_VERNEEDNUM")
+                current += next_offset
+            elif next_offset != 0:
+                raise AuditError("DT_VERNEED chain exceeds DT_VERNEEDNUM")
+    except (AuditError, struct.error) as exc:
+        blockers.append(f"cannot inspect DT_VERNEED: {exc}")
+        return {}
+    return requirements
+
+
+def version_definitions(image: ELF64Image, tags: dict[int, list[int]],
+                        blockers: list[str]) -> dict[int, str]:
+    address = first_tag(tags, DT_VERDEF, blockers, "DT_VERDEF")
+    count = first_tag(tags, DT_VERDEFNUM, blockers, "DT_VERDEFNUM")
+    if (address is None) != (count is None):
+        blockers.append("DT_VERDEF and DT_VERDEFNUM must be provided together")
+        return {}
+    if address is None or count == 0:
+        return {}
+    if count is None or count > MAX_DYNAMIC_ENTRIES:
+        blockers.append("DT_VERDEFNUM exceeds the audit record limit")
+        return {}
+
+    definitions: dict[int, str] = {}
+    current = address
+    try:
+        for record_index in range(count):
+            version, _flags, index, aux_count, _hash, aux_offset, next_offset = (
+                struct.unpack("<HHHHIII", image.read_vaddr(current, 20))
+            )
+            version_index = index & 0x7FFF
+            if version != 1 or version_index == 0 or aux_count == 0 or aux_count > MAX_SYMBOLS or aux_offset == 0:
+                raise AuditError("DT_VERDEF contains invalid record metadata")
+            auxiliary = current + aux_offset
+            first_name = ""
+            for aux_index in range(aux_count):
+                name_offset, aux_next = struct.unpack(
+                    "<II", image.read_vaddr(auxiliary, 8)
+                )
+                name = dynamic_string(image, tags, name_offset, blockers)
+                if not name:
+                    raise AuditError("DT_VERDEF auxiliary has an empty version name")
+                if aux_index == 0:
+                    first_name = name
+                if aux_index + 1 < aux_count:
+                    if aux_next == 0:
+                        raise AuditError("DT_VERDEF auxiliary chain is truncated")
+                    auxiliary += aux_next
+                elif aux_next != 0:
+                    raise AuditError("DT_VERDEF auxiliary chain exceeds its count")
+            if version_index in definitions:
+                raise AuditError("DT_VERDEF repeats a symbol-version index")
+            definitions[version_index] = first_name
+            if record_index + 1 < count:
+                if next_offset == 0:
+                    raise AuditError("DT_VERDEF chain is shorter than DT_VERDEFNUM")
+                current += next_offset
+            elif next_offset != 0:
+                raise AuditError("DT_VERDEF chain exceeds DT_VERDEFNUM")
+    except (AuditError, struct.error) as exc:
+        blockers.append(f"cannot inspect DT_VERDEF: {exc}")
+        return {}
+    return definitions
+
+
 def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     report: dict[str, Any] = {
         "source": source, "elf_class": "unknown", "machine": None,
         "machine_name": "unknown", "type": "unknown", "soname": None,
-        "needed": [], "relocation_counts": {}, "unsupported_relocations": {},
+        "needed": [], "imports": [], "exports": [],
+        "relocation_counts": {}, "unsupported_relocations": {},
         "versioned_symbols": 0, "versioned_relocations": 0,
         "tls_symbols": 0, "ifunc_symbols": 0, "has_tls_segment": False,
         "has_android_packed_rela": False, "has_relr": False,
@@ -283,6 +416,8 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
         )
 
     tags = image.dynamic_tags(blockers)
+    required_versions = version_requirements(image, tags, blockers)
+    defined_versions = version_definitions(image, tags, blockers)
     soname_offset = first_tag(tags, DT_SONAME, blockers, "DT_SONAME")
     if soname_offset is not None:
         report["soname"] = dynamic_string(image, tags, soname_offset, blockers)
@@ -442,29 +577,40 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
                 report["versioned_symbols"] = sum(
                     1 for version in version_indices if (version & 0x7FFF) > 1
                 )
+
             symbol_types: list[int] = []
+            symbol_rows: list[tuple[str, int, int, int, int, int]] = []
             for index in range(symbol_count):
-                _name, info, _other, _shndx, _value, _size = struct.unpack_from(
-                    "<IBBHQQ", data, symtab_offset + index * 24
+                name_offset, info, other, section_index, value, size = (
+                    struct.unpack_from("<IBBHQQ", data, symtab_offset + index * 24)
                 )
                 symbol_type = info & 0xF
                 symbol_types.append(symbol_type)
+                symbol_rows.append(
+                    (dynamic_string(image, tags, name_offset, blockers) or "",
+                     info >> 4, other & 0x3, section_index, value, size)
+                )
                 if symbol_type == STT_TLS:
                     report["tls_symbols"] += 1
                 if symbol_type == STT_GNU_IFUNC:
                     report["ifunc_symbols"] += 1
-            used_symbols = {index for _typ, index in relocations if index < len(symbol_types) and index != 0}
+
+            used_symbols = {
+                symbol_index for _typ, symbol_index in relocations
+                if 0 < symbol_index < len(symbol_types)
+            }
             tls_relocation_types = {1028, 1029, 1030, 1031}
             if any(symbol_types[symbol_index] == STT_TLS and
                    relocation_type not in tls_relocation_types
                    for relocation_type, symbol_index in relocations
-                   if symbol_index < len(symbol_types) and symbol_index != 0):
+                   if 0 < symbol_index < len(symbol_types)):
                 blockers.append(
                     "a TLS symbol is referenced by a relocation outside the supported "
                     "DTPMOD64/DTPREL64/TPREL64/TLSDESC subset"
                 )
             if any(symbol_types[index] == STT_GNU_IFUNC for index in used_symbols):
                 blockers.append("a dynamic relocation references a GNU IFUNC symbol")
+
             if version_indices is not None:
                 report["versioned_relocations"] = sum(
                     1 for _typ, index in relocations
@@ -476,6 +622,68 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
                         "versioned relocations are matched by exact GNU version/provider; "
                         "validate default-version interposition against the target Android libraries"
                     )
+
+            seen_imports: set[tuple[str, str, str]] = set()
+            for symbol_index in sorted(used_symbols):
+                name, binding, visibility, section_index, _value, _size = symbol_rows[symbol_index]
+                if section_index != 0 or not name or binding not in {1, 2, 10} or visibility not in {0, 3}:
+                    continue
+                version_name = ""
+                provider = ""
+                version_index = 0
+                if version_indices is not None:
+                    version_index = version_indices[symbol_index] & 0x7FFF
+                    if version_index > 1:
+                        required = required_versions.get(version_index)
+                        if required is None:
+                            blockers.append(
+                                f"undefined symbol {name} references a missing DT_VERNEED index {version_index}"
+                            )
+                        else:
+                            version_name = required["version"]
+                            provider = required["provider"]
+                identity = (name, version_name, provider)
+                if identity in seen_imports:
+                    continue
+                seen_imports.add(identity)
+                report["imports"].append({
+                    "name": name,
+                    "version": version_name,
+                    "provider": provider,
+                    "binding": "WEAK" if binding == 2 else ("GNU_UNIQUE" if binding == 10 else "GLOBAL"),
+                    "tls": symbol_types[symbol_index] == STT_TLS,
+                })
+
+            seen_exports: set[tuple[str, str, bool]] = set()
+            for symbol_index, row in enumerate(symbol_rows):
+                name, binding, visibility, section_index, _value, _size = row
+                if section_index in {0, 0xFFF2, 0xFFFF} or not name:
+                    continue
+                if binding not in {1, 2, 10} or visibility not in {0, 3}:
+                    continue
+                version_name = ""
+                hidden = False
+                if version_indices is not None:
+                    raw_version = version_indices[symbol_index]
+                    version_index = raw_version & 0x7FFF
+                    hidden = bool(raw_version & 0x8000)
+                    if version_index > 1:
+                        version_name = defined_versions.get(version_index, "")
+                        if not version_name:
+                            blockers.append(
+                                f"defined symbol {name} references a missing DT_VERDEF index {version_index}"
+                            )
+                identity = (name, version_name, hidden)
+                if identity in seen_exports:
+                    continue
+                seen_exports.add(identity)
+                report["exports"].append({
+                    "name": name,
+                    "version": version_name,
+                    "version_hidden": hidden,
+                    "binding": "WEAK" if binding == 2 else ("GNU_UNIQUE" if binding == 10 else "GLOBAL"),
+                    "tls": symbol_types[symbol_index] == STT_TLS,
+                })
         except (AuditError, struct.error) as exc:
             blockers.append(f"cannot inspect dynamic symbol table: {exc}")
 
@@ -484,6 +692,134 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
         image.dynamic_segment is not None and not blockers
     )
     return report
+
+
+
+def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Resolve in-package dependencies/symbols and expose platform API gaps."""
+    aliases: dict[str, list[dict[str, Any]]] = {}
+    for report in reports:
+        source_path = report.get("source", "")
+        basename = PurePosixPath(source_path.replace("!", "/")).name
+        for alias in {report.get("soname") or "", basename}:
+            if alias:
+                aliases.setdefault(alias, []).append(report)
+
+    soname_conflicts = []
+    for alias, candidates in sorted(aliases.items()):
+        distinct_sources = sorted({item.get("source", "") for item in candidates})
+        if len(distinct_sources) > 1 and alias in {item.get("soname") for item in candidates}:
+            soname_conflicts.append({"soname": alias, "sources": distinct_sources})
+
+    missing_dependencies = []
+    external_platform_dependencies = []
+    unresolved_package_symbols = []
+    platform_symbol_requirements = []
+    unresolved_symbols = []
+
+    for report in reports:
+        source = report.get("source", "")
+        needed = report.get("needed", [])
+        for dependency in needed:
+            if dependency in aliases:
+                continue
+            if dependency in ANDROID_PLATFORM_LIBRARIES:
+                external_platform_dependencies.append({
+                    "source": source, "dependency": dependency
+                })
+            else:
+                missing_dependencies.append({
+                    "source": source, "dependency": dependency
+                })
+
+        for item in report.get("imports", []):
+            name = item.get("name", "")
+            version = item.get("version", "")
+            provider = item.get("provider", "")
+            # Versioned imports have an explicit provider from DT_VERNEED.
+            # For unversioned imports, search only this object's DT_NEEDED
+            # closure first; it is unsafe to assume every global export wins.
+            if provider:
+                provider_names = [provider]
+            else:
+                provider_names = needed
+            package_providers = []
+            external_providers = []
+            for provider_name in provider_names:
+                candidates = aliases.get(provider_name, [])
+                if candidates:
+                    package_providers.extend(candidates)
+                elif provider_name in ANDROID_PLATFORM_LIBRARIES:
+                    external_providers.append(provider_name)
+
+            matched = False
+            if package_providers:
+                for candidate in package_providers:
+                    for export in candidate.get("exports", []):
+                        if export.get("name") != name:
+                            continue
+                        if version:
+                            if export.get("version") == version:
+                                matched = True
+                                break
+                        elif not export.get("version") or not export.get("version_hidden"):
+                            matched = True
+                            break
+                    if matched:
+                        break
+                if not matched:
+                    unresolved_package_symbols.append({
+                        "source": source, "symbol": name,
+                        "version": version, "provider": provider or provider_names,
+                    })
+                    continue
+
+            if matched:
+                continue
+
+            if name in PROTOTYPE_HOST_CALLS:
+                # The smoke runtime can satisfy this symbol through a guest SVC
+                # thunk. It does not imply the application's whole API is ready.
+                continue
+
+            if external_providers or any(dep in ANDROID_PLATFORM_LIBRARIES for dep in needed):
+                platform_symbol_requirements.append({
+                    "source": source, "symbol": name, "version": version,
+                    "provider": provider or (external_providers[0] if external_providers else ""),
+                    "prototype_host_call": False,
+                })
+            else:
+                unresolved_symbols.append({
+                    "source": source, "symbol": name, "version": version,
+                    "provider": provider,
+                })
+
+    deduplicate = lambda items: [dict(t) for t in {
+        tuple(sorted(item.items())) for item in items
+    }]
+    missing_dependencies = deduplicate(missing_dependencies)
+    external_platform_dependencies = deduplicate(external_platform_dependencies)
+    unresolved_package_symbols = deduplicate(unresolved_package_symbols)
+    platform_symbol_requirements = deduplicate(platform_symbol_requirements)
+    unresolved_symbols = deduplicate(unresolved_symbols)
+
+    return {
+        "library_count": len(reports),
+        "soname_conflicts": soname_conflicts,
+        "missing_package_dependencies": missing_dependencies,
+        "external_platform_dependencies": external_platform_dependencies,
+        "unresolved_package_symbols": unresolved_package_symbols,
+        "platform_symbol_requirements": platform_symbol_requirements,
+        "unclassified_unresolved_symbols": unresolved_symbols,
+        "prototype_host_call_symbols": sorted(PROTOTYPE_HOST_CALLS),
+        "ready_to_launch": False,
+        "runtime_gaps": [
+            "static audit does not prove Android/Bionic startup or JNI compatibility",
+            "platform imports are reported as requirements and are not automatically implemented",
+            "guest threading, Android services, graphics, input/audio and process lifecycle remain separate runtime work",
+        ],
+    }
+
 
 
 def member_is_arm64_library(name: str) -> bool:
@@ -589,6 +925,26 @@ def print_human(reports: list[dict[str, Any]], errors: list[str]) -> None:
             print(f"  BLOCKER:   {blocker}")
         for gap in report["runtime_gaps"]:
             print(f"  GAP:       {gap}")
+    catalog = audit_catalog(reports)
+    print("\nPackage dependency/API summary")
+    print(f"  ARM64 libraries: {catalog['library_count']}")
+    print(f"  Missing package dependencies: {len(catalog['missing_package_dependencies'])}")
+    print(f"  Unresolved package symbols: {len(catalog['unresolved_package_symbols'])}")
+    print(f"  Platform symbol requirements not covered by prototype thunks: {len(catalog['platform_symbol_requirements'])}")
+    print(f"  Unclassified unresolved symbols: {len(catalog['unclassified_unresolved_symbols'])}")
+    for item in catalog["soname_conflicts"]:
+        print(f"  SONAME CONFLICT: {item['soname']}: {', '.join(item['sources'])}")
+    for item in catalog["missing_package_dependencies"][:50]:
+        print(f"  MISSING DEP: {item['source']}: {item['dependency']}")
+    for item in catalog["unresolved_package_symbols"][:50]:
+        suffix = f"@{item['version']}" if item["version"] else ""
+        print(f"  PACKAGE SYMBOL GAP: {item['source']}: {item['symbol']}{suffix}")
+    for item in catalog["platform_symbol_requirements"][:50]:
+        suffix = f"@{item['version']}" if item["version"] else ""
+        provider = f" from {item['provider']}" if item["provider"] else ""
+        print(f"  PLATFORM API GAP: {item['source']}: {item['symbol']}{suffix}{provider}")
+    for item in catalog["unclassified_unresolved_symbols"][:50]:
+        print(f"  UNRESOLVED SYMBOL: {item['source']}: {item['symbol']}")
     for error in errors:
         print(f"\nERROR: {error}")
 
@@ -601,12 +957,19 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(argv)
     inputs, errors = collect_inputs(args.paths)
     reports = [audit_elf(data, source) for source, data in inputs]
+    catalog = audit_catalog(reports)
     if args.json:
-        print(json.dumps({"reports": reports, "errors": errors}, indent=2))
+        print(json.dumps({"reports": reports, "catalog": catalog, "errors": errors}, indent=2))
     else:
         print_human(reports, errors)
     blocked = any(report["prototype_loader_blockers"] for report in reports)
-    return 2 if not reports or errors or (args.strict and blocked) else 0
+    catalog_blocked = bool(
+        catalog["missing_package_dependencies"] or
+        catalog["soname_conflicts"] or
+        catalog["unresolved_package_symbols"] or
+        catalog["unclassified_unresolved_symbols"]
+    )
+    return 2 if not reports or errors or (args.strict and (blocked or catalog_blocked)) else 0
 
 
 if __name__ == "__main__":
