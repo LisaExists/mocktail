@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include "translation/a64_guest_runtime.h"
+#include "translation/a64_guest_memory.h"
+#include "translation/a64_guest_jni.h"
 
 #include <cstdint>
 #include <fstream>
@@ -35,6 +37,7 @@ void Check(bool condition, const std::string& label, int* failures) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  using mocktail::translation::A64GuestJniBridge;
   using mocktail::translation::A64GuestModuleSource;
   using mocktail::translation::A64GuestRuntime;
   using mocktail::translation::A64GuestRuntimeOptions;
