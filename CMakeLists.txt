@@ -584,6 +584,18 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 --call guest_exported_entry --arg0 41
                 "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
                 "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
+      find_program(MOCKTAIL_A64_PYTHON_EXECUTABLE NAMES python3)
+      if(MOCKTAIL_A64_PYTHON_EXECUTABLE)
+        add_test(NAME RobloxArmTranslation.ApkProbeIntegration
+          COMMAND "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
+                  "${CMAKE_SOURCE_DIR}/tests/translation/a64_apk_probe_integration.py"
+                  "$<TARGET_FILE:mocktail_a64_guest_probe>"
+                  "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+                  "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+                  "${CMAKE_SOURCE_DIR}/tools/mocktail-a64-apk-probe.py")
+        set_tests_properties(RobloxArmTranslation.ApkProbeIntegration
+          PROPERTIES TIMEOUT 45)
+      endif()
     endif()
   endif()
 
