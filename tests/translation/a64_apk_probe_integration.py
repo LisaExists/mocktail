@@ -33,10 +33,10 @@ def run_probe(command: list[str], expected: tuple[str, ...], label: str) -> bool
 
 
 def main() -> int:
-    if len(sys.argv) not in (5, 6, 7):
+    if len(sys.argv) not in (5, 6, 7, 8):
         print(
             "usage: a64_apk_probe_integration.py PROBE ROOT_ELF DEP_ELF WRAPPER "
-            "[ANDROID_STYLE_ELF [ANDROID_JNI_ELF]]",
+            "[ANDROID_STYLE_ELF [ANDROID_JNI_ELF [ANDROID_DL_ELF]]]",
             file=sys.stderr,
         )
         return 2
@@ -47,12 +47,15 @@ def main() -> int:
     wrapper = Path(sys.argv[4]).resolve()
     android_style_elf = Path(sys.argv[5]).resolve() if len(sys.argv) >= 6 else None
     android_jni_elf = Path(sys.argv[6]).resolve() if len(sys.argv) >= 7 else None
+    android_dl_elf = Path(sys.argv[7]).resolve() if len(sys.argv) >= 8 else None
 
     inputs = [probe, root_elf, dependency_elf, wrapper]
     if android_style_elf is not None:
         inputs.append(android_style_elf)
     if android_jni_elf is not None:
         inputs.append(android_jni_elf)
+    if android_dl_elf is not None:
+        inputs.append(android_dl_elf)
     for path in inputs:
         if not path.is_file():
             print(f"required probe fixture does not exist: {path}", file=sys.stderr)
@@ -187,6 +190,29 @@ def main() -> int:
                     "Guest JNI native com/mocktail/Smoke.nativeSum(II)I returned X0=0x2a (42)",
                 ),
                 "registered JNI native invoked from an APK with AArch64 ABI arguments",
+            )
+
+        if android_dl_elf is not None:
+            dl_apk = temp_dir / "synthetic-android-dl.apk"
+            with zipfile.ZipFile(
+                dl_apk, "w", compression=zipfile.ZIP_DEFLATED
+            ) as apk:
+                apk.write(android_dl_elf, f"lib/arm64-v8a/{android_dl_elf.name}")
+            dl_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_dl_elf.name,
+                "--call", "guest_dlopen_smoke",
+                "--budget", "10000",
+                str(dl_apk),
+            ]
+            ok &= run_probe(
+                dl_command,
+                (
+                    "Prepared 1 ARM64 library/libraries",
+                    "Guest call guest_dlopen_smoke returned X0=0x2a (42)",
+                ),
+                "Android APK exercised preloaded-only dlopen/dlsym/dlclose/dlerror through guest SVC thunks",
             )
 
     return 0 if ok else 1
