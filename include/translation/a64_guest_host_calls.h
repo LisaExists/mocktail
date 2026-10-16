@@ -45,6 +45,10 @@ class A64GuestHostCalls final {
   explicit A64GuestHostCalls(
       A64GuestMemory& memory,
       std::uint64_t stub_base = kDefaultStubBase) noexcept;
+  ~A64GuestHostCalls() noexcept;
+
+  A64GuestHostCalls(const A64GuestHostCalls&) = delete;
+  A64GuestHostCalls& operator=(const A64GuestHostCalls&) = delete;
 
   bool Register(std::string name, std::string provider, std::string version,
                 Handler handler, std::string* error = nullptr);
@@ -85,6 +89,7 @@ class A64GuestHostCalls final {
 
   A64GuestMemory& memory_;
   std::uint64_t stub_base_;
+  std::uint64_t errno_address_ = 0;
   mutable std::mutex mutex_;
   std::vector<Export> exports_;
   std::map<std::uint64_t, std::size_t> allocations_;
