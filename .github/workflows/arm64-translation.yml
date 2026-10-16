@@ -79,7 +79,8 @@ jobs:
             build-translation-ci/libmocktail-a64-module-function-root.so \
             build-translation-ci/mocktail-a64-guest-init.so \
             build-translation-ci/mocktail-a64-guest-tls.so \
-            build-translation-ci/mocktail-a64-guest-tlsdesc.so
+            build-translation-ci/mocktail-a64-guest-tlsdesc.so \
+            build-translation-ci/mocktail-a64-guest-tls-get-addr.so
 
       - name: Run translation and preflight tests
         run: |
