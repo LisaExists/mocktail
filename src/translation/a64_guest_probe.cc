@@ -78,6 +78,8 @@ void PrintUsage(const char* program) {
       << "  --root NAME             Root library basename (for example "
          "libroblox.so)\n"
       << "  --list-exports          Print exports from every loaded module\n"
+      << "  --external-dependency SONAME\n"
+      << "                          Allow an absent dependency name; does not provide its symbols\n"
       << "  --call SYMBOL           Explicitly execute an exported guest symbol\n"
       << "  --arg0 VALUE ...        Set AAPCS64 argument register X0 (through "
          "--arg7 / X7)\n"
