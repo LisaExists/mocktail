@@ -276,6 +276,14 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_guest_runtime
   )
 
+  add_executable(mocktail_a64_guest_probe
+    src/translation/a64_guest_probe.cc
+  )
+  target_link_libraries(mocktail_a64_guest_probe PRIVATE
+    mocktail_a64_guest_runtime
+  )
+  mocktail_apply_compile_options(mocktail_a64_guest_probe)
+
   add_executable(mocktail_a64_linux_syscalls_test
     tests/translation/a64_linux_syscalls_test.cc
   )
@@ -503,6 +511,9 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     add_dependencies(mocktail_a64_guest_runtime_test
       mocktail_a64_guest_module_fixtures
       mocktail_a64_guest_elf_fixture)
+    add_dependencies(mocktail_a64_guest_probe
+      mocktail_a64_guest_module_fixtures
+      mocktail_a64_guest_elf_fixture)
     add_dependencies(mocktail_a64_translation_smoke
       mocktail_a64_guest_elf_fixture
       mocktail_a64_guest_module_fixtures)
@@ -567,6 +578,12 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       add_test(NAME RobloxArmTranslation.GuestRuntimeInitializer
         COMMAND $<TARGET_FILE:mocktail_a64_guest_runtime_test>
                 --initializers "${MOCKTAIL_A64_INIT_FIXTURE}")
+      add_test(NAME RobloxArmTranslation.GuestProbeSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_probe>
+                --root libmocktail-a64-module-function-root.so
+                --call guest_exported_entry --arg0 41
+                "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+                "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
     endif()
   endif()
 
