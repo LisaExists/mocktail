@@ -5,7 +5,7 @@
 // Android headers or a sysroot. Its only imports are function pointers obtained
 // from the JavaVM/JNIEnv tables supplied by the experimental guest bridge.
 
-#include <stdint.h>
+typedef int int32_t;  // AArch64 Android ABI uses a 32-bit int.
 
 struct JavaVM_ {
   const void *functions;
