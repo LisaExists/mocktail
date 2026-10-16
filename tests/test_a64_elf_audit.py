@@ -204,6 +204,49 @@ class ELFReportTests(unittest.TestCase):
             for item in catalog["platform_symbol_requirements"]
         ))
 
+    def test_catalogue_follows_transitive_needed_edges(self):
+        android_bridge = {
+            "source": "libbridge.so", "soname": "libbridge.so",
+            "needed": ["libc.so"], "imports": [], "exports": [],
+        }
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libbridge.so"],
+            "imports": [{"name": "open", "version": "", "provider": "",
+                         "binding": "GLOBAL", "tls": False}],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer, android_bridge])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertTrue(any(item["symbol"] == "open"
+                            for item in catalog["platform_symbol_requirements"]))
+        closure = next(item for item in catalog["dependency_closures"]
+                       if item["source"] == "libconsumer.so")
+        self.assertEqual(closure["package_dependencies"], ["libbridge.so"])
+        self.assertEqual(closure["platform_dependencies"], ["libc.so"])
+
+    def test_transitive_package_export_satisfies_import(self):
+        provider = {
+            "source": "libprovider.so", "soname": "libprovider.so",
+            "needed": [], "imports": [],
+            "exports": [{"name": "deep_symbol", "version": "",
+                         "version_hidden": False}],
+        }
+        bridge = {
+            "source": "libbridge.so", "soname": "libbridge.so",
+            "needed": ["libprovider.so"], "imports": [], "exports": [],
+        }
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libbridge.so"],
+            "imports": [{"name": "deep_symbol", "version": "", "provider": "",
+                         "binding": "GLOBAL", "tls": False}],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer, bridge, provider])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["unclassified_unresolved_symbols"], [])
+
     def test_catalogue_reports_missing_dependency_and_ambiguous_soname(self):
         one = {"source": "split1/libsame.so", "soname": "libsame.so",
                "needed": ["libnotbundled.so"], "imports": [], "exports": []}

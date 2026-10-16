@@ -699,7 +699,7 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
 
 
 def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
-    """Resolve in-package dependencies/symbols and expose platform API gaps."""
+    """Resolve package dependency closures and expose remaining platform API gaps."""
     aliases: dict[str, list[dict[str, Any]]] = {}
     for report in reports:
         source_path = report.get("source", "")
@@ -714,12 +714,42 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
         if len(distinct_sources) > 1 and alias in {item.get("soname") for item in candidates}:
             soname_conflicts.append({"soname": alias, "sources": distinct_sources})
 
+    def dependency_scope(root: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+        """Return package libraries and platform libraries reachable from root."""
+        package_scope: list[dict[str, Any]] = []
+        platform_scope: list[str] = []
+        queue = list(root.get("needed", []))
+        seen_names: set[str] = set()
+        seen_sources = {root.get("source", "")}
+        cursor = 0
+        while cursor < len(queue):
+            dependency = queue[cursor]
+            cursor += 1
+            if dependency in seen_names:
+                continue
+            seen_names.add(dependency)
+            candidates = aliases.get(dependency, [])
+            if candidates:
+                for candidate in candidates:
+                    candidate_source = candidate.get("source", "")
+                    if candidate_source in seen_sources:
+                        continue
+                    seen_sources.add(candidate_source)
+                    package_scope.append(candidate)
+                    queue.extend(candidate.get("needed", []))
+            elif dependency in ANDROID_PLATFORM_LIBRARIES:
+                platform_scope.append(dependency)
+        return package_scope, platform_scope
+
     missing_dependencies = []
     external_platform_dependencies = []
     unresolved_package_symbols = []
     platform_symbol_requirements = []
     unresolved_symbols = []
+    dependency_closures = []
 
+    # Dependency diagnostics cover every supplied library, not just the root's
+    # reachable closure, so an incomplete split package cannot hide an orphan.
     for report in reports:
         source = report.get("source", "")
         needed = report.get("needed", [])
@@ -735,70 +765,79 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     "source": source, "dependency": dependency
                 })
 
+        package_scope, platform_scope = dependency_scope(report)
+        dependency_closures.append({
+            "source": source,
+            "package_dependencies": [
+                item.get("soname") or PurePosixPath(
+                    item.get("source", "").replace("!", "/")
+                ).name for item in package_scope
+            ],
+            "platform_dependencies": platform_scope,
+        })
+
         for item in report.get("imports", []):
             name = item.get("name", "")
             version = item.get("version", "")
             provider = item.get("provider", "")
-            # Versioned imports have an explicit provider from DT_VERNEED.
-            # For unversioned imports, search only this object's DT_NEEDED
-            # closure first; it is unsafe to assume every global export wins.
+
             if provider:
                 provider_names = [provider]
+                package_providers = list(aliases.get(provider, []))
+                external_providers = (
+                    [] if package_providers or provider not in ANDROID_PLATFORM_LIBRARIES
+                    else [provider]
+                )
             else:
                 provider_names = needed
-            package_providers = []
-            external_providers = []
-            for provider_name in provider_names:
-                candidates = aliases.get(provider_name, [])
-                if candidates:
-                    package_providers.extend(candidates)
-                elif provider_name in ANDROID_PLATFORM_LIBRARIES:
-                    external_providers.append(provider_name)
+                package_providers = package_scope
+                external_providers = platform_scope
 
             matched = False
-            if package_providers:
-                for candidate in package_providers:
-                    for export in candidate.get("exports", []):
-                        if export.get("name") != name:
-                            continue
-                        if version:
-                            if export.get("version") == version:
-                                matched = True
-                                break
-                        elif not export.get("version") or not export.get("version_hidden"):
+            for candidate in package_providers:
+                for export in candidate.get("exports", []):
+                    if export.get("name") != name:
+                        continue
+                    if version:
+                        if export.get("version") == version:
                             matched = True
                             break
-                    if matched:
+                    elif not export.get("version") or not export.get("version_hidden"):
+                        matched = True
                         break
-                if not matched:
-                    if external_providers:
-                        platform_symbol_requirements.append({
-                            "source": source, "symbol": name, "version": version,
-                            "provider": provider or external_providers[0],
-                            "prototype_host_call": False,
-                            "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
-                            "versioned_host_call_needs_registration":
-                                bool(version and name in PROTOTYPE_HOST_CALLS),
-                        })
-                    else:
-                        unresolved_package_symbols.append({
-                            "source": source, "symbol": name,
-                            "version": version, "provider": provider or provider_names,
-                        })
-                    continue
-
+                if matched:
+                    break
             if matched:
                 continue
 
+            # Only unversioned imports can use the prototype's current generic
+            # host-call table. A named export in an arbitrary dependency must
+            # not mask that known thunk coverage, nor satisfy a versioned import.
             if name in PROTOTYPE_HOST_CALLS and not version:
-                # The current host-call table exports unversioned thunks only.
-                # A version requirement must be registered explicitly.
                 continue
 
-            if external_providers or any(dep in ANDROID_PLATFORM_LIBRARIES for dep in needed):
+            provider_description: Any = provider or provider_names
+            if package_providers:
+                if external_providers:
+                    platform_symbol_requirements.append({
+                        "source": source, "symbol": name, "version": version,
+                        "provider": provider or external_providers[0],
+                        "prototype_host_call": False,
+                        "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
+                        "versioned_host_call_needs_registration":
+                            bool(version and name in PROTOTYPE_HOST_CALLS),
+                    })
+                else:
+                    unresolved_package_symbols.append({
+                        "source": source, "symbol": name,
+                        "version": version, "provider": provider_description,
+                    })
+                continue
+
+            if external_providers:
                 platform_symbol_requirements.append({
                     "source": source, "symbol": name, "version": version,
-                    "provider": provider or (external_providers[0] if external_providers else ""),
+                    "provider": provider or external_providers[0],
                     "prototype_host_call": False,
                     "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
                     "versioned_host_call_needs_registration":
@@ -823,10 +862,12 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
     unresolved_package_symbols = deduplicate(unresolved_package_symbols)
     platform_symbol_requirements = deduplicate(platform_symbol_requirements)
     unresolved_symbols = deduplicate(unresolved_symbols)
+    dependency_closures = deduplicate(dependency_closures)
 
     return {
         "library_count": len(reports),
         "soname_conflicts": soname_conflicts,
+        "dependency_closures": dependency_closures,
         "missing_package_dependencies": missing_dependencies,
         "external_platform_dependencies": external_platform_dependencies,
         "unresolved_package_symbols": unresolved_package_symbols,
@@ -840,7 +881,6 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
             "guest threading, Android services, graphics, input/audio and process lifecycle remain separate runtime work",
         ],
     }
-
 
 
 def member_is_arm64_library(name: str) -> bool:
