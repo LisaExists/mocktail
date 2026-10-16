@@ -70,9 +70,11 @@ class ApkProbeInputTests(unittest.TestCase):
                 Path(directory) / "one.apk",
                 {"lib/arm64-v8a/libsame.so": elf_header(183)},
             )
+            different_guest_elf = bytearray(elf_header(183))
+            different_guest_elf[40] = 1
             second = self.make_apk(
                 Path(directory) / "two.apk",
-                {"lib/arm64-v8a/libsame.so": elf_header(183, byte_order=2)},
+                {"lib/arm64-v8a/libsame.so": bytes(different_guest_elf)},
             )
             with self.assertRaisesRegex(ValueError, "multiple different ARM64 libraries"):
                 MODULE.collect_apk_libraries([first, second], [])
