@@ -33,10 +33,10 @@ def run_probe(command: list[str], expected: tuple[str, ...], label: str) -> bool
 
 
 def main() -> int:
-    if len(sys.argv) not in (5, 6):
+    if len(sys.argv) not in (5, 6, 7):
         print(
             "usage: a64_apk_probe_integration.py PROBE ROOT_ELF DEP_ELF WRAPPER "
-            "[ANDROID_STYLE_ELF]",
+            "[ANDROID_STYLE_ELF [ANDROID_JNI_ELF]]",
             file=sys.stderr,
         )
         return 2
@@ -45,11 +45,14 @@ def main() -> int:
     root_elf = Path(sys.argv[2]).resolve()
     dependency_elf = Path(sys.argv[3]).resolve()
     wrapper = Path(sys.argv[4]).resolve()
-    android_style_elf = Path(sys.argv[5]).resolve() if len(sys.argv) == 6 else None
+    android_style_elf = Path(sys.argv[5]).resolve() if len(sys.argv) >= 6 else None
+    android_jni_elf = Path(sys.argv[6]).resolve() if len(sys.argv) >= 7 else None
 
     inputs = [probe, root_elf, dependency_elf, wrapper]
     if android_style_elf is not None:
         inputs.append(android_style_elf)
+    if android_jni_elf is not None:
+        inputs.append(android_jni_elf)
     for path in inputs:
         if not path.is_file():
             print(f"required probe fixture does not exist: {path}", file=sys.stderr)
@@ -140,6 +143,32 @@ def main() -> int:
                 android_command,
                 ("Prepared 1 ARM64 library/libraries", "X0=0x2a", "42"),
                 "Android-targeted APS2/RELR ELF extracted from an APK and executed on x86-64",
+            )
+
+        if android_jni_elf is not None:
+            jni_apk = temp_dir / "synthetic-android-jni.apk"
+            with zipfile.ZipFile(
+                jni_apk, "w", compression=zipfile.ZIP_DEFLATED
+            ) as apk:
+                apk.write(android_jni_elf, f"lib/arm64-v8a/{android_jni_elf.name}")
+            jni_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--jni-onload",
+                "--java-class", "com/mocktail/Smoke",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                jni_command,
+                (
+                    "Prepared 1 ARM64 library/libraries",
+                    "JNI_OnLoad returned X0=0x10006",
+                    "Registered native methods: 1",
+                    "com/mocktail/Smoke.nativeSum(II)I",
+                ),
+                "Android JNI_OnLoad executed from an APK and registered a guest native method",
             )
 
     return 0 if ok else 1
