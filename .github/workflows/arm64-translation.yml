@@ -14,8 +14,10 @@ on:
       - 'tests/translation/**'
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/test_a64_elf_audit.py'
+      - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tools/roblox-arm-preflight.py'
       - 'tools/a64-elf-audit.py'
+      - 'tools/mocktail-a64-apk-probe.py'
       - 'third_party/**'
       - '.gitmodules'
   pull_request:
@@ -31,8 +33,10 @@ on:
       - 'tests/translation/**'
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/test_a64_elf_audit.py'
+      - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tools/roblox-arm-preflight.py'
       - 'tools/a64-elf-audit.py'
+      - 'tools/mocktail-a64-apk-probe.py'
       - 'third_party/**'
       - '.gitmodules'
   workflow_dispatch:
@@ -67,7 +71,7 @@ jobs:
 
       - name: Build loader and Dynarmic tests
         run: |
-          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_linux_syscalls_test mocktail_a64_guest_runtime_test mocktail_a64_translation_smoke
+          cmake --build build-translation-ci --parallel 4 --target mocktail_a64_elf_loader_test mocktail_a64_guest_memory_test mocktail_a64_guest_module_loader_test mocktail_a64_linux_syscalls_test mocktail_a64_guest_runtime_test mocktail_a64_guest_probe mocktail_a64_translation_smoke
 
       - name: Audit linker-generated ARM64 fixtures
         run: |
