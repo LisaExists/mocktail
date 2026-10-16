@@ -248,6 +248,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
 
   add_library(mocktail_a64_guest_runtime STATIC
     src/translation/a64_guest_runtime.cc
+    src/translation/a64_guest_jni.cc
   )
   target_include_directories(mocktail_a64_guest_runtime PUBLIC
     "${CMAKE_SOURCE_DIR}/include"
