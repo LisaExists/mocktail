@@ -613,15 +613,21 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
       find_program(MOCKTAIL_A64_PYTHON_EXECUTABLE NAMES python3)
       if(MOCKTAIL_A64_PYTHON_EXECUTABLE)
+        set(MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS
+          "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
+          "${CMAKE_SOURCE_DIR}/tests/translation/a64_apk_probe_integration.py"
+          "$<TARGET_FILE:mocktail_a64_guest_probe>"
+          "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
+          "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
+          "${CMAKE_SOURCE_DIR}/tools/mocktail-a64-apk-probe.py")
+        if(MOCKTAIL_ANDROID_CLANG_EXECUTABLE)
+          list(APPEND MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS
+            "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
+        endif()
         add_test(NAME RobloxArmTranslation.ApkProbeIntegration
-          COMMAND "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
-                  "${CMAKE_SOURCE_DIR}/tests/translation/a64_apk_probe_integration.py"
-                  "$<TARGET_FILE:mocktail_a64_guest_probe>"
-                  "${MOCKTAIL_A64_MODULE_FUNCTION_ROOT_FIXTURE}"
-                  "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}"
-                  "${CMAKE_SOURCE_DIR}/tools/mocktail-a64-apk-probe.py")
+          COMMAND ${MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS})
         set_tests_properties(RobloxArmTranslation.ApkProbeIntegration
-          PROPERTIES TIMEOUT 45)
+          PROPERTIES TIMEOUT 90)
       endif()
     endif()
     if(MOCKTAIL_ANDROID_CLANG_EXECUTABLE)
