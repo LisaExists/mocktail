@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "translation/a64_guest_module_loader.h"
+#include "translation/a64_guest_jni.h"
 
 namespace mocktail::translation {
 
@@ -31,6 +32,11 @@ struct A64GuestRuntimeOptions final {
   std::size_t max_tls_bytes = 64U * 1024U * 1024U;
   bool register_builtin_libc = true;
   bool run_initializers_on_load = false;
+  bool enable_jni_bridge = true;
+  std::vector<std::string> jni_available_classes = {
+      "java/lang/Object", "java/lang/String", "java/lang/Class",
+      "java/lang/Throwable", "java/lang/RuntimeException",
+      "java/lang/IllegalArgumentException"};
 
   // Called after the built-in libc/TLS exports are registered but before
   // guest SVC stubs are installed. Applications can register explicit JNI,
@@ -92,6 +98,15 @@ class A64GuestRuntime final {
   A64GuestCallResult CallSymbol(const A64SymbolRequest& request,
                                const Arguments& arguments = {},
                                std::uint64_t instruction_budget = 0);
+
+  // Invoke JNI_OnLoad with the guest JavaVM* supplied by this bridge. This
+  // validates the JNI invocation table and can collect RegisterNatives calls,
+  // but it does not instantiate ART or a Java framework.
+  A64GuestCallResult CallJniOnLoad(
+      std::uint64_t instruction_budget = 0);
+  std::uint64_t java_vm_address() const noexcept;
+  std::uint64_t jni_environment_address() const noexcept;
+  std::vector<A64GuestJniNativeRegistration> registered_jni_natives() const;
 
   bool loaded() const noexcept;
   const A64GuestModuleSet* modules() const noexcept;
