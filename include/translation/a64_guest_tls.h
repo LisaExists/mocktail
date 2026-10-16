@@ -58,6 +58,14 @@ class A64GuestTlsRuntime final {
   bool DestroyThread(A64GuestThreadTls* thread,
                      std::string* error = nullptr);
 
+  // Resolves the ELF tls_index used by __tls_get_addr for modules included in
+  // Prepare(). dlopen-style dynamic TLS allocation is not implemented.
+  bool ResolveAddress(const A64GuestThreadTls& thread,
+                      std::uint64_t module_id,
+                      std::uint64_t module_offset,
+                      std::uint64_t* guest_address,
+                      std::string* error = nullptr) const;
+
   bool prepared() const noexcept { return prepared_; }
   std::uint64_t total_tls_size() const noexcept { return total_tls_size_; }
   std::uint64_t maximum_alignment() const noexcept { return maximum_alignment_; }
