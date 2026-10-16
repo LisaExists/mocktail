@@ -331,13 +331,17 @@ class A64GuestRuntime::Impl final {
       return fail("custom guest host-call registration failed: " + diagnostic);
     }
 
+    if (!host_calls_.Install(&diagnostic)) {
+      return fail("failed to install guest host-call stubs: " + diagnostic);
+    }
+
+    // Install assigns guest addresses to registered exports. Resolve the
+    // TLSDESC thunk only afterwards; looking it up before Install() always
+    // returns empty because uninstalled exports have no guest address yet.
     const auto tlsdesc_resolver =
         host_calls_.ResolveSymbol("__mocktail_tlsdesc_static");
     if (!tlsdesc_resolver) {
       return fail("static guest TLSDESC resolver thunk was not registered");
-    }
-    if (!host_calls_.Install(&diagnostic)) {
-      return fail("failed to install guest host-call stubs: " + diagnostic);
     }
 
     auto module_options = options_.module_load;
