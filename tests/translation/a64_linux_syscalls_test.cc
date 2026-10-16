@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -119,6 +120,61 @@ int main() {
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap, invalid_length),
                 EINVAL),
         "mmap rejects a zero length");
+
+  constexpr std::uint64_t kGuestSyscallScratch = 0x500000ULL;
+  std::string memory_error;
+  const bool scratch_mapped = memory.Map(
+      kGuestSyscallScratch, A64GuestMemory::kPageSize,
+      A64GuestMemory::kRead | A64GuestMemory::kWrite, &memory_error);
+  Check(scratch_mapped, "maps scratch memory for guest clock and uname calls");
+  if (scratch_mapped) {
+    const std::array<std::uint64_t, 6> monotonic_clock{
+        1, kGuestSyscallScratch, 0, 0, 0, 0};
+    const auto clock_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kClockGetTime, monotonic_clock);
+    struct GuestTimespec final {
+      std::int64_t seconds;
+      std::int64_t nanoseconds;
+    } guest_time{};
+    const bool read_time =
+        memory.Read(kGuestSyscallScratch, &guest_time, sizeof(guest_time));
+    Check(clock_result.value == 0 && read_time &&
+              guest_time.seconds >= 0 &&
+              guest_time.nanoseconds >= 0 &&
+              guest_time.nanoseconds < 1000000000,
+          "clock_gettime writes a valid AArch64 timespec to guest memory");
+    auto invalid_clock = monotonic_clock;
+    invalid_clock[0] = 10;  // Reserved guest clock ID.
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kClockGetTime,
+                                    invalid_clock), EINVAL),
+          "clock_gettime rejects unsupported guest clock IDs");
+    auto invalid_clock_pointer = monotonic_clock;
+    invalid_clock_pointer[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kClockGetTime,
+                                    invalid_clock_pointer), EFAULT),
+          "clock_gettime rejects an unmapped guest timespec pointer");
+
+    const std::array<std::uint64_t, 6> uname_arguments{
+        kGuestSyscallScratch, 0, 0, 0, 0, 0};
+    const auto uname_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kUname, uname_arguments);
+    char guest_sysname[65]{};
+    char guest_machine[65]{};
+    const bool read_sysname = memory.Read(
+        kGuestSyscallScratch, guest_sysname, sizeof(guest_sysname));
+    const bool read_machine = memory.Read(
+        kGuestSyscallScratch + 4 * 65, guest_machine, sizeof(guest_machine));
+    Check(uname_result.value == 0 && read_sysname && read_machine &&
+              std::string(guest_sysname) == "Linux" &&
+              std::string(guest_machine) == "aarch64",
+          "uname reports Linux and the AArch64 guest architecture");
+    auto invalid_uname = uname_arguments;
+    invalid_uname[0] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kUname, invalid_uname),
+                  EFAULT),
+          "uname rejects an unmapped guest output pointer");
+  }
+
   Check(IsError(syscalls.Dispatch(999999, invalid_length), ENOSYS),
         "unsupported guest syscalls return -ENOSYS");
   const std::array<std::uint64_t, 6> exit_args{7, 0, 0, 0, 0, 0};
