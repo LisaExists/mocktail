@@ -341,6 +341,33 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     mocktail_a64_guest_host_calls_test
     mocktail_a64_guest_tls_test)
 
+  # Clang's Android target triple plus lld lets CI produce a genuine
+  # Android-targeted AArch64 ELF without requiring the full NDK/sysroot.
+  # The fixture has no libc imports; it exercises Android packed relocations.
+  find_program(MOCKTAIL_ANDROID_CLANG_EXECUTABLE NAMES clang)
+  if(MOCKTAIL_ANDROID_CLANG_EXECUTABLE)
+    set(MOCKTAIL_A64_ANDROID_STYLE_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-android-style-smoke.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -fno-stack-protector
+              -Wl,--hash-style=both
+              -Wl,--pack-dyn-relocs=android+relr
+              -Wl,-soname,libmocktail-android-style-smoke.so
+              -o "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_style_smoke.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_style_smoke.c"
+      VERBATIM
+    )
+    add_custom_target(mocktail_a64_android_style_elf_fixture
+      DEPENDS "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
+    add_dependencies(mocktail_a64_guest_probe
+      mocktail_a64_android_style_elf_fixture)
+  endif()
+
   # When an AArch64 cross-compiler is available, build a genuine ET_DYN ELF
   # and execute its instructions through the same loader/JIT path.
   find_program(MOCKTAIL_AARCH64_GCC_EXECUTABLE NAMES aarch64-linux-gnu-gcc)
@@ -596,6 +623,13 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         set_tests_properties(RobloxArmTranslation.ApkProbeIntegration
           PROPERTIES TIMEOUT 45)
       endif()
+    endif()
+    if(MOCKTAIL_ANDROID_CLANG_EXECUTABLE)
+      add_test(NAME RobloxArmTranslation.AndroidStyleElfSmoke
+        COMMAND $<TARGET_FILE:mocktail_a64_guest_probe>
+                --root libmocktail-android-style-smoke.so
+                --call guest_android_abi_smoke --arg0 1 --budget 10000
+                "${MOCKTAIL_A64_ANDROID_STYLE_FIXTURE}")
     endif()
   endif()
 
