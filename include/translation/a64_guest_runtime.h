@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +41,28 @@ struct A64GuestRuntimeOptions final {
       "java/lang/Object", "java/lang/String", "java/lang/Class",
       "java/lang/Throwable", "java/lang/RuntimeException",
       "java/lang/IllegalArgumentException"};
+
+  // Synthetic Android property profile exposed by __system_property_get.
+  // Override these values when probing a specific target profile; this does
+  // not query or leak properties from the x86-64 host operating system.
+  std::map<std::string, std::string> android_system_properties = {
+      {"ro.build.version.sdk", "36"},
+      {"ro.build.version.release", "16"},
+      {"ro.build.version.codename", "REL"},
+      {"ro.product.cpu.abi", "arm64-v8a"},
+      {"ro.product.cpu.abilist", "arm64-v8a"},
+      {"ro.product.cpu.abilist32", ""},
+      {"ro.product.cpu.abilist64", "arm64-v8a"},
+      {"ro.product.manufacturer", "Mocktail"},
+      {"ro.product.model", "Mocktail AArch64 Guest"},
+      {"ro.build.characteristics", "emulator"},
+      {"ro.kernel.qemu", "1"},
+      {"ro.hardware", "mocktail"},
+      {"ro.build.type", "userdebug"},
+      {"ro.build.tags", "test-keys"},
+      {"ro.debuggable", "1"},
+      {"ro.secure", "0"},
+  };
 
   // Called after the built-in libc/TLS exports are registered but before
   // guest SVC stubs are installed. Applications can register explicit JNI,

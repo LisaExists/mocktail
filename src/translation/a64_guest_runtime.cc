@@ -724,6 +724,57 @@ class A64GuestRuntime::Impl final {
     return {true, dl_error_buffer_address_, {}};
   }
 
+  bool RegisterAndroidSystemProperties(std::string* error) {
+    constexpr std::size_t kMaximumPropertyNameBytes = 128;
+    constexpr std::size_t kPropertyValueMax = 92;  // Includes the NUL byte.
+    auto fail = [&](const std::string& message) {
+      if (error != nullptr) *error = message;
+      return false;
+    };
+
+    for (const auto& item : options_.android_system_properties) {
+      if (item.first.empty() ||
+          item.first.size() >= kMaximumPropertyNameBytes ||
+          item.second.size() >= kPropertyValueMax ||
+          item.first.find('\\0') != std::string::npos ||
+          item.second.find('\\0') != std::string::npos) {
+        return fail("synthetic Android property name/value is invalid or too long");
+      }
+    }
+
+    return host_calls_.Register(
+        "__system_property_get", "libc.so", "",
+        [this](const A64GuestHostCalls::Arguments& arguments)
+            -> A64HostCallResult {
+          std::string property_name;
+          std::string diagnostic;
+          if (!ReadBoundedGuestCString(
+                  memory_, arguments[0], 128, &property_name, &diagnostic)) {
+            return {false, 0, "invalid Android property name: " + diagnostic};
+          }
+          if (arguments[1] == 0) {
+            return {false, 0, "__system_property_get received a null value buffer"};
+          }
+
+          // Bionic PROP_VALUE_MAX is 92 bytes including the terminator. The
+          // profile is validated at load time, and missing properties return
+          // an empty string without consulting the host environment.
+          std::string value;
+          const auto found = options_.android_system_properties.find(property_name);
+          if (found != options_.android_system_properties.end()) {
+            value = found->second;
+          }
+          if (value.size() >= 92U) {
+            return {false, 0, "Android property value exceeds PROP_VALUE_MAX"};
+          }
+          if (!memory_.Write(arguments[1], value.c_str(), value.size() + 1U)) {
+            return {false, 0, "__system_property_get value buffer is not writable guest memory"};
+          }
+          return {true, static_cast<std::uint64_t>(value.size()), {}};
+        },
+        error);
+  }
+
   bool RegisterDynamicLinkerApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -795,6 +846,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !host_calls_.RegisterBuiltinLibc(&diagnostic)) {
       return fail("failed to register guest libc thunks: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidSystemProperties(&diagnostic)) {
+      return fail("failed to register synthetic Android properties: " + diagnostic);
     }
     if (!host_calls_.RegisterTlsGetAddr(tls_runtime_, main_thread_tls_,
                                         "libc.so", "", &diagnostic)) {

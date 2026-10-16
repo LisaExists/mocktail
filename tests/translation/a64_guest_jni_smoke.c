@@ -32,6 +32,8 @@ typedef void (*ReleaseStringUTFCharsFunction)(
     struct JNIEnv_ *, void *, const char *);
 typedef unsigned char (*ExceptionCheckFunction)(struct JNIEnv_ *);
 typedef void (*ExceptionClearFunction)(struct JNIEnv_ *);
+typedef int32_t (*SystemPropertyGetFunction)(const char *, char *);
+extern int32_t __system_property_get(const char *, char *);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -86,6 +88,15 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
     return -4;
   }
   if (get_version(env) < 0x00010006) return -5;
+
+  // Android's legacy property ABI must report the synthetic guest profile and
+  // must not leak the host machine's actual properties.
+  char sdk[92] = {0};
+  if (__system_property_get("ro.build.version.sdk", sdk) != 2 ||
+      sdk[0] != '3' || sdk[1] != '6' || sdk[2] != '\\0') return -16;
+  char missing_property[92] = {'x'};
+  if (__system_property_get("ro.mocktail.property_missing", missing_property) != 0 ||
+      missing_property[0] != '\\0') return -17;
 
   // Exercise JNI's modified-UTF string path from actual translated guest code.
   // The fixture uses ASCII so its modified-UTF and UTF-8 byte sequence match.
