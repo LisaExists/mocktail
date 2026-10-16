@@ -15,6 +15,7 @@ on:
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/test_a64_elf_audit.py'
       - 'tools/roblox-arm-preflight.py'
+      - 'tools/a64-elf-audit.py'
       - 'third_party/**'
       - '.gitmodules'
   pull_request:
@@ -31,6 +32,7 @@ on:
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/test_a64_elf_audit.py'
       - 'tools/roblox-arm-preflight.py'
+      - 'tools/a64-elf-audit.py'
       - 'third_party/**'
       - '.gitmodules'
   workflow_dispatch:
