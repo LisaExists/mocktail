@@ -226,6 +226,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--list-exports", action="store_true", help="list loaded ELF exports")
     parser.add_argument("--call", metavar="SYMBOL", help="explicitly execute an exported guest symbol")
     parser.add_argument(
+        "--call-native",
+        nargs=3,
+        metavar=("CLASS", "NAME", "SIGNATURE"),
+        help="run JNI_OnLoad then invoke an exact registered static native method",
+    )
+    parser.add_argument(
         "--jni-onload",
         action="store_true",
         help="call JNI_OnLoad with a guest JavaVM/JNIEnv bridge",
@@ -235,7 +241,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="NAME",
-        help="class available to JNI FindClass when using --jni-onload (repeatable)",
+        help="class available to JNI FindClass when using --jni-onload/--call-native (repeatable)",
     )
     parser.add_argument(
         "--external-dependency",
@@ -244,8 +250,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="SONAME",
         help="allow an absent DT_NEEDED library (repeatable; does not provide its symbols)",
     )
-    parser.add_argument("--run-initializers", action="store_true", help="run guest constructors before --call")
-    parser.add_argument("--budget", type=int, help="instruction budget for --call")
+    parser.add_argument("--run-initializers", action="store_true", help="run guest constructors before the requested entrypoint")
+    parser.add_argument("--budget", type=int, help="instruction budget for guest entrypoint execution")
     parser.add_argument("--memory-mib", type=int, default=1024, help="guest memory limit (16-16384 MiB)")
     for index in range(8):
         parser.add_argument(
@@ -273,15 +279,27 @@ def main(argv: list[str] | None = None) -> int:
     if not 16 <= args.memory_mib <= 16384:
         print("error: --memory-mib must be between 16 and 16384", file=sys.stderr)
         return 2
-    if args.jni_onload and args.call:
-        print("error: --jni-onload cannot be combined with --call", file=sys.stderr)
+    if args.call and args.call_native:
+        print("error: --call and --call-native are mutually exclusive", file=sys.stderr)
         return 2
-    if args.java_class and not args.jni_onload:
-        print("error: --java-class requires --jni-onload", file=sys.stderr)
+    if args.jni_onload and (args.call or args.call_native):
+        print("error: --jni-onload cannot be combined with --call or --call-native", file=sys.stderr)
         return 2
-    if args.run_initializers and not (args.call or args.jni_onload):
-        print("error: --run-initializers requires --call or --jni-onload", file=sys.stderr)
+    if args.java_class and not (args.jni_onload or args.call_native):
+        print("error: --java-class requires --jni-onload or --call-native", file=sys.stderr)
         return 2
+    if args.run_initializers and not (args.call or args.jni_onload or args.call_native):
+        print("error: --run-initializers requires an entrypoint option", file=sys.stderr)
+        return 2
+    if args.call_native:
+        native_class, native_name, native_signature = args.call_native
+        if (
+            not native_class or not native_name or not native_signature
+            or "." in native_class or native_class.startswith("/")
+            or native_class.endswith("/")
+        ):
+            print("error: --call-native requires a JNI slash-form class, method name, and signature", file=sys.stderr)
+            return 2
     for class_name in args.java_class:
         if not class_name or "." in class_name:
             print(
@@ -300,9 +318,21 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-    if any(getattr(args, f"arg{i}") is not None for i in range(8)) and not args.call:
-        print("error: --arg0 through --arg7 require --call", file=sys.stderr)
+    arg_is_set = [getattr(args, f"arg{i}") is not None for i in range(8)]
+    if any(arg_is_set) and not (args.call or args.call_native):
+        print("error: --arg0 through --arg7 require --call or --call-native", file=sys.stderr)
         return 2
+    if args.call_native:
+        gap_seen = False
+        for index, is_set in enumerate(arg_is_set):
+            if index >= 6 and is_set:
+                print("error: --call-native accepts at most six Java arguments (--arg0 through --arg5)", file=sys.stderr)
+                return 2
+            if not is_set:
+                gap_seen = True
+            elif gap_seen:
+                print("error: --call-native arguments must be contiguous starting at --arg0", file=sys.stderr)
+                return 2
 
     try:
         libraries = collect_apk_libraries(args.apks, args.library_dir)
@@ -335,10 +365,12 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--list-exports")
         if args.call:
             command.extend(["--call", args.call])
+        if args.call_native:
+            command.extend(["--call-native", *args.call_native])
         if args.jni_onload:
             command.append("--jni-onload")
-            for class_name in args.java_class:
-                command.extend(["--java-class", class_name])
+        for class_name in args.java_class:
+            command.extend(["--java-class", class_name])
         if args.run_initializers:
             command.append("--run-initializers")
         if args.budget is not None:
