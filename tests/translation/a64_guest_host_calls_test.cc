@@ -82,6 +82,8 @@ int main() {
         "registers a guest-safe preloaded-module __tls_get_addr thunk");
   Check(calls.Install(&error), "installs RX AArch64 SVC/RET thunks");
 
+  const auto errno_stub = calls.ResolveSymbol("__errno");
+  const auto errno_location_stub = calls.ResolveSymbol("__errno_location");
   const auto strlen_stub = calls.ResolveSymbol("strlen");
   const auto strnlen_stub = calls.ResolveSymbol("strnlen");
   const auto strcpy_stub = calls.ResolveSymbol("strcpy");
@@ -96,13 +98,14 @@ int main() {
   const auto malloc_stub = calls.ResolveSymbol("malloc");
   const auto realloc_stub = calls.ResolveSymbol("realloc");
   const auto free_stub = calls.ResolveSymbol("free");
-  Check(strlen_stub && strnlen_stub && strcpy_stub && strncpy_stub &&
-            strchr_stub && strrchr_stub && strstr_stub && strdup_stub &&
-            tls_get_addr_stub && memcpy_stub && strcmp_stub &&
-            malloc_stub && realloc_stub && free_stub,
+  Check(errno_stub && errno_location_stub && strlen_stub &&
+            strnlen_stub && strcpy_stub && strncpy_stub && strchr_stub &&
+            strrchr_stub && strstr_stub && strdup_stub && tls_get_addr_stub &&
+            memcpy_stub && strcmp_stub && malloc_stub && realloc_stub && free_stub,
         "resolves registered symbols to guest stub addresses");
 
-  if (!strlen_stub || !strnlen_stub || !strcpy_stub || !strncpy_stub ||
+  if (!errno_stub || !errno_location_stub || !strlen_stub || !strnlen_stub ||
+      !strcpy_stub || !strncpy_stub ||
       !strchr_stub || !strrchr_stub || !strstr_stub || !strdup_stub ||
       !tls_get_addr_stub || !memcpy_stub || !strcmp_stub ||
       !malloc_stub || !realloc_stub || !free_stub) {
@@ -112,6 +115,32 @@ int main() {
 
   Check(memory.IsExecutable(*strlen_stub, 8),
         "thunks live in executable guest memory");
+
+  arguments = {};
+  const auto errno_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *errno_stub), arguments);
+  std::int32_t guest_errno = -1;
+  const bool read_errno =
+      errno_result.success &&
+      memory.Read(errno_result.value, &guest_errno, sizeof(guest_errno));
+  Check(read_errno && errno_result.value != 0 && guest_errno == 0 &&
+            memory.IsMapped(errno_result.value, sizeof(guest_errno)),
+        "__errno returns a valid, zero-initialized guest errno cell");
+  const std::int32_t expected_errno = 13;
+  Check(memory.Write(errno_result.value, &expected_errno, sizeof(expected_errno)),
+        "guest code can set errno without modifying host thread errno");
+  const auto errno_location_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *errno_location_stub), arguments);
+  guest_errno = 0;
+  Check(errno_location_result.success &&
+            errno_location_result.value == errno_result.value &&
+            memory.Read(errno_location_result.value, &guest_errno, sizeof(guest_errno)) &&
+            guest_errno == expected_errno,
+        "__errno_location shares the persistent guest errno value");
+  const std::int32_t cleared_errno = 0;
+  Check(memory.Write(errno_result.value, &cleared_errno, sizeof(cleared_errno)),
+        "test restores guest errno after exercising the accessor");
+
   Check(!memory.Write(*strlen_stub, "x", 1),
         "thunk pages remain read-only to guest code");
   const auto strlen_svc = ReadSvcImmediate(memory, *strlen_stub);
