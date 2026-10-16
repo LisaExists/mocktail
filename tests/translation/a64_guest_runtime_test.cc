@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include "translation/a64_guest_runtime.h"
+#include "translation/a64_guest_memory.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -87,11 +88,43 @@ int main(int argc, char** argv) {
 
   A64GuestRuntimeOptions options;
   options.instruction_budget = 1U * 1000U * 1000U;
+  // Two guard pages make both the default one-page guard and multi-page
+  // configuration observable in this reusable-runtime integration test.
+  options.stack_guard_pages = 2;
+  const auto guest_stack_base = options.stack_base;
+  const auto guest_stack_size = options.stack_size;
   A64GuestRuntime runtime(std::move(options));
   std::string error;
   if (!runtime.Load(sources, sources.front().name, &error)) {
     return Fail("runtime load failed: " + error);
   }
+
+  const auto* guest_memory = runtime.memory();
+  if (guest_memory == nullptr) {
+    return Fail("runtime did not expose its loaded guest memory");
+  }
+  std::uint8_t guard_probe = 0xA5;
+  const auto lower_guard = guest_stack_base -
+      2U * mocktail::translation::A64GuestMemory::kPageSize;
+  const auto upper_guard = guest_stack_base + guest_stack_size;
+  const bool guards_are_mapped =
+      guest_memory->IsMapped(lower_guard, 1) &&
+      guest_memory->IsMapped(guest_stack_base -
+                                 mocktail::translation::A64GuestMemory::kPageSize,
+                             1) &&
+      guest_memory->IsMapped(upper_guard, 1) &&
+      guest_memory->IsMapped(upper_guard +
+                                 mocktail::translation::A64GuestMemory::kPageSize,
+                             1);
+  const bool guard_access_blocked =
+      !guest_memory->Read(lower_guard, &guard_probe, 1) &&
+      !guest_memory->Write(lower_guard, &guard_probe, 1) &&
+      !guest_memory->Read(upper_guard, &guard_probe, 1) &&
+      !guest_memory->Write(upper_guard, &guard_probe, 1);
+  if (!guards_are_mapped || !guard_access_blocked) {
+    return Fail("guest stack guard pages are not mapped inaccessible ranges");
+  }
+  std::cout << "[PASS] runtime maps configurable no-access guard pages on both sides of the guest stack\n";
 
   if (run_initializers && !runtime.RunInitializers(&error)) {
     return Fail("runtime initializer execution failed: " + error);
