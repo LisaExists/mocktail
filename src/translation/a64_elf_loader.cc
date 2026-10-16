@@ -1460,8 +1460,7 @@ std::string ApplyDynamicMetadataAndRelocations(
   // RELA entries were moved into APS2-packed RELA and/or RELR. Accept that
   // empty placeholder without inventing an absent DT_RELA/DT_RELAENT table.
   const bool empty_rela_placeholder =
-      !metadata.rela_address && metadata.rela_size &&
-      *metadata.rela_size == 0 &&
+      metadata.rela_size && *metadata.rela_size == 0 &&
       (!metadata.rela_entry_size ||
        *metadata.rela_entry_size == sizeof(Elf64_Rela)) &&
       has_alternative_relocation_table;
