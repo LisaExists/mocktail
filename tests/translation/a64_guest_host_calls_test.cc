@@ -84,6 +84,11 @@ int main() {
 
   const auto errno_stub = calls.ResolveSymbol("__errno");
   const auto errno_location_stub = calls.ResolveSymbol("__errno_location");
+  const auto memchr_stub = calls.ResolveSymbol("memchr");
+  const auto strcat_stub = calls.ResolveSymbol("strcat");
+  const auto strncat_stub = calls.ResolveSymbol("strncat");
+  const auto strcasecmp_stub = calls.ResolveSymbol("strcasecmp");
+  const auto strncasecmp_stub = calls.ResolveSymbol("strncasecmp");
   const auto strlen_stub = calls.ResolveSymbol("strlen");
   const auto strnlen_stub = calls.ResolveSymbol("strnlen");
   const auto strcpy_stub = calls.ResolveSymbol("strcpy");
@@ -98,13 +103,16 @@ int main() {
   const auto malloc_stub = calls.ResolveSymbol("malloc");
   const auto realloc_stub = calls.ResolveSymbol("realloc");
   const auto free_stub = calls.ResolveSymbol("free");
-  Check(errno_stub && errno_location_stub && strlen_stub &&
+  Check(errno_stub && errno_location_stub && memchr_stub && strcat_stub &&
+            strncat_stub && strcasecmp_stub && strncasecmp_stub && strlen_stub &&
             strnlen_stub && strcpy_stub && strncpy_stub && strchr_stub &&
             strrchr_stub && strstr_stub && strdup_stub && tls_get_addr_stub &&
             memcpy_stub && strcmp_stub && malloc_stub && realloc_stub && free_stub,
         "resolves registered symbols to guest stub addresses");
 
-  if (!errno_stub || !errno_location_stub || !strlen_stub || !strnlen_stub ||
+  if (!errno_stub || !errno_location_stub || !memchr_stub || !strcat_stub ||
+      !strncat_stub || !strcasecmp_stub || !strncasecmp_stub ||
+      !strlen_stub || !strnlen_stub ||
       !strcpy_stub || !strncpy_stub ||
       !strchr_stub || !strrchr_stub || !strstr_stub || !strdup_stub ||
       !tls_get_addr_stub || !memcpy_stub || !strcmp_stub ||
@@ -184,6 +192,84 @@ int main() {
   Check(!invalid_tls_result.success &&
             invalid_tls_result.error.find("module ID") != std::string::npos,
         "rejects invalid __tls_get_addr module IDs");
+
+  arguments = {};
+  arguments[0] = kSource;
+  arguments[1] = static_cast<std::uint64_t>('l');
+  arguments[2] = sizeof(kMessage);
+  const auto first_byte_search = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *memchr_stub), arguments);
+  Check(first_byte_search.success && first_byte_search.value == kSource + 2,
+        "memchr searches arbitrary bytes without leaving guest memory");
+
+  arguments[1] = static_cast<std::uint64_t>('z');
+  const auto missing_byte_search = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *memchr_stub), arguments);
+  Check(missing_byte_search.success && missing_byte_search.value == 0,
+        "memchr returns null when the byte is absent");
+
+  constexpr std::uint64_t kConcatDestination = kDestination + 0x300;
+  constexpr std::uint64_t kConcatSource = kTestBase + 0x600;
+  constexpr char kConcatInitial[] = "Hello ";
+  constexpr char kConcatSuffix[] = "WORLD";
+  Check(memory.Write(kConcatDestination, kConcatInitial, sizeof(kConcatInitial)) &&
+            memory.Write(kConcatSource, kConcatSuffix, sizeof(kConcatSuffix)),
+        "writes bounded guest strings for concatenation tests");
+  arguments = {};
+  arguments[0] = kConcatDestination;
+  arguments[1] = kConcatSource;
+  const auto concat_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strcat_stub), arguments);
+  constexpr char kConcatExpected[] = "Hello WORLD";
+  std::array<char, sizeof(kConcatExpected)> concat_buffer{};
+  Check(concat_result.success && concat_result.value == kConcatDestination &&
+            memory.Read(kConcatDestination, concat_buffer.data(), concat_buffer.size()) &&
+            std::memcmp(concat_buffer.data(), kConcatExpected, sizeof(kConcatExpected)) == 0,
+        "strcat appends the complete source string in guest memory");
+
+  constexpr std::uint64_t kBoundedConcatDestination = kDestination + 0x400;
+  constexpr char kBoundedConcatInitial[] = "Hello ";
+  constexpr char kBoundedConcatSuffix[] = "worldwide";
+  Check(memory.Write(kBoundedConcatDestination, kBoundedConcatInitial,
+                     sizeof(kBoundedConcatInitial)) &&
+            memory.Write(kConcatSource, kBoundedConcatSuffix,
+                         sizeof(kBoundedConcatSuffix)),
+        "writes guest strings for bounded concatenation");
+  arguments = {};
+  arguments[0] = kBoundedConcatDestination;
+  arguments[1] = kConcatSource;
+  arguments[2] = 5;
+  const auto bounded_concat_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strncat_stub), arguments);
+  constexpr char kBoundedConcatExpected[] = "Hello world";
+  std::array<char, sizeof(kBoundedConcatExpected)> bounded_concat_buffer{};
+  Check(bounded_concat_result.success &&
+            bounded_concat_result.value == kBoundedConcatDestination &&
+            memory.Read(kBoundedConcatDestination, bounded_concat_buffer.data(),
+                        bounded_concat_buffer.size()) &&
+            std::memcmp(bounded_concat_buffer.data(), kBoundedConcatExpected,
+                        sizeof(kBoundedConcatExpected)) == 0,
+        "strncat appends no more than the specified source byte count");
+
+  constexpr std::uint64_t kCaseLeft = kTestBase + 0x700;
+  constexpr std::uint64_t kCaseRight = kTestBase + 0x740;
+  constexpr char kCaseLeftText[] = "Android";
+  constexpr char kCaseRightText[] = "aNDROID";
+  Check(memory.Write(kCaseLeft, kCaseLeftText, sizeof(kCaseLeftText)) &&
+            memory.Write(kCaseRight, kCaseRightText, sizeof(kCaseRightText)),
+        "writes case-comparison strings into guest memory");
+  arguments = {};
+  arguments[0] = kCaseLeft;
+  arguments[1] = kCaseRight;
+  const auto case_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strcasecmp_stub), arguments);
+  Check(case_result.success && case_result.value == 0,
+        "strcasecmp compares ASCII strings without case sensitivity");
+  arguments[2] = 3;
+  const auto bounded_case_result = calls.DispatchSvc(
+      ReadSvcImmediate(memory, *strncasecmp_stub), arguments);
+  Check(bounded_case_result.success && bounded_case_result.value == 0,
+        "strncasecmp respects the caller's prefix bound");
 
   arguments = {};
   arguments[0] = kSource;
