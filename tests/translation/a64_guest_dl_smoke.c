@@ -43,12 +43,21 @@ int guest_dlopen_smoke(void) {
   if (target == (guest_dl_target_fn)0) return -5;
 
   struct DlInfo info = {0};
-  if (dladdr((const void *)target, &info) != 1) return -7;
+  // Unknown addresses are ordinary lookup misses and must not be dereferenced.
+  if (dladdr((const void *)(unsigned long long)0xDEADBEEF, &info) != 0)
+    return -7;
+  // An invalid output pointer must be rejected through guest memory checks.
+  if (dladdr((const void *)target,
+             (struct DlInfo *)(unsigned long long)0xDEADBEEF) != 0)
+    return -8;
+  if (dlerror() == (char *)0 || dlerror() != (char *)0) return -9;
+
+  if (dladdr((const void *)target, &info) != 1) return -10;
   if (info.dli_fname == (const char *)0 ||
       info.dli_fbase == (void *)0 ||
       info.dli_sname == (const char *)0 ||
-      info.dli_saddr != (void *)target) return -8;
-  if (info.dli_fname[0] != 'l' || info.dli_sname[0] != 'g') return -9;
+      info.dli_saddr != (void *)target) return -11;
+  if (info.dli_fname[0] != 'l' || info.dli_sname[0] != 'g') return -12;
 
   const int result = target(41);
   if (dlclose(handle) != 0) return -6;
