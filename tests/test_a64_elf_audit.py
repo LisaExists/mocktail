@@ -71,7 +71,7 @@ class ELFReportTests(unittest.TestCase):
         struct.pack_into("<IIIII", data, 0x540, 1, 2, 1, 0, 0)
         struct.pack_into("<IBBHQQ", data, 0x500 + 24,
                          1, (1 << 4) | MODULE.STT_TLS, 0, 1, 8, 8)
-        data[0x600:0x608] = b"\\x00tlsvar\\x00"
+        data[0x600:0x608] = b"\x00tlsvar\x00"
         report = MODULE.audit_elf(bytes(data))
         self.assertTrue(report["prototype_loader_compatible"])
         self.assertEqual(report["relocation_counts"]["R_AARCH64_TLSDESC"], 1)
