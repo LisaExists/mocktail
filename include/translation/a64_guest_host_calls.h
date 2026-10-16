@@ -19,6 +19,8 @@
 namespace mocktail::translation {
 
 class A64GuestMemory;
+class A64GuestTlsRuntime;
+struct A64GuestThreadTls;
 
 struct A64HostCallResult final {
   bool success = true;
@@ -50,6 +52,13 @@ class A64GuestHostCalls final {
   // Registers a small explicit libc subset with guest-memory-aware wrappers.
   // This deliberately does not expose arbitrary host function pointers.
   bool RegisterBuiltinLibc(std::string* error = nullptr);
+
+  // Registers __tls_get_addr for a prepared, preloaded static TLS set. The
+  // provider/version must match the requested import identity.
+  bool RegisterTlsGetAddr(const A64GuestTlsRuntime& runtime,
+                          const A64GuestThreadTls& thread,
+                          std::string provider, std::string version,
+                          std::string* error = nullptr);
 
   // Reserve/map RX guest stubs after registering all exports. A stub's address
   // is then suitable for an AArch64 dynamic relocation.
