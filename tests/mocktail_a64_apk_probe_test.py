@@ -1,7 +1,10 @@
 import importlib.util
+import os
 import struct
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 import zipfile
 from pathlib import Path
 
@@ -87,6 +90,36 @@ class ApkProbeInputTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "no AArch64 native libraries found"):
                 MODULE.collect_apk_libraries([apk_path], [])
+
+    def test_external_dependency_option_is_forwarded_to_native_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apk_path = self.make_apk(
+                root / "client.apk",
+                {"lib/arm64-v8a/libroot.so": elf_header(183)},
+            )
+            probe = root / "probe"
+            probe.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            probe.chmod(probe.stat().st_mode | 0o111)
+
+            with patch.object(
+                MODULE.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run:
+                result = MODULE.main([
+                    "--probe", str(probe),
+                    "--root", "libroot.so",
+                    "--external-dependency", "libm.so",
+                    str(apk_path),
+                ])
+
+            self.assertEqual(result, 0)
+            command = run.call_args.args[0]
+            self.assertIn("--external-dependency", command)
+            option_index = command.index("--external-dependency")
+            self.assertEqual(command[option_index + 1], "libm.so")
+
 
 
 if __name__ == "__main__":
