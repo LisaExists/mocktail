@@ -61,6 +61,10 @@ class A64GuestJniBridge final {
     return jni_environment_address_;
   }
 
+  // Returns a cached opaque class handle created by FindClass, or zero when
+  // this bridge has not resolved the requested class.
+  std::uint64_t FindClassHandle(const std::string& class_name) const noexcept;
+
   bool pending_exception() const noexcept;
   std::vector<A64GuestJniNativeRegistration> registered_natives() const;
   std::size_t registered_native_count() const noexcept;

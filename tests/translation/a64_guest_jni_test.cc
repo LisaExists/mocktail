@@ -97,15 +97,34 @@ int main(int argc, char** argv) {
         "RegisterNatives records a validated executable guest function", &failures);
 
   if (natives.size() == 1 && natives[0].guest_address != 0) {
-    A64GuestRuntime::Arguments arguments{};
-    arguments[0] = 20;
-    arguments[1] = 22;
-    const auto native_result =
-        runtime.Call(natives[0].guest_address, arguments, 100000);
+    const auto native_result = runtime.CallRegisteredJniNative(
+        "com/mocktail/Smoke", "nativeSum", "(II)I",
+        std::vector<std::uint64_t>{20, 22}, 100000);
     Check(native_result.success && native_result.value == 42,
-          "calls a native method discovered through JNI registration on x86-64",
+          "calls a registered static native with JNIEnv/jclass and Java args in ABI registers",
           &failures);
+    Check(native_result.ticks > 0,
+          "counts guest instructions in the registered native call", &failures);
   }
+
+  const auto missing_native = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "missingNative", "()I",
+      std::vector<std::uint64_t>{}, 100000);
+  Check(!missing_native.success &&
+            missing_native.error.find("not registered") != std::string::npos,
+        "rejects calls to methods absent from RegisterNatives", &failures);
+  const auto wrong_argument_count = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeSum", "(II)I",
+      std::vector<std::uint64_t>{20}, 100000);
+  Check(!wrong_argument_count.success &&
+            wrong_argument_count.error.find("argument count") != std::string::npos,
+        "validates Java argument count against its JNI descriptor", &failures);
+  const auto invalid_signature = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeSum", "(V)I",
+      std::vector<std::uint64_t>{0}, 100000);
+  Check(!invalid_signature.success &&
+            invalid_signature.error.find("descriptor") != std::string::npos,
+        "rejects malformed JNI method descriptors", &failures);
 
   // Unknown classes must fail as a JNI exception/null result, not fabricate a
   // Java class or crash the host. Use a second runtime so pending-exception

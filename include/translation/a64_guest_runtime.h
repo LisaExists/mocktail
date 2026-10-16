@@ -104,6 +104,16 @@ class A64GuestRuntime final {
   // but it does not instantiate ART or a Java framework.
   A64GuestCallResult CallJniOnLoad(
       std::uint64_t instruction_budget = 0);
+
+  // Invokes a method recorded by RegisterNatives using the JNI static-native
+  // ABI (JNIEnv* in X0, jclass in X1, Java arguments in X2-X7). ART, object
+  // construction, and stack-passed JNI arguments are not implemented.
+  A64GuestCallResult CallRegisteredJniNative(
+      const std::string& class_name, const std::string& name,
+      const std::string& signature,
+      const std::vector<std::uint64_t>& java_arguments,
+      std::uint64_t instruction_budget = 0);
+
   std::uint64_t java_vm_address() const noexcept;
   std::uint64_t jni_environment_address() const noexcept;
   bool jni_exception_pending() const noexcept;

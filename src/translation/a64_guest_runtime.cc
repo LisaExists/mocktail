@@ -39,6 +39,80 @@ bool WriteLittleEndian(A64GuestMemory& memory, std::uint64_t address,
   return memory.Write(address, bytes, length);
 }
 
+bool ParseJniTypeDescriptor(const std::string& descriptor,
+                            std::size_t* cursor,
+                            bool allow_void) noexcept {
+  if (cursor == nullptr || *cursor >= descriptor.size()) return false;
+  bool is_array = false;
+  while (*cursor < descriptor.size() && descriptor[*cursor] == '[') {
+    is_array = true;
+    ++*cursor;
+  }
+  if (*cursor >= descriptor.size()) return false;
+
+  const char type = descriptor[*cursor];
+  if (type == 'L') {
+    const auto class_start = ++*cursor;
+    while (*cursor < descriptor.size() && descriptor[*cursor] != ';') {
+      if (descriptor[*cursor] == '[' || descriptor[*cursor] == '.') return false;
+      ++*cursor;
+    }
+    if (*cursor == class_start || *cursor >= descriptor.size()) return false;
+    ++*cursor;
+    return true;
+  }
+
+  switch (type) {
+    case 'Z': case 'B': case 'C': case 'S': case 'I':
+    case 'J': case 'F': case 'D':
+      ++*cursor;
+      return true;
+    case 'V':
+      if (allow_void && !is_array) {
+        ++*cursor;
+        return true;
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+
+bool CountJniParameterTypes(const std::string& signature,
+                            std::size_t* parameter_count,
+                            std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (parameter_count == nullptr || signature.empty() ||
+      signature.front() != '(') {
+    return fail("invalid JNI method descriptor");
+  }
+  std::size_t cursor = 1;
+  std::size_t count = 0;
+  while (cursor < signature.size() && signature[cursor] != ')') {
+    if (!ParseJniTypeDescriptor(signature, &cursor, false)) {
+      return fail("invalid JNI parameter type descriptor");
+    }
+    ++count;
+    if (count > 6) {
+      return fail("JNI methods with more than six register-passed arguments are unsupported");
+    }
+  }
+  if (cursor >= signature.size() || signature[cursor] != ')') {
+    return fail("JNI method descriptor is missing ')'");
+  }
+  ++cursor;
+  if (!ParseJniTypeDescriptor(signature, &cursor, true) ||
+      cursor != signature.size()) {
+    return fail("invalid JNI return type descriptor");
+  }
+  *parameter_count = count;
+  if (error != nullptr) error->clear();
+  return true;
+}
+
 }  // namespace
 
 class A64GuestRuntime::Impl final {
@@ -618,6 +692,64 @@ class A64GuestRuntime::Impl final {
     return CallSymbol("JNI_OnLoad", arguments, instruction_budget);
   }
 
+  A64GuestCallResult CallRegisteredJniNative(
+      const std::string& class_name, const std::string& name,
+      const std::string& signature,
+      const std::vector<std::uint64_t>& java_arguments,
+      std::uint64_t instruction_budget) {
+    auto failure = [](std::string message) {
+      A64GuestCallResult result;
+      result.error = std::move(message);
+      return result;
+    };
+    if (!loaded_) return failure("AArch64 guest runtime is not loaded");
+    if (!jni_bridge_ || !jni_bridge_->initialized()) {
+      return failure("guest JNI bridge is disabled or uninitialized");
+    }
+    if (jni_bridge_->pending_exception()) {
+      return failure("guest JNI bridge has a pending exception");
+    }
+    if (java_arguments.size() > 6) {
+      return failure("JNI call supports at most six Java arguments in X2-X7");
+    }
+
+    std::size_t descriptor_argument_count = 0;
+    std::string descriptor_error;
+    if (!CountJniParameterTypes(signature, &descriptor_argument_count,
+                                &descriptor_error)) {
+      return failure(descriptor_error);
+    }
+    if (descriptor_argument_count != java_arguments.size()) {
+      return failure("JNI argument count does not match the registered signature");
+    }
+
+    const auto class_handle = jni_bridge_->FindClassHandle(class_name);
+    if (class_handle == 0) {
+      return failure("JNI class was not resolved by the guest bridge: " +
+                     class_name);
+    }
+    const auto natives = jni_bridge_->registered_natives();
+    const auto native = std::find_if(
+        natives.begin(), natives.end(),
+        [&](const A64GuestJniNativeRegistration& item) {
+          return item.class_name == class_name && item.name == name &&
+                 item.signature == signature;
+        });
+    if (native == natives.end() || native->guest_address == 0) {
+      return failure("JNI native is not registered: " + class_name + "." +
+                     name + signature);
+    }
+
+    // JNI static-native ABI: X0=JNIEnv*, X1=jclass, X2-X7=Java arguments.
+    Arguments arguments{};
+    arguments[0] = jni_bridge_->jni_environment_address();
+    arguments[1] = class_handle;
+    for (std::size_t index = 0; index < java_arguments.size(); ++index) {
+      arguments[index + 2] = java_arguments[index];
+    }
+    return Call(native->guest_address, arguments, instruction_budget);
+  }
+
   std::uint64_t java_vm_address() const noexcept {
     return jni_bridge_ ? jni_bridge_->java_vm_address() : 0;
   }
@@ -705,6 +837,15 @@ A64GuestCallResult A64GuestRuntime::CallSymbol(
 A64GuestCallResult A64GuestRuntime::CallJniOnLoad(
     std::uint64_t instruction_budget) {
   return impl_->CallJniOnLoad(instruction_budget);
+}
+
+A64GuestCallResult A64GuestRuntime::CallRegisteredJniNative(
+    const std::string& class_name, const std::string& name,
+    const std::string& signature,
+    const std::vector<std::uint64_t>& java_arguments,
+    std::uint64_t instruction_budget) {
+  return impl_->CallRegisteredJniNative(
+      class_name, name, signature, java_arguments, instruction_budget);
 }
 
 std::uint64_t A64GuestRuntime::java_vm_address() const noexcept {

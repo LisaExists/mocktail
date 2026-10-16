@@ -632,6 +632,13 @@ std::uint64_t A64GuestJniBridge::FindOrCreateClassHandle(
   return handle;
 }
 
+std::uint64_t A64GuestJniBridge::FindClassHandle(
+    const std::string& class_name) const noexcept {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto found = class_handles_by_name_.find(class_name);
+  return found == class_handles_by_name_.end() ? 0 : found->second;
+}
+
 void A64GuestJniBridge::SetPendingException(bool pending) noexcept {
   std::lock_guard<std::mutex> lock(mutex_);
   pending_exception_ = pending;

@@ -28,7 +28,9 @@ typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
 __attribute__((visibility("default")))
-int guest_native_sum(int left, int right) {
+int guest_native_sum(struct JNIEnv_ *env, void *clazz,
+                     int left, int right) {
+  if (env == 0 || clazz == 0) return -1000;
   return left + right;
 }
 
