@@ -229,6 +229,7 @@ int main(int argc, char** argv) {
   bool call_export = false;
   bool require_tls = false;
   bool require_tlsdesc = false;
+  bool require_tls_get_addr = false;
   bool run_initializers = false;
   std::string export_name;
   int first_path = 1;
@@ -256,6 +257,15 @@ int main(int argc, char** argv) {
       return 2;
     }
     require_tlsdesc = true;
+    first_path = 2;
+  } else if (argc >= 2 &&
+             std::string(argv[1]) == "--require-tls-get-addr") {
+    if (argc < 3) {
+      std::cerr << "usage: mocktail_a64_translation_smoke --require-tls-get-addr "
+                   "tls-get-addr-aarch64-elf\n";
+      return 2;
+    }
+    require_tls_get_addr = true;
     first_path = 2;
   } else if (argc >= 2 && std::string(argv[1]) == "--run-initializers") {
     if (argc < 3) {
@@ -301,8 +311,12 @@ int main(int argc, char** argv) {
 
   A64GuestMemory memory;
   std::string memory_error;
+  A64GuestTlsRuntime tls_runtime(memory);
+  A64GuestThreadTls thread_tls;
   A64GuestHostCalls host_calls(memory);
   if (!host_calls.RegisterBuiltinLibc(&memory_error) ||
+      !host_calls.RegisterTlsGetAddr(tls_runtime, thread_tls, "libc.so", "",
+                                     &memory_error) ||
       !host_calls.Install(&memory_error)) {
     std::cerr << "AArch64 guest host-call setup failed: "
               << memory_error << '\n';
@@ -343,9 +357,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   const auto& image = modules.modules[modules.root_index].image;
-  A64GuestTlsRuntime tls_runtime(memory);
-  A64GuestThreadTls thread_tls;
-  if (require_tls || require_tlsdesc) {
+  if (require_tls || require_tlsdesc || require_tls_get_addr) {
     if (!image.tls) {
       std::cerr << "AArch64 ELF fixture does not contain a PT_TLS segment\n";
       return 1;
@@ -434,7 +446,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if ((require_tls || require_tlsdesc) && !tls_runtime.CreateThread(&thread_tls, &memory_error)) {
+  if ((require_tls || require_tlsdesc || require_tls_get_addr) && !tls_runtime.CreateThread(&thread_tls, &memory_error)) {
     std::cerr << "AArch64 guest TLS thread initialization failed: "
               << memory_error << '\n';
     return 1;
@@ -459,7 +471,7 @@ int main(int argc, char** argv) {
   callbacks.SetReturnTrap(kReturnTrap, !call_export);
   Dynarmic::A64::UserConfig config{};
   config.callbacks = &callbacks;
-  if (require_tls || require_tlsdesc) config.tpidr_el0 = &thread_tls.tpidr_el0;
+  if (require_tls || require_tlsdesc || require_tls_get_addr) config.tpidr_el0 = &thread_tls.tpidr_el0;
   config.enable_cycle_counting = false;
   config.hook_hint_instructions = true;
   Dynarmic::A64::Jit cpu{config};
@@ -542,7 +554,7 @@ int main(int argc, char** argv) {
               << ", expected 42\n";
     return 1;
   }
-  if (require_tls || require_tlsdesc) {
+  if (require_tls || require_tlsdesc || require_tls_get_addr) {
     constexpr std::uint64_t kExpectedInitialTls = 0x1122334455667788ULL;
     if (cpu.GetRegister(1) != kExpectedInitialTls) {
       std::cerr << "guest TPIDR_EL0 TLS read returned " << cpu.GetRegister(1)
@@ -561,7 +573,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if ((require_tls || require_tlsdesc) && !tls_runtime.DestroyThread(&thread_tls, &memory_error)) {
+  if ((require_tls || require_tlsdesc || require_tls_get_addr) && !tls_runtime.DestroyThread(&thread_tls, &memory_error)) {
     std::cerr << "AArch64 guest TLS cleanup failed: " << memory_error << '\n';
     return 1;
   }
