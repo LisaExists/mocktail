@@ -106,6 +106,7 @@ class A64GuestRuntime final {
       std::uint64_t instruction_budget = 0);
   std::uint64_t java_vm_address() const noexcept;
   std::uint64_t jni_environment_address() const noexcept;
+  bool jni_exception_pending() const noexcept;
   std::vector<A64GuestJniNativeRegistration> registered_jni_natives() const;
 
   bool loaded() const noexcept;
