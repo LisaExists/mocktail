@@ -15,7 +15,6 @@ on:
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tests/test_a64_elf_audit.py'
-      - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tools/roblox-arm-preflight.py'
       - 'tools/a64-elf-audit.py'
       - 'tools/mocktail-a64-apk-probe.py'
