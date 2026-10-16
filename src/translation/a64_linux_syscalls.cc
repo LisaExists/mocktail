@@ -146,7 +146,7 @@ void SetUtsField(char* field, std::size_t field_size,
   if (field_size == 0) return;
   const auto length = std::min(std::strlen(value), field_size - 1);
   std::memcpy(field, value, length);
-  field[length] = '\\0';
+  field[length] = '\0';
 }
 
 }  // namespace
