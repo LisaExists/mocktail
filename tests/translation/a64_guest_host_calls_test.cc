@@ -124,7 +124,7 @@ int main() {
   Check(memory.IsExecutable(*strlen_stub, 8),
         "thunks live in executable guest memory");
 
-  arguments = {};
+  A64GuestHostCalls::Arguments arguments{};
   const auto errno_result = calls.DispatchSvc(
       ReadSvcImmediate(memory, *errno_stub), arguments);
   std::int32_t guest_errno = -1;
@@ -167,7 +167,7 @@ int main() {
       tls_modules.modules[0].image.tls->module_id, 0};
   Check(memory.Write(kTlsIndexAddress, tls_index.data(), sizeof(tls_index)),
         "writes an ELF tls_index structure into guest memory");
-  A64GuestHostCalls::Arguments arguments{};
+  arguments = {};
   arguments[0] = kTlsIndexAddress;
   const auto tls_resolved = calls.DispatchSvc(
       ReadSvcImmediate(memory, *tls_get_addr_stub), arguments);
