@@ -128,6 +128,32 @@ class ELFReportTests(unittest.TestCase):
         self.assertFalse(any("cannot classify" in blocker
                              for blocker in report["prototype_loader_blockers"]))
 
+    def test_android_aps2_allows_empty_conventional_rela_placeholder(self):
+        packed = android_packed_relative()
+        data = make_elf([
+            (MODULE.DT_ANDROID_RELA, 0x300),
+            (MODULE.DT_ANDROID_RELASZ, len(packed)),
+            (MODULE.DT_RELA, 0x200),
+            (MODULE.DT_RELASZ, 0),
+            (MODULE.DT_RELAENT, 24),
+            (MODULE.DT_SYMTAB, 0x500),
+            (MODULE.DT_SYMENT, 24),
+            (MODULE.DT_HASH, 0x540),
+            (MODULE.DT_STRTAB, 0x600),
+            (MODULE.DT_STRSZ, 1),
+            (MODULE.DT_NULL, 0),
+        ])
+        data[0x300:0x300 + len(packed)] = packed
+        struct.pack_into("<IIII", data, 0x540, 1, 1, 0, 0)
+        data[0x600] = 0
+
+        report = MODULE.audit_elf(bytes(data), "libandroid-empty-rela.so")
+        self.assertTrue(
+            report["prototype_loader_compatible"],
+            report["prototype_loader_blockers"],
+        )
+        self.assertEqual(report["relocation_counts"]["R_AARCH64_RELATIVE"], 1)
+
     def test_malformed_android_aps2_signature_is_rejected(self):
         packed = b"NOPE" + sleb128(0) + sleb128(0)
         data = make_elf([
