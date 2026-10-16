@@ -59,8 +59,9 @@ struct A64TlsSymbol final {
 
 // PT_TLS image template for one ELF module. template_bytes is memory_size bytes
 // long: file-backed initial data followed by the zero-filled TLS BSS tail.
-// This records module TLS metadata only; a platform-specific per-thread TLS
-// block and TLSDESC/static TLS relocations must be implemented separately.
+// A64GuestTlsRuntime assigns module IDs and TP-relative offsets to this
+// template; static TLS relocations require that layout, and TLSDESC requires an
+// explicit guest resolver thunk. Dynamic DTV allocation remains separate.
 struct A64TlsSegment final {
   std::uint64_t file_size = 0;
   std::uint64_t memory_size = 0;
@@ -146,8 +147,9 @@ struct A64ElfLoadResult final {
 // Loads ELF64 little-endian AArch64 ET_DYN/ET_EXEC images. Maps PT_LOAD data
 // and BSS, collects DT_NEEDED/DT_SONAME metadata, and applies supported RELA
 // relocations. Undefined symbols are resolved only through the caller's explicit
-// resolver. Dependency loading, symbol versioning, TLS and process setup remain
-// separate responsibilities. Unsupported relocation formats fail closed.
+// resolver. The preloaded-module static TLS subset is supported only when
+// its layout/resolvers are supplied explicitly. Dynamic TLS and process setup
+// remain separate responsibilities. Unsupported relocation formats fail closed.
 A64ElfLoadResult LoadA64Elf(const std::vector<std::uint8_t>& file,
                             A64ElfLoadOptions options = {});
 
