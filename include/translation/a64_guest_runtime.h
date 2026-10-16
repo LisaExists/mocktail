@@ -25,8 +25,11 @@ struct A64GuestThreadTls;
 struct A64GuestRuntimeOptions final {
   A64GuestModuleLoadOptions module_load;
   std::size_t max_guest_memory_bytes = 1024U * 1024U * 1024U;
+  // stack_base identifies the first writable stack page. Guard pages are
+  // mapped with no permissions immediately below and above the stack.
   std::uint64_t stack_base = 0x7000000000ULL;
   std::uint64_t stack_size = 2U * 1024U * 1024U;
+  std::uint32_t stack_guard_pages = 1;
   std::uint64_t return_trap_address = 0x7FFF000000ULL;
   std::uint64_t instruction_budget = 50U * 1000U * 1000U;
   std::size_t max_tls_bytes = 64U * 1024U * 1024U;
