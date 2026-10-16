@@ -93,7 +93,6 @@ class A64GuestJniBridge final {
   bool ReadGuestString(std::uint64_t address, std::size_t maximum,
                        std::string* value, std::string* error) const;
   std::uint64_t FindOrCreateClassHandle(const std::string& class_name);
-  bool IsStringHandle(std::uint64_t handle) const noexcept;
   void SetPendingException(bool pending) noexcept;
   void ClearMappings() noexcept;
 
