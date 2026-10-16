@@ -128,6 +128,34 @@ int main() {
       A64GuestMemory::kRead | A64GuestMemory::kWrite, &memory_error);
   Check(scratch_mapped, "maps scratch memory for guest clock and uname calls");
   if (scratch_mapped) {
+    const std::array<std::uint64_t, 6> random_arguments{
+        kGuestSyscallScratch, 32, 0, 0, 0, 0};
+    const auto random_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kGetRandom, random_arguments);
+    std::array<std::uint8_t, 32> random_bytes{};
+    const bool read_random = memory.Read(
+        kGuestSyscallScratch, random_bytes.data(), random_bytes.size());
+    bool any_random_byte = false;
+    for (const auto byte : random_bytes) any_random_byte |= byte != 0;
+#if defined(__linux__)
+    Check(random_result.value == random_bytes.size() && read_random &&
+              any_random_byte,
+          "getrandom fills guest memory using the host kernel's random source");
+    auto invalid_random_flags = random_arguments;
+    invalid_random_flags[2] = 0x80000000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kGetRandom,
+                                    invalid_random_flags), EINVAL),
+          "getrandom rejects unsupported flag bits");
+    auto invalid_random_pointer = random_arguments;
+    invalid_random_pointer[0] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kGetRandom,
+                                    invalid_random_pointer), EFAULT),
+          "getrandom rejects an unmapped guest output buffer");
+#else
+    Check(IsError(random_result, ENOSYS),
+          "getrandom fails closed on hosts without a supported secure source");
+#endif
+
     const std::array<std::uint64_t, 6> monotonic_clock{
         1, kGuestSyscallScratch, 0, 0, 0, 0};
     const auto clock_result =
