@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, experimental/roblox-arm-translation]
     paths:
       - '.github/workflows/**'
       - 'CMakeLists.txt'
@@ -18,6 +18,7 @@ on:
       - 'stubs/**'
       - 'tests/**'
       - 'third_party/**'
+      - 'tools/**'
   pull_request:
     paths:
       - '.github/workflows/**'
@@ -34,6 +35,7 @@ on:
       - 'stubs/**'
       - 'tests/**'
       - 'third_party/**'
+      - 'tools/**'
   workflow_dispatch:
 
 permissions:
@@ -105,14 +107,21 @@ jobs:
             libcapstone-dev libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev \
             libutf8proc-dev libfontconfig1-dev libegl-dev libvulkan-dev \
             libplacebo-dev libpng-dev zlib1g-dev \
+            libboost-dev gcc-aarch64-linux-gnu \
             xvfb xauth libgl1-mesa-dri jq patchelf
 
       - name: Build and check native executables
         shell: bash
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
-          cmake -S . -B build-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            cmake -S . -B build-ci -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+              -DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON
+          else
+            cmake -S . -B build-ci -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          fi
           cmake --build build-ci --parallel 4
           ./build-ci/mocktail --help
           ./build-ci/mocktail_updater status
