@@ -5,6 +5,7 @@
 
 #include <elf.h>
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -82,9 +83,10 @@ void PrintUsage(const char* program) {
       << "                          Allow an absent dependency name; does not provide its symbols\n"
       << "  --call SYMBOL           Explicitly execute an exported guest symbol\n"
       << "  --jni-onload             Call JNI_OnLoad with the guest JavaVM table\n"
+      << "  --call-native CLASS NAME SIGNATURE\n"
+      << "                           Run JNI_OnLoad, then invoke a registered static native\n"
       << "  --java-class NAME        Add a class name available to FindClass (repeatable)\n"
-      << "  --arg0 VALUE ...        Set AAPCS64 argument register X0 (through "
-         "--arg7 / X7)\n"
+      << "  --arg0 VALUE ...        For --call: set X0-X7; for --call-native: Java args 0-5\n"
       << "  --budget COUNT          Guest instruction budget for --call/--jni-onload\n"
       << "  --memory-mib COUNT      Guest memory limit (16 through 16384 MiB)\n"
       << "  --run-initializers      Execute module initializers before the requested entrypoint\n"
@@ -107,12 +109,16 @@ int main(int argc, char** argv) {
 
   std::string root_name;
   std::string call_symbol;
+  std::string native_class;
+  std::string native_name;
+  std::string native_signature;
   std::vector<std::string> external_dependencies;
   std::vector<std::string> java_classes;
   bool list_exports = false;
   bool run_initializers = false;
   bool jni_onload = false;
   bool has_call_arguments = false;
+  std::array<bool, 8> argument_was_set{};
   std::uint64_t instruction_budget = 0;
   std::uint64_t memory_mib = 1024;
   A64GuestRuntime::Arguments arguments{};
@@ -147,6 +153,14 @@ int main(int argc, char** argv) {
     }
     if (option == "--jni-onload") {
       jni_onload = true;
+      continue;
+    }
+    if (option == "--call-native") {
+      if (!take_value("--call-native CLASS", &native_class) ||
+          !take_value("--call-native NAME", &native_name) ||
+          !take_value("--call-native SIGNATURE", &native_signature)) {
+        return 2;
+      }
       continue;
     }
     if (option == "--java-class") {
@@ -196,7 +210,10 @@ int main(int argc, char** argv) {
         return Fail("invalid unsigned integer for " + option + ": " +
                     value_text);
       }
-      arguments[static_cast<std::size_t>(option[5] - '0')] = value;
+      const auto argument_index =
+          static_cast<std::size_t>(option[5] - '0');
+      arguments[argument_index] = value;
+      argument_was_set[argument_index] = true;
       has_call_arguments = true;
       continue;
     }
@@ -220,17 +237,48 @@ int main(int argc, char** argv) {
   }
   root_name = Basename(root_name);
   if (root_name.empty()) return Fail("--root must name a library file");
-  if (jni_onload && !call_symbol.empty()) {
-    return Fail("--jni-onload cannot be combined with --call");
+  const bool call_native = !native_class.empty() ||
+                            !native_name.empty() ||
+                            !native_signature.empty();
+  if (call_native &&
+      (native_class.empty() || native_name.empty() || native_signature.empty())) {
+    return Fail("--call-native requires CLASS, NAME, and SIGNATURE");
   }
-  if (!java_classes.empty() && !jni_onload) {
-    return Fail("--java-class is only valid with --jni-onload");
+  if (call_native && (native_class.find('.') != std::string::npos ||
+                      native_class.front() == '/' ||
+                      native_class.back() == '/')) {
+    return Fail("--call-native CLASS must use JNI slash-form, e.g. com/example/Native");
   }
-  if (has_call_arguments && call_symbol.empty()) {
-    return Fail("--arg0 through --arg7 require --call");
+  if (call_native && !call_symbol.empty()) {
+    return Fail("--call-native cannot be combined with --call");
   }
-  if (run_initializers && call_symbol.empty() && !jni_onload) {
-    return Fail("--run-initializers requires --call or --jni-onload");
+  if (jni_onload && (!call_symbol.empty() || call_native)) {
+    return Fail("--jni-onload cannot be combined with --call or --call-native");
+  }
+  if (!java_classes.empty() && !jni_onload && !call_native) {
+    return Fail("--java-class is only valid with --jni-onload or --call-native");
+  }
+  if (has_call_arguments && call_symbol.empty() && !call_native) {
+    return Fail("--arg0 through --arg7 require --call or --call-native");
+  }
+  if (jni_onload && has_call_arguments) {
+    return Fail("--arg0 through --arg7 cannot be combined with --jni-onload");
+  }
+  if (call_native) {
+    bool gap_seen = false;
+    for (std::size_t index = 0; index < argument_was_set.size(); ++index) {
+      if (index >= 6 && argument_was_set[index]) {
+        return Fail("--call-native supports at most six Java arguments (--arg0 through --arg5)");
+      }
+      if (!argument_was_set[index]) {
+        gap_seen = true;
+      } else if (gap_seen) {
+        return Fail("--call-native arguments must be contiguous starting with --arg0");
+      }
+    }
+  }
+  if (run_initializers && call_symbol.empty() && !jni_onload && !call_native) {
+    return Fail("--run-initializers requires --call, --jni-onload, or --call-native");
   }
   if (paths.empty()) return Fail("provide at least one ELF library path");
 
@@ -276,6 +324,7 @@ int main(int argc, char** argv) {
 
   A64GuestRuntimeOptions options;
   options.module_load.external_dependencies = std::move(external_dependencies);
+  if (call_native) java_classes.push_back(native_class);
   for (auto& class_name : java_classes) {
     options.jni_available_classes.push_back(std::move(class_name));
   }
@@ -352,7 +401,40 @@ int main(int argc, char** argv) {
     }
     return 0;
   }
-  if (!call_symbol.empty()) {
+  if (call_native) {
+    const auto on_load = runtime.CallJniOnLoad(instruction_budget);
+    if (!on_load) {
+      return Fail("guest JNI_OnLoad call failed: " + on_load.error);
+    }
+    const auto version = static_cast<std::uint32_t>(on_load.value);
+    if (static_cast<std::int32_t>(version) < 0 ||
+        (version != 0x00010002U && version != 0x00010004U &&
+         version != 0x00010006U)) {
+      return Fail("JNI_OnLoad returned an unsupported version/error code");
+    }
+    if (runtime.jni_exception_pending()) {
+      return Fail("JNI_OnLoad returned with a pending Java exception");
+    }
+    std::cout << "JNI_OnLoad returned X0=0x" << std::hex << version
+              << std::dec << " (" << version << ").\n";
+    const auto natives = runtime.registered_jni_natives();
+    std::cout << "Registered native methods: " << natives.size() << '\n';
+
+    std::vector<std::uint64_t> java_arguments;
+    for (std::size_t index = 0; index < 6 && argument_was_set[index]; ++index) {
+      java_arguments.push_back(arguments[index]);
+    }
+    const auto result = runtime.CallRegisteredJniNative(
+        native_class, native_name, native_signature, java_arguments,
+        instruction_budget);
+    if (!result) {
+      return Fail("guest JNI native call failed: " + result.error);
+    }
+    std::cout << "Guest JNI native " << native_class << '.' << native_name
+              << native_signature << " returned X0=0x" << std::hex
+              << result.value << std::dec << " (" << result.value << "), "
+              << result.ticks << " guest instruction(s) executed.\n";
+  } else if (!call_symbol.empty()) {
     const auto result =
         runtime.CallSymbol(call_symbol, arguments, instruction_budget);
     if (!result) {

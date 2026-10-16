@@ -171,6 +171,24 @@ def main() -> int:
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",
             )
 
+            native_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeSum", "(II)I",
+                "--arg0", "20", "--arg1", "22",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                native_command,
+                (
+                    "JNI_OnLoad returned X0=0x10006",
+                    "Guest JNI native com/mocktail/Smoke.nativeSum(II)I returned X0=0x2a (42)",
+                ),
+                "registered JNI native invoked from an APK with AArch64 ABI arguments",
+            )
+
     return 0 if ok else 1
 
 

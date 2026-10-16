@@ -80,8 +80,24 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add a bounded two-pass guest module-set loader with `DT_NEEDED` closure discovery, non-overlapping image placement, unversioned export indexing, and dependency relocation tests.
 - [ ] Extend guest mappings with guard pages and memory synchronization.
 - [x] Add explicit guest-to-host SVC thunks with bounded memory/string routines, case-insensitive string comparisons, guest errno accessors, TLS helpers, and tracked guest allocations; continue expanding coverage based on real package imports.
-- [ ] Integrate and test the Android/Bionic and graphics boundaries.
-- [ ] Validate the integration against a minimal ARM64 shared library and ordinary JNI/native calls before attempting full Roblox startup.
+- [x] Execute an Android-style JNI_OnLoad through guest JavaVM/JNIEnv function tables, validate class lookup, and record RegisterNatives targets.
+- [x] Invoke a registered static JNI native through the guest ABI with JNIEnv*, jclass, and Java arguments in X0-X7; cover it in synthetic APK integration tests.
+- [ ] Integrate the remaining Android/Bionic APIs, object/ART lifecycle, guest thread attachment and graphics boundaries.
+- [ ] Validate the integration against real ARM64 Roblox libraries and the full Android framework before attempting full Roblox startup.
+
+## Calling a registered JNI native in the prototype
+
+The probe can exercise the narrow JNI path without pretending to start ART:
+
+```bash
+python3 tools/mocktail-a64-apk-probe.py \
+  --root libexample.so \
+  --call-native com/example/Native nativeSum '(II)I' \
+  --arg0 20 --arg1 22 \
+  path/to/client.apk
+```
+
+This loads the root dependency closure, calls `JNI_OnLoad`, checks the returned JNI version and pending-exception state, looks up the exact `RegisterNatives` tuple, and invokes the registered guest function with `JNIEnv*` in X0, the opaque class handle in X1, and up to six Java arguments in X2-X7. The current bridge supports predeclared class names and static native methods; it does not implement ART, Java objects, method dispatch, instance construction, array/string object semantics, or arguments spilled to the stack. This executes actual guest code and is a validation utility, not a full application launcher.
 
 ## Scope and trust
 
