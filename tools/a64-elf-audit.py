@@ -613,7 +613,9 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
     empty_rela_placeholder = (
         DT_RELA not in tags
         and tags.get(DT_RELASZ) == [0]
-        and DT_RELAENT not in tags
+        and (
+            DT_RELAENT not in tags or tags.get(DT_RELAENT) == [24]
+        )
         and (
             report["has_android_packed_rela"]
             or DT_RELR in tags
