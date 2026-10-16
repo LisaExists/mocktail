@@ -68,7 +68,7 @@ class ApkInspectionTests(unittest.TestCase):
             success = MODULE.inspect_apk(path)
         return success, output.getvalue()
 
-    def test_arm64_library_is_reported_as_translation_requirement(self):
+    def test_arm64_library_reports_host_compatibility(self):
         path = self.make_apk({
             "AndroidManifest.xml": b"manifest",
             "classes.dex": b"dex",
@@ -78,7 +78,17 @@ class ApkInspectionTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertIn("arm64-v8a", output)
         self.assertIn("AArch64", output)
-        self.assertIn("guest instruction translation and ABI bridging are required", output)
+
+        host = MODULE.host_arch()
+        if host == "x86_64":
+            self.assertIn(
+                "guest instruction translation and ABI bridging are required",
+                output,
+            )
+        elif host == "AArch64":
+            self.assertIn("ARM64 native libraries may match the machine architecture", output)
+        else:
+            self.assertIn("host architecture needs manual compatibility review", output)
 
     def test_abi_directory_elf_mismatch_is_reported(self):
         path = self.make_apk({"lib/x86_64/libroblox.so": elf_header(183)})
