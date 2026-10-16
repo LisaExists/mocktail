@@ -89,6 +89,9 @@ class A64GuestRuntime final {
   A64GuestCallResult CallSymbol(const std::string& symbol,
                                const Arguments& arguments = {},
                                std::uint64_t instruction_budget = 0);
+  A64GuestCallResult CallSymbol(const A64SymbolRequest& request,
+                               const Arguments& arguments = {},
+                               std::uint64_t instruction_budget = 0);
 
   bool loaded() const noexcept;
   const A64GuestModuleSet* modules() const noexcept;
