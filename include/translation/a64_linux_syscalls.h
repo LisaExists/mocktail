@@ -24,6 +24,7 @@ class A64LinuxSyscalls final {
  public:
   static constexpr std::uint64_t kClockGetTime = 113;
   static constexpr std::uint64_t kUname = 160;
+  static constexpr std::uint64_t kGetRandom = 278;
   static constexpr std::uint64_t kExit = 93;
   static constexpr std::uint64_t kExitGroup = 94;
   static constexpr std::uint64_t kBrk = 214;
