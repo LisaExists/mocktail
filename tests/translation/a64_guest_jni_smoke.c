@@ -40,6 +40,16 @@ extern int *__errno(void);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
+// Android's loader runs DT_INIT/DT_INIT_ARRAY before invoking JNI_OnLoad.
+// Make that ordering observable so the probe cannot accidentally appear to
+// support JNI while skipping shared-object constructors.
+static int guest_constructor_ran;
+
+__attribute__((constructor))
+static void guest_android_jni_constructor(void) {
+  guest_constructor_ran = 0x4D4F434B;
+}
+
 __attribute__((visibility("default")))
 int guest_native_sum(struct JNIEnv_ *env, void *clazz,
                      int left, int right) {
@@ -48,8 +58,8 @@ int guest_native_sum(struct JNIEnv_ *env, void *clazz,
 }
 
 __attribute__((visibility("default")))
-__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
+  if (guest_constructor_ran != 0x4D4F434B) return -25;
   (void)reserved;
   if (vm == 0 || vm->functions == 0) return -1;
 
