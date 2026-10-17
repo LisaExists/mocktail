@@ -934,7 +934,7 @@ class A64GuestRuntime::Impl final {
       std::clog << "][" << tag << "] ";
       for (const char character : message) {
         if (character == '\n') {
-          std::clog << "\n";
+          std::clog << "\\n";
         } else if (character == '\r') {
           std::clog << "\\r";
         } else {
