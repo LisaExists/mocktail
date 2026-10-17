@@ -364,8 +364,8 @@ ANDROID_PLATFORM_LIBRARIES = {
     "libbinder_ndk.so", "libcrypto.so", "libssl.so", "libicuuc.so",
     "libicui18n.so", "libandroid_runtime.so",
 }
-# Kept in sync with the explicit functions registered by
-# A64GuestHostCalls::RegisterBuiltinLibc and RegisterTlsGetAddr.
+# Kept in sync with guest host-call registrations in
+# A64GuestHostCalls and A64GuestRuntime::Impl.
 PROTOTYPE_HOST_CALLS = {
     "memcpy", "memmove", "memset", "memcmp", "memchr",
     "strlen", "strnlen", "strcmp", "strncmp", "strcasecmp", "strncasecmp",
