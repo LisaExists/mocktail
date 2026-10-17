@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <mutex>
 #include <utility>
 
 #include "dynarmic/interface/A64/a64.h"
@@ -748,7 +749,7 @@ class A64GuestRuntime::Impl final {
       }
     }
 
-    return host_calls_.Register(
+    if (!host_calls_.Register(
         "__system_property_get", "libc.so", "",
         [this](const A64GuestHostCalls::Arguments& arguments)
             -> A64HostCallResult {
@@ -756,29 +757,138 @@ class A64GuestRuntime::Impl final {
           std::string diagnostic;
           if (!ReadBoundedGuestCString(
                   memory_, arguments[0], 128, &property_name, &diagnostic)) {
-            return {false, 0, "invalid Android property name: " + diagnostic};
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, 0, {}};
           }
           if (arguments[1] == 0) {
-            return {false, 0, "__system_property_get received a null value buffer"};
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, 0, {}};
           }
 
-          // Bionic PROP_VALUE_MAX is 92 bytes including the terminator. The
-          // profile is validated at load time, and missing properties return
-          // an empty string without consulting the host environment.
           std::string value;
           const auto found = options_.android_system_properties.find(property_name);
           if (found != options_.android_system_properties.end()) {
             value = found->second;
           }
-          if (value.size() >= 92U) {
-            return {false, 0, "Android property value exceeds PROP_VALUE_MAX"};
-          }
-          if (!memory_.Write(arguments[1], value.c_str(), value.size() + 1U)) {
-            return {false, 0, "__system_property_get value buffer is not writable guest memory"};
+          if (value.size() >= kPropertyValueMax ||
+              !memory_.Write(arguments[1], value.c_str(), value.size() + 1U)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, 0, {}};
           }
           return {true, static_cast<std::uint64_t>(value.size()), {}};
         },
-        error);
+        error)) {
+      return false;
+    }
+
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libc.so", "", std::move(handler),
+                                  error);
+    };
+
+    if (!register_one("__system_property_find", [this](
+            const A64GuestHostCalls::Arguments& arguments)
+            -> A64HostCallResult {
+          std::string property_name;
+          std::string diagnostic;
+          if (!ReadBoundedGuestCString(
+                  memory_, arguments[0], 128, &property_name, &diagnostic)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, 0, {}};
+          }
+          if (options_.android_system_properties.find(property_name) ==
+              options_.android_system_properties.end()) {
+            return {true, 0, {}};
+          }
+
+          std::lock_guard<std::mutex> lock(android_property_mutex_);
+          const auto existing = android_property_handles_.find(property_name);
+          if (existing != android_property_handles_.end()) {
+            return {true, existing->second, {}};
+          }
+          if (next_android_property_handle_ >
+              std::numeric_limits<std::uint64_t>::max() - 16U) {
+            static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+            return {true, 0, {}};
+          }
+          const auto handle = next_android_property_handle_;
+          try {
+            android_property_handles_.emplace(property_name, handle);
+            try {
+              android_property_names_.emplace(handle, property_name);
+            } catch (...) {
+              android_property_handles_.erase(property_name);
+              throw;
+            }
+          } catch (const std::bad_alloc&) {
+            static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+            return {true, 0, {}};
+          }
+          next_android_property_handle_ += 16U;
+          return {true, handle, {}};
+        })) {
+      return false;
+    }
+
+    if (!register_one("__system_property_read", [this](
+            const A64GuestHostCalls::Arguments& arguments)
+            -> A64HostCallResult {
+          std::string property_name;
+          {
+            std::lock_guard<std::mutex> lock(android_property_mutex_);
+            const auto found = android_property_names_.find(arguments[0]);
+            if (found == android_property_names_.end()) {
+              static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+              return {true, static_cast<std::uint64_t>(-1LL), {}};
+            }
+            property_name = found->second;
+          }
+          if (arguments[1] == 0 || arguments[2] == 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          const auto found = options_.android_system_properties.find(property_name);
+          if (found == options_.android_system_properties.end()) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          const std::string& value = found->second;
+          if (!memory_.Write(arguments[1], property_name.c_str(),
+                             property_name.size() + 1U) ||
+              !memory_.Write(arguments[2], value.c_str(), value.size() + 1U)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          return {true, static_cast<std::uint64_t>(value.size()), {}};
+        })) {
+      return false;
+    }
+
+    if (!register_one("__system_property_serial", [this](
+            const A64GuestHostCalls::Arguments& arguments)
+            -> A64HostCallResult {
+          std::lock_guard<std::mutex> lock(android_property_mutex_);
+          if (android_property_names_.find(arguments[0]) ==
+              android_property_names_.end()) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, 0, {}};
+          }
+          // The configured profile is immutable for one runtime instance.
+          return {true, 1, {}};
+        })) {
+      return false;
+    }
+
+    if (!register_one("__system_property_area_serial", [](
+            const A64GuestHostCalls::Arguments&) -> A64HostCallResult {
+          // The profile cannot change while a guest runtime is loaded.
+          return {true, 1, {}};
+        })) {
+      return false;
+    }
+
+    return true;
   }
 
   bool RegisterGuestAuxiliaryVector(std::string* error) {
@@ -1513,6 +1623,10 @@ class A64GuestRuntime::Impl final {
   // Stable guest copies returned by dladdr; capped to avoid unbounded guest
   // mapping growth. Their lifetime is the runtime's lifetime.
   std::map<std::string, std::uint64_t> dl_guest_strings_;
+  std::mutex android_property_mutex_;
+  std::map<std::string, std::uint64_t> android_property_handles_;
+  std::map<std::uint64_t, std::string> android_property_names_;
+  std::uint64_t next_android_property_handle_ = 0x50524F5000000001ULL;
   bool dl_error_pending_ = false;
   std::unique_ptr<Callbacks> callbacks_;
   std::unique_ptr<Dynarmic::A64::Jit> jit_;
