@@ -36,7 +36,12 @@ typedef void (*ReleaseStringUTFCharsFunction)(
 typedef unsigned char (*ExceptionCheckFunction)(struct JNIEnv_ *);
 typedef void (*ExceptionClearFunction)(struct JNIEnv_ *);
 typedef int32_t (*SystemPropertyGetFunction)(const char *, char *);
+struct prop_info;
 extern int32_t __system_property_get(const char *, char *);
+extern const struct prop_info *__system_property_find(const char *);
+extern int32_t __system_property_read(const struct prop_info *, char *, char *);
+extern unsigned int __system_property_serial(const struct prop_info *);
+extern unsigned int __system_property_area_serial(void);
 extern unsigned long getauxval(unsigned long type);
 extern int android_get_device_api_level(void);
 extern int *__errno(void);
@@ -147,6 +152,30 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (__system_property_get("ro.build.version.sdk", sdk) != 2 ||
       sdk[0] != '3' || sdk[1] != '6' || sdk[2] != '\0') return -16;
   if (android_get_device_api_level() != 36) return -24;
+
+  // Modern Bionic property clients also query opaque prop_info records.
+  const struct prop_info *sdk_property =
+      __system_property_find("ro.build.version.sdk");
+  if (sdk_property == (const struct prop_info *)0) return -39;
+  char sdk_property_name[128] = {0};
+  char sdk_property_value[92] = {0};
+  if (__system_property_read(sdk_property, sdk_property_name,
+                             sdk_property_value) != 2 ||
+      sdk_property_name[0] != 'r' || sdk_property_name[19] != 'k' ||
+      sdk_property_name[20] != '\0' ||
+      sdk_property_value[0] != '3' || sdk_property_value[1] != '6' ||
+      sdk_property_value[2] != '\0') return -40;
+  if (__system_property_serial(sdk_property) == 0 ||
+      __system_property_area_serial() == 0) return -41;
+  if (__system_property_find("ro.mocktail.property_missing") !=
+      (const struct prop_info *)0) return -42;
+  if (__system_property_read(
+          (const struct prop_info *)(unsigned long long)0xDEADBEEF,
+          sdk_property_name, sdk_property_value) != -1) return -43;
+  if (__system_property_serial(
+          (const struct prop_info *)(unsigned long long)0xDEADBEEF) != 0) {
+    return -44;
+  }
 
   // The liblog bridge reads tag/message strings from guest memory, never
   // dereferences guest addresses as host pointers, and keeps log records single-line.
