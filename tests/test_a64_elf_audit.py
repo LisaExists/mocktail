@@ -328,6 +328,28 @@ class ELFReportTests(unittest.TestCase):
             "memchr", "strcat", "strcasecmp", "__errno"
         }.issubset(set(catalog["prototype_host_call_symbols"])))
 
+    def test_android_liblog_thunks_are_in_the_known_runtime_set(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["liblog.so"],
+            "imports": [
+                {"name": "__android_log_write", "version": "",
+                 "provider": "liblog.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__android_log_buf_write", "version": "",
+                 "provider": "liblog.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__android_log_is_loggable", "version": "",
+                 "provider": "liblog.so", "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        self.assertTrue({
+            "__android_log_write", "__android_log_buf_write",
+            "__android_log_is_loggable",
+        }.issubset(set(catalog["prototype_host_call_symbols"])))
+
     def test_versioned_hostcall_is_not_satisfied_by_name_only(self):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
