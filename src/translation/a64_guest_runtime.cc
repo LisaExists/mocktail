@@ -933,15 +933,15 @@ class A64GuestRuntime::Impl final {
       if (buffer_id >= 0) std::clog << " buffer=" << buffer_id;
       std::clog << "][" << tag << "] ";
       for (const char character : message) {
-        if (character == '\\n') {
-          std::clog << "\\n";
-        } else if (character == '\\r') {
+        if (character == '\n') {
+          std::clog << "\n";
+        } else if (character == '\r') {
           std::clog << "\\r";
         } else {
           std::clog << character;
         }
       }
-      std::clog << '\\n';
+      std::clog << '\n';
     };
 
     if (!register_one("__android_log_write",
@@ -980,7 +980,7 @@ class A64GuestRuntime::Impl final {
         })) return false;
 
     if (!register_one("__android_log_is_loggable",
-        [read_log_fields](const A64GuestHostCalls::Arguments& arguments) {
+        [this](const A64GuestHostCalls::Arguments& arguments) {
           const auto priority = static_cast<std::int32_t>(arguments[0]);
           const auto default_priority = static_cast<std::int32_t>(arguments[2]);
           if (priority < 0 || priority > 8 ||
