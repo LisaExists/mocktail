@@ -374,6 +374,8 @@ PROTOTYPE_HOST_CALLS = {
     "__errno", "__errno_location", "__tls_get_addr",
     "__system_property_get", "getauxval", "android_get_device_api_level",
     "dlopen", "dlsym", "dlclose", "dlerror", "dladdr",
+    "__android_log_write", "__android_log_buf_write",
+    "__android_log_is_loggable",
     "__mocktail_tlsdesc_static", "__stack_chk_fail",
 }
 
