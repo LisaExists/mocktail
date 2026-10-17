@@ -167,11 +167,17 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       sdk_property_value[2] != '\0') return -40;
   if (__system_property_serial(sdk_property) == 0 ||
       __system_property_area_serial() == 0) return -41;
+  if (__system_property_find("ro.build.version.sdk") != sdk_property) {
+    return -45;
+  }
   if (__system_property_find("ro.mocktail.property_missing") !=
       (const struct prop_info *)0) return -42;
   if (__system_property_read(
           (const struct prop_info *)(unsigned long long)0xDEADBEEF,
           sdk_property_name, sdk_property_value) != -1) return -43;
+  if (__system_property_read(
+          sdk_property, (char *)(unsigned long long)0xDEADBEEF,
+          sdk_property_value) != -1) return -46;
   if (__system_property_serial(
           (const struct prop_info *)(unsigned long long)0xDEADBEEF) != 0) {
     return -44;
