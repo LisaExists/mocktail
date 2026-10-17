@@ -81,6 +81,8 @@ int main(int argc, char** argv) {
             !runtime.memory()->Write(env, &write_probe, sizeof(write_probe)),
         "JNI objects are read-only to guest code", &failures);
 
+  Check(runtime.RunInitializers(&error),
+        "runs Android shared-object constructors before JNI_OnLoad", &failures);
   const auto on_load = runtime.CallJniOnLoad(100000);
   Check(on_load.success &&
             static_cast<std::uint32_t>(on_load.value) ==
@@ -143,6 +145,8 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] negative-path runtime load failed: " << error << '\n';
     return 1;
   }
+  Check(negative_runtime.RunInitializers(&error),
+        "runs constructors in the negative FindClass test runtime", &failures);
   const auto missing_class_on_load = negative_runtime.CallJniOnLoad(100000);
   Check(missing_class_on_load.success &&
             static_cast<std::uint32_t>(missing_class_on_load.value) ==
