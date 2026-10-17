@@ -181,10 +181,12 @@ export as an application entrypoint: Java/ART objects and Android lifecycle
 services are not generally available.
 
 **This is not yet a complete Android APK launcher.** The prototype has only a
-small explicit Bionic/libc/API shim set and a narrow JNI test bridge; it does
-not provide ART, a Java heap, Android framework services, Activity lifecycle,
-guest pthread scheduling, runtime file-descriptor semantics, or Roblox
-graphics/window integration in the AArch64 process. Real Roblox libraries may
+small explicit Bionic/libc/API shim set (including synthetic Android properties,
+opaque `prop_info` reads, and bounded `liblog` calls) and a narrow JNI test
+bridge; JavaVM attach/detach slots model only the single active guest context.
+It does not provide ART, a Java heap, Android framework services, Activity
+lifecycle, real guest pthread scheduling, runtime file-descriptor semantics, or
+Roblox graphics/window integration in the AArch64 process. Real Roblox libraries may
 still stop at unsupported relocations, unresolved imports, or runtime
 assumptions that need real Android services. The probe is intended to turn those
 failures into reproducible next steps; passing synthetic tests alone does not
