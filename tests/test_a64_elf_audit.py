@@ -328,6 +328,30 @@ class ELFReportTests(unittest.TestCase):
             "memchr", "strcat", "strcasecmp", "__errno"
         }.issubset(set(catalog["prototype_host_call_symbols"])))
 
+    def test_android_prop_info_thunks_are_in_the_known_runtime_set(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libc.so"],
+            "imports": [
+                {"name": "__system_property_find", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__system_property_read", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__system_property_serial", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__system_property_area_serial", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        self.assertTrue({
+            "__system_property_find", "__system_property_read",
+            "__system_property_serial", "__system_property_area_serial",
+        }.issubset(set(catalog["prototype_host_call_symbols"])))
+
     def test_android_liblog_thunks_are_in_the_known_runtime_set(self):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
