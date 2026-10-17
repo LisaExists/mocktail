@@ -37,6 +37,11 @@ extern int32_t __system_property_get(const char *, char *);
 extern unsigned long getauxval(unsigned long type);
 extern int android_get_device_api_level(void);
 extern int *__errno(void);
+extern int __android_log_write(int priority, const char *tag, const char *text);
+extern int __android_log_buf_write(int buffer_id, int priority,
+                                   const char *tag, const char *text);
+extern int __android_log_is_loggable(int priority, const char *tag,
+                                     int default_priority);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -108,6 +113,19 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (__system_property_get("ro.build.version.sdk", sdk) != 2 ||
       sdk[0] != '3' || sdk[1] != '6' || sdk[2] != '\0') return -16;
   if (android_get_device_api_level() != 36) return -24;
+
+  // The liblog bridge reads tag/message strings from guest memory, never
+  // dereferences guest addresses as host pointers, and keeps log records single-line.
+  if (!__android_log_is_loggable(6, "Mocktail", 5)) return -26;
+  if (__android_log_is_loggable(4, "Mocktail", 5)) return -27;
+  if (__android_log_write(4, "Mocktail", "JNI_OnLoad liblog smoke") <= 0) {
+    return -28;
+  }
+  if (__android_log_buf_write(0, 6, "Mocktail",
+                              "JNI_OnLoad liblog buffer smoke") <= 0) {
+    return -29;
+  }
+
   char missing_property[92] = {'x'};
   if (__system_property_get("ro.mocktail.property_missing", missing_property) != 0 ||
       missing_property[0] != '\0') return -17;
