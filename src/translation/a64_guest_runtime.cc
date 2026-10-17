@@ -1118,6 +1118,146 @@ class A64GuestRuntime::Impl final {
     return true;
   }
 
+  bool RegisterGuestSingleThreadSynchronizationApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libc.so", "", std::move(handler),
+                                  error);
+    };
+    auto valid_object = [this](std::uint64_t address) {
+      std::uint8_t byte = 0;
+      return address != 0 && memory_.Read(address, &byte, sizeof(byte));
+    };
+    auto initialize_object = [this](std::uint64_t address) {
+      const std::uint64_t initial_state = 0;
+      return address != 0 &&
+             memory_.Write(address, &initial_state, sizeof(initial_state));
+    };
+
+    // No guest pthreads are created yet. These operations only make the
+    // single active guest context able to pass through basic lock-protected
+    // initialization code. They do not provide mutual exclusion across host
+    // threads, condition-variable waits, or a pthread scheduler.
+    auto lock_noop = [valid_object](
+        const A64GuestHostCalls::Arguments& arguments) {
+      return A64HostCallResult{
+          true, valid_object(arguments[0]) ? 0U : EINVAL, {}};
+    };
+    auto init_noop = [initialize_object](
+        const A64GuestHostCalls::Arguments& arguments) {
+      return A64HostCallResult{
+          true, initialize_object(arguments[0]) ? 0U : EINVAL, {}};
+    };
+
+    const struct {
+      const char* name;
+      A64GuestHostCalls::Handler handler;
+    } object_initializers[] = {
+        {"pthread_mutex_init", init_noop},
+        {"pthread_rwlock_init", init_noop},
+        {"pthread_spin_init", init_noop},
+    };
+    for (const auto& item : object_initializers) {
+      if (!register_one(item.name, item.handler)) return false;
+    }
+
+    const char* const object_noops[] = {
+        "pthread_mutex_destroy", "pthread_mutex_lock",
+        "pthread_mutex_trylock", "pthread_mutex_timedlock",
+        "pthread_mutex_unlock", "pthread_rwlock_destroy",
+        "pthread_rwlock_rdlock", "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_wrlock", "pthread_rwlock_trywrlock",
+        "pthread_rwlock_unlock", "pthread_spin_destroy",
+        "pthread_spin_lock", "pthread_spin_trylock",
+        "pthread_spin_unlock", "pthread_mutex_consistent",
+    };
+    for (const auto* name : object_noops) {
+      if (!register_one(name, lock_noop)) return false;
+    }
+
+    if (!register_one("pthread_self", [](
+            const A64GuestHostCalls::Arguments&) {
+          // An opaque, canonical guest pointer-like identifier. It is not a
+          // host pthread_t and must not be dereferenced by guest code.
+          return A64HostCallResult{true, 0x6000000010ULL, {}};
+        })) {
+      return false;
+    }
+    if (!register_one("pthread_equal", [](
+            const A64GuestHostCalls::Arguments& arguments) {
+          return A64HostCallResult{
+              true, arguments[0] == arguments[1] ? 1U : 0U, {}};
+        })) {
+      return false;
+    }
+    return true;
+  }
+
+  bool RegisterGuestCxxGuardApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, const char* provider,
+        A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, provider, "", std::move(handler),
+                                  error);
+    };
+
+    auto acquire = [this](const A64GuestHostCalls::Arguments& arguments)
+        -> A64HostCallResult {
+      std::uint64_t guard = 0;
+      if (arguments[0] == 0 ||
+          !memory_.Read(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "invalid guest pointer passed to __cxa_guard_acquire"};
+      }
+      // Itanium C++ ABI guard byte: bit 0 means initialization completed and
+      // bit 1 marks initialization in progress. The single-thread prototype
+      // avoids recursive re-entry, but doesn't implement cross-thread waits.
+      if ((guard & 0x1U) != 0 || (guard & 0x2U) != 0) {
+        return {true, 0, {}};
+      }
+      guard |= 0x2U;
+      if (!memory_.Write(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "guest __cxa_guard storage is not writable"};
+      }
+      return {true, 1, {}};
+    };
+    auto release = [this](const A64GuestHostCalls::Arguments& arguments)
+        -> A64HostCallResult {
+      std::uint64_t guard = 0;
+      if (arguments[0] == 0 ||
+          !memory_.Read(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "invalid guest pointer passed to __cxa_guard_release"};
+      }
+      guard = (guard | 0x1U) & ~0x2ULL;
+      if (!memory_.Write(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "guest __cxa_guard storage is not writable"};
+      }
+      return {true, 0, {}};
+    };
+    auto abort = [this](const A64GuestHostCalls::Arguments& arguments)
+        -> A64HostCallResult {
+      std::uint64_t guard = 0;
+      if (arguments[0] == 0 ||
+          !memory_.Read(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "invalid guest pointer passed to __cxa_guard_abort"};
+      }
+      guard &= ~0x3ULL;
+      if (!memory_.Write(arguments[0], &guard, sizeof(guard))) {
+        return {false, 0, "guest __cxa_guard storage is not writable"};
+      }
+      return {true, 0, {}};
+    };
+
+    const char* const providers[] = {"libc++_shared.so", "libc.so"};
+    for (const auto* provider : providers) {
+      if (!register_one("__cxa_guard_acquire", provider, acquire) ||
+          !register_one("__cxa_guard_release", provider, release) ||
+          !register_one("__cxa_guard_abort", provider, abort)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool RegisterDynamicLinkerApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -1205,6 +1345,14 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidLoggingApi(&diagnostic)) {
       return fail("failed to register Android liblog API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterGuestSingleThreadSynchronizationApi(&diagnostic)) {
+      return fail("failed to register limited guest pthread shims: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterGuestCxxGuardApi(&diagnostic)) {
+      return fail("failed to register C++ static-initialization guards: " + diagnostic);
     }
     if (!host_calls_.RegisterTlsGetAddr(tls_runtime_, main_thread_tls_,
                                         "libc.so", "", &diagnostic)) {
