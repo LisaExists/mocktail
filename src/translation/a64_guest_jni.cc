@@ -45,8 +45,13 @@ constexpr std::size_t kJniExceptionCheck = 228;
 constexpr std::size_t kJniGetObjectRefType = 232;
 
 // JNI invocation interface: reserved slots 0-2, DestroyJavaVM=3,
-// AttachCurrentThread=4, DetachCurrentThread=5, GetEnv=6.
+// AttachCurrentThread=4, DetachCurrentThread=5, GetEnv=6,
+// AttachCurrentThreadAsDaemon=7. This bridge models one guest thread only.
+constexpr std::int32_t kJniDetached = -2;
+constexpr std::size_t kVmAttachCurrentThread = 4;
+constexpr std::size_t kVmDetachCurrentThread = 5;
 constexpr std::size_t kVmGetEnv = 6;
+constexpr std::size_t kVmAttachCurrentThreadAsDaemon = 7;
 
 struct FunctionSpec final {
   std::size_t index;
@@ -80,7 +85,10 @@ constexpr FunctionSpec kNativeFunctions[] = {
     {kJniGetObjectRefType, "__mocktail_jni_GetObjectRefType"},
 };
 constexpr FunctionSpec kInvocationFunctions[] = {
+    {kVmAttachCurrentThread, "__mocktail_jvm_AttachCurrentThread"},
+    {kVmDetachCurrentThread, "__mocktail_jvm_DetachCurrentThread"},
     {kVmGetEnv, "__mocktail_jvm_GetEnv"},
+    {kVmAttachCurrentThreadAsDaemon, "__mocktail_jvm_AttachCurrentThreadAsDaemon"},
 };
 
 bool RoundPageSize(std::size_t size, std::uint64_t* rounded) noexcept {
@@ -609,6 +617,41 @@ bool A64GuestJniBridge::Register(std::string* error) {
         return A64HostCallResult{true, valid ? 1U : 0U, {}};
       })) return false;
 
+  auto attach_current_thread = [this](
+      const A64GuestHostCalls::Arguments& arguments) {
+    if (arguments[0] != java_vm_address_ || arguments[1] == 0) {
+      return A64HostCallResult{true, JniErrorValue(kJniError), {}};
+    }
+    // The prototype has a single active guest execution context. Attach calls
+    // return that context's JNIEnv; they do not create a host or guest thread.
+    if (!memory_.Write(arguments[1], &jni_environment_address_,
+                       sizeof(jni_environment_address_))) {
+      return A64HostCallResult{true, JniErrorValue(kJniError), {}};
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      current_thread_attached_ = true;
+    }
+    return A64HostCallResult{true, 0, {}};
+  };
+  if (!register_one("__mocktail_jvm_AttachCurrentThread",
+                    attach_current_thread)) return false;
+  if (!register_one("__mocktail_jvm_AttachCurrentThreadAsDaemon",
+                    attach_current_thread)) return false;
+
+  if (!register_one("__mocktail_jvm_DetachCurrentThread", [this](
+          const A64GuestHostCalls::Arguments& arguments) {
+        if (arguments[0] != java_vm_address_) {
+          return A64HostCallResult{true, JniErrorValue(kJniError), {}};
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!current_thread_attached_) {
+          return A64HostCallResult{true, JniErrorValue(kJniDetached), {}};
+        }
+        current_thread_attached_ = false;
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+
   if (!register_one("__mocktail_jvm_GetEnv", [this](
           const A64GuestHostCalls::Arguments& arguments) {
         if (arguments[0] != java_vm_address_ || arguments[1] == 0) {
@@ -619,6 +662,12 @@ bool A64GuestJniBridge::Register(std::string* error) {
             requested != kJniVersion16) {
           return A64HostCallResult{
               true, JniErrorValue(kJniVersionError), {}};
+        }
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (!current_thread_attached_) {
+            return A64HostCallResult{true, JniErrorValue(kJniDetached), {}};
+          }
         }
         if (!memory_.Write(arguments[1], &jni_environment_address_,
                            sizeof(jni_environment_address_))) {
