@@ -373,7 +373,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (run_initializers && !runtime.RunInitializers(&error)) {
+  // Android's linker runs DT_INIT/DT_INIT_ARRAY before JNI_OnLoad. Keep
+  // raw --call opt-in for isolated probes, but preserve constructor ordering
+  // automatically for JNI-oriented entrypoints, just like the Android loader.
+  const bool should_run_initializers =
+      run_initializers || jni_onload || call_native;
+  if (should_run_initializers && !runtime.RunInitializers(&error)) {
     return Fail("guest module initializers failed: " + error);
   }
   if (jni_onload) {
