@@ -1626,7 +1626,7 @@ class A64GuestRuntime::Impl final {
   std::mutex android_property_mutex_;
   std::map<std::string, std::uint64_t> android_property_handles_;
   std::map<std::uint64_t, std::string> android_property_names_;
-  std::uint64_t next_android_property_handle_ = 0x50524F5000000001ULL;
+  std::uint64_t next_android_property_handle_ = 0x50524F5000000010ULL;
   bool dl_error_pending_ = false;
   std::unique_ptr<Callbacks> callbacks_;
   std::unique_ptr<Dynarmic::A64::Jit> jit_;
