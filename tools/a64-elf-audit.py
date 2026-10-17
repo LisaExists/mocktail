@@ -379,6 +379,14 @@ PROTOTYPE_HOST_CALLS = {
     "dlopen", "dlsym", "dlclose", "dlerror", "dladdr",
     "__android_log_write", "__android_log_buf_write",
     "__android_log_is_loggable",
+    "__cxa_guard_acquire", "__cxa_guard_release", "__cxa_guard_abort",
+    "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock",
+    "pthread_mutex_trylock", "pthread_mutex_timedlock", "pthread_mutex_unlock",
+    "pthread_mutex_consistent", "pthread_rwlock_init", "pthread_rwlock_destroy",
+    "pthread_rwlock_rdlock", "pthread_rwlock_tryrdlock", "pthread_rwlock_wrlock",
+    "pthread_rwlock_trywrlock", "pthread_rwlock_unlock", "pthread_spin_init",
+    "pthread_spin_destroy", "pthread_spin_lock", "pthread_spin_trylock",
+    "pthread_spin_unlock", "pthread_self", "pthread_equal",
     "__mocktail_tlsdesc_static", "__stack_chk_fail",
 }
 
