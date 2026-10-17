@@ -22,7 +22,10 @@ struct JNINativeMethod {
 };
 
 typedef int32_t (*GetEnvFunction)(struct JavaVM_ *, void **, int32_t);
+typedef int32_t (*AttachCurrentThreadFunction)(struct JavaVM_ *, void **, void *);
+typedef int32_t (*DetachCurrentThreadFunction)(struct JavaVM_ *);
 typedef int32_t (*GetVersionFunction)(struct JNIEnv_ *);
+typedef int32_t (*GetJavaVMFunction)(struct JNIEnv_ *, struct JavaVM_ **);
 typedef void *(*FindClassFunction)(struct JNIEnv_ *, const char *);
 typedef void *(*NewStringUTFFunction)(struct JNIEnv_ *, const char *);
 typedef int32_t (*GetStringUTFLengthFunction)(struct JNIEnv_ *, void *);
@@ -71,7 +74,16 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   const void *const *vm_functions =
       (const void *const *)vm->functions;
   GetEnvFunction get_env = (GetEnvFunction)vm_functions[6];
-  if (get_env == 0) return -2;
+  AttachCurrentThreadFunction attach_current_thread =
+      (AttachCurrentThreadFunction)vm_functions[4];
+  DetachCurrentThreadFunction detach_current_thread =
+      (DetachCurrentThreadFunction)vm_functions[5];
+  AttachCurrentThreadFunction attach_current_thread_as_daemon =
+      (AttachCurrentThreadFunction)vm_functions[7];
+  if (get_env == 0 || attach_current_thread == 0 ||
+      detach_current_thread == 0 || attach_current_thread_as_daemon == 0) {
+    return -2;
+  }
 
   struct JNIEnv_ *env = 0;
   if (get_env(vm, (void **)&env, 0x00010006) != 0 ||
@@ -83,6 +95,8 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       (const void *const *)env->functions;
   GetVersionFunction get_version =
       (GetVersionFunction)jni_functions[4];
+  GetJavaVMFunction get_java_vm =
+      (GetJavaVMFunction)jni_functions[219];
   FindClassFunction find_class =
       (FindClassFunction)jni_functions[6];
   NewStringUTFFunction new_string_utf =
@@ -99,13 +113,33 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       (ExceptionClearFunction)jni_functions[17];
   RegisterNativesFunction register_natives =
       (RegisterNativesFunction)jni_functions[215];
-  if (get_version == 0 || find_class == 0 || new_string_utf == 0 ||
+  if (get_version == 0 || get_java_vm == 0 || find_class == 0 || new_string_utf == 0 ||
       get_string_utf_length == 0 || get_string_utf_chars == 0 ||
       release_string_utf_chars == 0 || exception_check == 0 ||
       exception_clear == 0 || register_natives == 0) {
     return -4;
   }
   if (get_version(env) < 0x00010006) return -5;
+
+  struct JavaVM_ *reported_vm = 0;
+  if (get_java_vm(env, &reported_vm) != 0 || reported_vm != vm) return -30;
+  struct JNIEnv_ *attached_env = 0;
+  if (attach_current_thread(vm, (void **)&attached_env, 0) != 0 ||
+      attached_env != env) return -31;
+  if (detach_current_thread(vm) != 0) return -32;
+  void *detached_env = 0;
+  if (get_env(vm, &detached_env, 0x00010006) != -2 ||
+      detached_env != 0) return -33;
+  if (detach_current_thread(vm) != -2) return -34;
+  attached_env = 0;
+  if (attach_current_thread_as_daemon(vm, (void **)&attached_env, 0) != 0 ||
+      attached_env != env) return -35;
+  if (detach_current_thread(vm) != 0) return -36;
+  attached_env = 0;
+  if (attach_current_thread(vm, (void **)&attached_env, 0) != 0 ||
+      attached_env != env) return -37;
+  if (attach_current_thread(
+          vm, (void **)(unsigned long long)0xDEADBEEF, 0) != -1) return -38;
 
   // Android's legacy property ABI must report the synthetic guest profile and
   // must not leak the host machine's actual properties.
