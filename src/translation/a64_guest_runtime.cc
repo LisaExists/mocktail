@@ -9,6 +9,7 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -890,6 +891,123 @@ class A64GuestRuntime::Impl final {
         error);
   }
 
+  bool RegisterAndroidLoggingApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "liblog.so", "", std::move(handler),
+                                  error);
+    };
+
+    auto read_log_fields = [this](
+        std::uint64_t tag_address, std::uint64_t message_address,
+        std::string* tag, std::string* message,
+        std::string* diagnostic) {
+      if (!ReadBoundedGuestCString(memory_, tag_address, 128, tag,
+                                   diagnostic)) {
+        return false;
+      }
+      if (!ReadBoundedGuestCString(memory_, message_address, 4096, message,
+                                   diagnostic)) {
+        return false;
+      }
+      return true;
+    };
+
+    auto emit_log = [](int priority, const std::string& tag,
+                       const std::string& message, int buffer_id) {
+      // Only guest-owned strings cross this boundary. Keep one physical host
+      // line per log record so guest newlines cannot forge log prefixes.
+      const char* priority_name = "UNKNOWN";
+      switch (priority) {
+        case 1: priority_name = "DEFAULT"; break;
+        case 2: priority_name = "VERBOSE"; break;
+        case 3: priority_name = "DEBUG"; break;
+        case 4: priority_name = "INFO"; break;
+        case 5: priority_name = "WARN"; break;
+        case 6: priority_name = "ERROR"; break;
+        case 7: priority_name = "FATAL"; break;
+        case 8: priority_name = "SILENT"; break;
+        default: break;
+      }
+      std::clog << "[Android guest " << priority_name;
+      if (buffer_id >= 0) std::clog << " buffer=" << buffer_id;
+      std::clog << "][" << tag << "] ";
+      for (const char character : message) {
+        if (character == '\\n') {
+          std::clog << "\\n";
+        } else if (character == '\\r') {
+          std::clog << "\\r";
+        } else {
+          std::clog << character;
+        }
+      }
+      std::clog << '\\n';
+    };
+
+    if (!register_one("__android_log_write",
+        [read_log_fields, emit_log](
+            const A64GuestHostCalls::Arguments& arguments) {
+          const auto priority = static_cast<std::int32_t>(arguments[0]);
+          if (priority < 0 || priority > 8) return A64HostCallResult{true, 0, {}};
+          std::string tag, message, diagnostic;
+          if (!read_log_fields(arguments[1], arguments[2], &tag, &message,
+                               &diagnostic)) {
+            return A64HostCallResult{
+                false, 0, "invalid guest pointers passed to __android_log_write: " +
+                              diagnostic};
+          }
+          emit_log(priority, tag, message, -1);
+          return A64HostCallResult{true, 1, {}};
+        })) return false;
+
+    if (!register_one("__android_log_buf_write",
+        [read_log_fields, emit_log](
+            const A64GuestHostCalls::Arguments& arguments) {
+          const auto buffer_id = static_cast<std::int32_t>(arguments[0]);
+          const auto priority = static_cast<std::int32_t>(arguments[1]);
+          if (buffer_id < 0 || priority < 0 || priority > 8) {
+            return A64HostCallResult{true, 0, {}};
+          }
+          std::string tag, message, diagnostic;
+          if (!read_log_fields(arguments[2], arguments[3], &tag, &message,
+                               &diagnostic)) {
+            return A64HostCallResult{
+                false, 0, "invalid guest pointers passed to __android_log_buf_write: " +
+                              diagnostic};
+          }
+          emit_log(priority, tag, message, buffer_id);
+          return A64HostCallResult{true, 1, {}};
+        })) return false;
+
+    if (!register_one("__android_log_is_loggable",
+        [read_log_fields](const A64GuestHostCalls::Arguments& arguments) {
+          const auto priority = static_cast<std::int32_t>(arguments[0]);
+          const auto default_priority = static_cast<std::int32_t>(arguments[2]);
+          if (priority < 0 || priority > 8 ||
+              default_priority < 0 || default_priority > 8 ||
+              priority == 8 || default_priority == 8) {
+            return A64HostCallResult{true, 0, {}};
+          }
+          // Validate a provided tag even though per-tag property overrides
+          // aren't emulated yet. A null tag uses only the caller's fallback.
+          if (arguments[1] != 0) {
+            std::string tag, message, diagnostic;
+            if (!ReadBoundedGuestCString(memory_, arguments[1], 128, &tag,
+                                         &diagnostic)) {
+              return A64HostCallResult{
+                  false, 0, "invalid tag passed to __android_log_is_loggable: " +
+                                diagnostic};
+            }
+          }
+          const auto effective_priority =
+              priority <= 1 ? default_priority : priority;
+          return A64HostCallResult{
+              true, effective_priority >= default_priority ? 1U : 0U, {}};
+        })) return false;
+
+    return true;
+  }
+
   bool RegisterDynamicLinkerApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -973,6 +1091,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidLoggingApi(&diagnostic)) {
+      return fail("failed to register Android liblog API: " + diagnostic);
     }
     if (!host_calls_.RegisterTlsGetAddr(tls_runtime_, main_thread_tls_,
                                         "libc.so", "", &diagnostic)) {
