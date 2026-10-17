@@ -115,6 +115,9 @@ class A64GuestJniBridge final {
   std::uint64_t next_string_handle_ = 0x4A4E530000000100ULL;
   bool registered_ = false;
   bool initialized_ = false;
+  // The first guest execution context is attached when the bridge is created.
+  // This is a single-context state flag, not a guest pthread registry.
+  bool current_thread_attached_ = true;
   bool pending_exception_ = false;
 };
 
