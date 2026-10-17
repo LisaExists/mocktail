@@ -171,18 +171,24 @@ unambiguous library basenames.
 By default, the probe loads the guest modules but does not call a guest
 function. A known test entrypoint can be called explicitly with `--call SYMBOL`,
 optional `--arg0` through `--arg7` register values, and a bounded
-`--budget`. `--run-initializers` explicitly executes ELF constructors before
-that call. Do not use arbitrary application entrypoints as test functions:
-JNI and Android lifecycle entrypoints require the Android objects and runtime
-services they expect.
+`--budget`. For raw `--call` entrypoints, `--run-initializers` is an explicit
+opt-in to execute ELF constructors first. JNI-focused modes (`--jni-onload`
+and `--call-native`) run dependency-ordered constructors automatically before
+`JNI_OnLoad`, matching the required loader order. The current JNI bridge can
+validate a limited `JNI_OnLoad`, track `RegisterNatives`, and invoke a registered
+static native whose arguments fit in AArch64 registers. Do not treat an arbitrary
+export as an application entrypoint: Java/ART objects and Android lifecycle
+services are not generally available.
 
-**This is not yet a complete Android APK launcher.** It does not implement the
-full Bionic system library set, ART/JNI environment, Android framework services,
-Activity lifecycle, or Roblox graphics/window integration in the AArch64 guest
-process. Real Roblox libraries may still stop at unsupported relocations or
-unresolved platform imports. The probe is intended to turn those failures into
-reproducible next steps; passing the synthetic tests alone does not mean Roblox
-is runnable.
+**This is not yet a complete Android APK launcher.** The prototype has only a
+small explicit Bionic/libc/API shim set and a narrow JNI test bridge; it does
+not provide ART, a Java heap, Android framework services, Activity lifecycle,
+guest pthread scheduling, runtime file-descriptor semantics, or Roblox
+graphics/window integration in the AArch64 process. Real Roblox libraries may
+still stop at unsupported relocations, unresolved imports, or runtime
+assumptions that need real Android services. The probe is intended to turn those
+failures into reproducible next steps; passing synthetic tests alone does not
+mean Roblox is runnable.
 
 ## Building
 
