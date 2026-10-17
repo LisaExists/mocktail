@@ -328,6 +328,32 @@ class ELFReportTests(unittest.TestCase):
             "memchr", "strcat", "strcasecmp", "__errno"
         }.issubset(set(catalog["prototype_host_call_symbols"])))
 
+    def test_single_thread_pthread_and_cxx_guard_shims_are_classified(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libc.so", "libc++_shared.so"],
+            "imports": [
+                {"name": "pthread_mutex_init", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "pthread_mutex_lock", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "pthread_self", "version": "",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__cxa_guard_acquire", "version": "",
+                 "provider": "libc++_shared.so", "binding": "GLOBAL", "tls": False},
+                {"name": "__cxa_guard_release", "version": "",
+                 "provider": "libc++_shared.so", "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        self.assertTrue({
+            "pthread_mutex_init", "pthread_mutex_lock", "pthread_self",
+            "__cxa_guard_acquire", "__cxa_guard_release",
+        }.issubset(set(catalog["prototype_host_call_symbols"])))
+
     def test_android_prop_info_thunks_are_in_the_known_runtime_set(self):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
