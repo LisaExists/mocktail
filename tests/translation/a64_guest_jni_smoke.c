@@ -50,6 +50,18 @@ extern int __android_log_buf_write(int buffer_id, int priority,
                                    const char *tag, const char *text);
 extern int __android_log_is_loggable(int priority, const char *tag,
                                      int default_priority);
+extern int __cxa_guard_acquire(unsigned long long *guard);
+extern void __cxa_guard_release(unsigned long long *guard);
+extern void __cxa_guard_abort(unsigned long long *guard);
+typedef unsigned long long mocktail_pthread_t;
+extern int pthread_mutex_init(void *mutex, const void *attributes);
+extern int pthread_mutex_destroy(void *mutex);
+extern int pthread_mutex_lock(void *mutex);
+extern int pthread_mutex_trylock(void *mutex);
+extern int pthread_mutex_timedlock(void *mutex, const void *timeout);
+extern int pthread_mutex_unlock(void *mutex);
+extern mocktail_pthread_t pthread_self(void);
+extern int pthread_equal(mocktail_pthread_t left, mocktail_pthread_t right);
 typedef int32_t (*RegisterNativesFunction)(
     struct JNIEnv_ *, void *, const struct JNINativeMethod *, int32_t);
 
@@ -181,6 +193,31 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (__system_property_serial(
           (const struct prop_info *)(unsigned long long)0xDEADBEEF) != 0) {
     return -44;
+  }
+
+  // Exercise C++ guard words and lock primitives with one guest context.
+  unsigned long long guard = 0;
+  if (__cxa_guard_acquire(&guard) != 1 || (guard & 2ULL) == 0) return -47;
+  if (__cxa_guard_acquire(&guard) != 0) return -48;
+  __cxa_guard_abort(&guard);
+  if (guard != 0) return -49;
+  if (__cxa_guard_acquire(&guard) != 1) return -50;
+  __cxa_guard_release(&guard);
+  if ((guard & 1ULL) == 0 || __cxa_guard_acquire(&guard) != 0) return -51;
+
+  unsigned long long mutex_storage[5] = {0};
+  if (pthread_mutex_init(mutex_storage, (const void *)0) != 0 ||
+      pthread_mutex_lock(mutex_storage) != 0 ||
+      pthread_mutex_trylock(mutex_storage) != 0 ||
+      pthread_mutex_timedlock(mutex_storage, (const void *)0) != 0 ||
+      pthread_mutex_unlock(mutex_storage) != 0 ||
+      pthread_mutex_destroy(mutex_storage) != 0) return -52;
+  const mocktail_pthread_t current_thread = pthread_self();
+  if (current_thread == 0 ||
+      !pthread_equal(current_thread, pthread_self()) ||
+      pthread_equal(current_thread, current_thread + 1) != 0) return -53;
+  if (pthread_mutex_lock((void *)(unsigned long long)0xDEADBEEF) != 22) {
+    return -54;
   }
 
   // The liblog bridge reads tag/message strings from guest memory, never
