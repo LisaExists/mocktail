@@ -53,7 +53,7 @@ cmake --build build-arm-translation --parallel 2 --target \
   mocktail_a64_translation_smoke
 
 ctest --test-dir build-arm-translation \
-  -R '^RobloxArmTranslation\\.' --output-on-failure --timeout 120
+  -R '^RobloxArmTranslation\.' --output-on-failure --timeout 120
 ```
 
 The build uses the installed Boost development headers and fetches the pinned Dynarmic source. If `aarch64-linux-gnu-gcc` and Clang are available, CMake also builds real linker-produced AArch64 ELF and Android-targeted ELF fixtures, which activate additional smoke tests. A passing synthetic test suite validates only the features those fixtures exercise.
