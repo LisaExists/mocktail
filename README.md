@@ -174,11 +174,19 @@ optional `--arg0` through `--arg7` register values, and a bounded
 `--budget`. For raw `--call` entrypoints, `--run-initializers` is an explicit
 opt-in to execute ELF constructors first. JNI-focused modes (`--jni-onload`
 and `--call-native`) run dependency-ordered constructors automatically before
-`JNI_OnLoad`, matching the required loader order. The current JNI bridge can
-validate a limited `JNI_OnLoad`, track `RegisterNatives`, and invoke a registered
-static native whose arguments fit in AArch64 registers. Do not treat an arbitrary
-export as an application entrypoint: Java/ART objects and Android lifecycle
-services are not generally available.
+`JNI_OnLoad`, matching the required loader order. For JNI-oriented APK probes, the wrapper also scans `classes.dex`,
+`classes2.dex`, and other root-level DEX entries (including DEX files in split
+APKs) and passes their class names to the guest `FindClass` bridge automatically.
+This avoids manually listing every class that `JNI_OnLoad` may request. Extra
+classes not represented in the supplied APKs can still be supplied through
+repeatable `--java-class` options to the native probe.
+
+The current JNI bridge can validate a limited `JNI_OnLoad`, track
+`RegisterNatives`, and invoke a registered static native whose arguments fit in
+AArch64 registers. The DEX scan only discovers class names: it does not provide
+Java method implementations, an ART heap, or Android framework behavior. Do not
+treat an arbitrary export as an application entrypoint: Java/ART objects and
+Android lifecycle services are not generally available.
 
 **This is not yet a complete Android APK launcher.** The prototype has only a
 small explicit Bionic/libc/API shim set (including synthetic Android properties,
