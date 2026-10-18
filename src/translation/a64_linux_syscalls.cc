@@ -620,6 +620,58 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
       return result;
     }
 
+    case kMadvise: {
+      if (arguments[0] % A64GuestMemory::kPageSize != 0) {
+        return ErrorResult(EINVAL);
+      }
+      std::uint64_t rounded_size = 0;
+      if (!RoundLength(arguments[1], &rounded_size) ||
+          rounded_size > std::numeric_limits<std::size_t>::max()) {
+        return ErrorResult(EINVAL);
+      }
+      if (!memory_.IsMapped(arguments[0],
+                            static_cast<std::size_t>(rounded_size))) {
+        return ErrorResult(ENOMEM);
+      }
+
+      // These four calls are advisory hints only; the sparse guest-memory
+      // backend has no host page cache to tune. All other currently recognized
+      // Linux MADV operations either change page contents/lifetime, fork
+      // inheritance, coredump policy, or physical page backing. Do not
+      // silently pretend those semantics are implemented.
+      switch (arguments[2]) {
+        case 0:  // MADV_NORMAL
+        case 1:  // MADV_RANDOM
+        case 2:  // MADV_SEQUENTIAL
+        case 3:  // MADV_WILLNEED
+          break;
+        case 4:  // MADV_DONTNEED
+        case 8:  // MADV_FREE
+        case 9:  // MADV_REMOVE
+        case 10: // MADV_DONTFORK
+        case 11: // MADV_DOFORK
+        case 12: // MADV_MERGEABLE
+        case 13: // MADV_UNMERGEABLE
+        case 14: // MADV_HUGEPAGE
+        case 15: // MADV_NOHUGEPAGE
+        case 16: // MADV_DONTDUMP
+        case 17: // MADV_DODUMP
+        case 18: // MADV_WIPEONFORK
+        case 19: // MADV_KEEPONFORK
+        case 20: // MADV_COLD
+        case 21: // MADV_PAGEOUT
+        case 22: // MADV_POPULATE_READ
+        case 23: // MADV_POPULATE_WRITE
+          return ErrorResult(ENOSYS);
+        default:
+          return ErrorResult(EINVAL);
+      }
+
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
     case kMunmap: {
       if (arguments[0] % A64GuestMemory::kPageSize != 0) {
         return ErrorResult(EINVAL);
