@@ -634,18 +634,31 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
         return ErrorResult(ENOMEM);
       }
 
-      // These four calls are advisory hints only; the sparse guest-memory
-      // backend has no host page cache to tune. All other currently recognized
-      // Linux MADV operations either change page contents/lifetime, fork
-      // inheritance, coredump policy, or physical page backing. Do not
-      // silently pretend those semantics are implemented.
+      // NORMAL/RANDOM/SEQUENTIAL/WILLNEED are advisory hints only; the
+      // sparse guest-memory backend has no host page cache to tune.
+      // DONTNEED is implemented for anonymous mappings by zeroing pages while
+      // preserving their permissions. It rejects ELF image pages because this
+      // prototype cannot fault their original contents back in. Other known
+      // operations remain unsupported rather than being silently ignored.
       switch (arguments[2]) {
         case 0:  // MADV_NORMAL
         case 1:  // MADV_RANDOM
         case 2:  // MADV_SEQUENTIAL
         case 3:  // MADV_WILLNEED
           break;
-        case 4:  // MADV_DONTNEED
+        case 4: {  // MADV_DONTNEED
+          std::string error;
+          if (!memory_.DiscardAnonymous(arguments[0], rounded_size, &error)) {
+            if (error.find("unmapped page") != std::string::npos) {
+              return ErrorResult(ENOMEM);
+            }
+            if (error.find("ELF image page") != std::string::npos) {
+              return ErrorResult(ENOSYS);
+            }
+            return ErrorResult(EINVAL);
+          }
+          break;
+        }
         case 8:  // MADV_FREE
         case 9:  // MADV_REMOVE
         case 10: // MADV_DONTFORK
