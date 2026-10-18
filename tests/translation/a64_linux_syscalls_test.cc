@@ -384,6 +384,19 @@ int main() {
               syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
                                 get_no_new_privs).value == 1,
           "prctl cannot unset NO_NEW_PRIVS after it is set");
+
+    bool rejected_nonzero_get_no_new_privs_arguments = true;
+    for (std::size_t index = 1; index <= 4; ++index) {
+      auto malformed_get = get_no_new_privs;
+      malformed_get[index] = 1;
+      rejected_nonzero_get_no_new_privs_arguments &=
+          IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl, malformed_get),
+                  EINVAL);
+    }
+    Check(rejected_nonzero_get_no_new_privs_arguments &&
+              syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                get_no_new_privs).value == 1,
+          "prctl PR_GET_NO_NEW_PRIVS rejects nonzero unused arguments without changing guest state");
     const std::array<std::uint64_t, 6> unknown_prctl{
         UINT64_MAX, 0, 0, 0, 0, 0};
     Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl, unknown_prctl),

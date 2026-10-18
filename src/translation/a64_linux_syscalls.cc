@@ -289,6 +289,12 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
         }
 
         case kPrGetNoNewPrivs: {
+          // Linux rejects nonzero arg2..arg5 for PR_GET_NO_NEW_PRIVS.
+          // Validate guest ABI arguments without forwarding anything to host.
+          if (arguments[1] != 0 || arguments[2] != 0 ||
+              arguments[3] != 0 || arguments[4] != 0) {
+            return ErrorResult(EINVAL);
+          }
           A64LinuxSyscallResult result;
           result.value = guest_no_new_privs_ ? 1U : 0U;
           return result;
