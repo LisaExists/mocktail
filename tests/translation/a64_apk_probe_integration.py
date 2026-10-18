@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import io
+import struct
 import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+
+
+def dex_for_class(descriptor: str) -> bytes:
+    """Build the minimal DEX type/string tables needed by the class-discovery test."""
+    encoded = descriptor.encode("ascii")
+    if len(encoded) >= 128:
+        raise ValueError("test descriptor is too long for its one-byte ULEB128 length")
+    string_ids_offset = 112
+    type_ids_offset = 116
+    string_data_offset = 120
+    string_data = bytes([len(encoded)]) + encoded + b"\0"
+    file_size = string_data_offset + len(string_data)
+    data = bytearray(file_size)
+    data[:8] = b"dex\n039\0"
+    struct.pack_into("<III", data, 32, file_size, 112, 0x12345678)
+    struct.pack_into("<II", data, 56, 1, string_ids_offset)
+    struct.pack_into("<II", data, 64, 1, type_ids_offset)
+    struct.pack_into("<I", data, string_ids_offset, string_data_offset)
+    struct.pack_into("<I", data, type_ids_offset, 0)
+    data[string_data_offset:] = string_data
+    return bytes(data)
 
 
 def run_probe(command: list[str], expected: tuple[str, ...], label: str) -> bool:
@@ -154,12 +177,12 @@ def main() -> int:
                 jni_apk, "w", compression=zipfile.ZIP_DEFLATED
             ) as apk:
                 apk.write(android_jni_elf, f"lib/arm64-v8a/{android_jni_elf.name}")
+                apk.writestr("classes.dex", dex_for_class("Lcom/mocktail/Smoke;"))
             jni_command = [
                 sys.executable, str(wrapper),
                 "--probe", str(probe),
                 "--root", android_jni_elf.name,
                 "--jni-onload",
-                "--java-class", "com/mocktail/Smoke",
                 "--budget", "10000",
                 str(jni_apk),
             ]
@@ -167,6 +190,7 @@ def main() -> int:
                 jni_command,
                 (
                     "Prepared 1 ARM64 library/libraries",
+                    "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
                     "Registered native methods: 1",
                     "com/mocktail/Smoke.nativeSum(II)I",
@@ -186,6 +210,7 @@ def main() -> int:
             ok &= run_probe(
                 native_command,
                 (
+                    "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
                     "Guest JNI native com/mocktail/Smoke.nativeSum(II)I returned X0=0x2a (42)",
                 ),
