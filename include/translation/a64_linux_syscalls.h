@@ -54,6 +54,7 @@ class A64LinuxSyscalls final {
   static constexpr std::uint64_t kRtSigprocmask = 135;
   static constexpr std::uint64_t kSetTidAddress = 96;
   static constexpr std::uint64_t kSetRobustList = 99;
+  static constexpr std::uint64_t kPrctl = 167;
 
   explicit A64LinuxSyscalls(A64GuestMemory& memory) noexcept;
   A64LinuxSyscallResult Dispatch(
@@ -70,6 +71,10 @@ class A64LinuxSyscalls final {
   std::uint64_t clear_child_tid_address_ = 0;
   // Stored for ABI bookkeeping only; robust-owner-death handling requires threads.
   std::uint64_t robust_list_head_address_ = 0;
+  std::array<char, 16> guest_thread_name_ = {
+      'm', 'o', 'c', 'k', 't', 'a', 'i', 'l', '-', 'g', 'u', 'e', 's', 't', '\0', '\0'};
+  std::uint64_t guest_dumpable_ = 1;
+  bool guest_no_new_privs_ = false;
 };
 
 }  // namespace mocktail::translation
