@@ -82,6 +82,18 @@ int main() {
                                        elf_result.image->image_size,
                                    4),
           "leaves holes outside the ELF unmapped");
+
+    const auto instruction_snapshot = instruction;
+    const auto image_page =
+        elf_result.image->segments.front().guest_address &
+        ~(A64GuestMemory::kPageSize - 1);
+    Check(!code_memory.DiscardAnonymous(image_page,
+                                        A64GuestMemory::kPageSize, &error) &&
+              error.find("ELF image page") != std::string::npos &&
+              code_memory.Read(elf_result.image->entry_point,
+                               instruction.data(), instruction.size()) &&
+              instruction == instruction_snapshot,
+          "MADV_DONTNEED refuses ELF image pages without corrupting code");
   }
 
   A64GuestMemory too_small(2U * A64GuestMemory::kPageSize);
@@ -136,6 +148,45 @@ int main() {
         "rejects mprotect ranges containing an unmapped page");
   Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
         "failed mprotect leaves earlier pages unchanged");
+
+  const auto second_page_address =
+      anonymous_base + A64GuestMemory::kPageSize;
+  Check(anonymous_memory.Write(second_page_address, &sentinel,
+                               sizeof(sentinel)),
+        "writes sentinel data to the second anonymous page");
+  const bool rejected_partial_discard = !anonymous_memory.DiscardAnonymous(
+      anonymous_base, 3U * A64GuestMemory::kPageSize, &error);
+  std::uint64_t first_before_discard = 0;
+  std::uint64_t second_before_discard = 0;
+  const bool read_before_discard =
+      anonymous_memory.Read(anonymous_base, &first_before_discard,
+                            sizeof(first_before_discard)) &&
+      anonymous_memory.Read(second_page_address, &second_before_discard,
+                            sizeof(second_before_discard));
+  Check(rejected_partial_discard && read_before_discard &&
+            first_before_discard == sentinel &&
+            second_before_discard == sentinel &&
+            error.find("unmapped page") != std::string::npos,
+        "failed multi-page discard validates the whole range before zeroing");
+  const bool discarded_anonymous_pages = anonymous_memory.DiscardAnonymous(
+      anonymous_base, 2U * A64GuestMemory::kPageSize, &error);
+  std::uint64_t first_after_discard = UINT64_MAX;
+  std::uint64_t second_after_discard = UINT64_MAX;
+  const bool read_after_discard =
+      anonymous_memory.Read(anonymous_base, &first_after_discard,
+                            sizeof(first_after_discard)) &&
+      anonymous_memory.Read(second_page_address, &second_after_discard,
+                            sizeof(second_after_discard));
+  Check(discarded_anonymous_pages && read_after_discard &&
+            first_after_discard == 0 && second_after_discard == 0 &&
+            anonymous_memory.mapped_bytes() == 3U * A64GuestMemory::kPageSize,
+        "discarding anonymous pages zeroes contents but retains mappings");
+  Check(anonymous_memory.Write(anonymous_base, &sentinel, sizeof(sentinel)),
+        "discarded anonymous pages retain their original write permissions");
+  Check(anonymous_memory.DiscardAnonymous(second_mapping,
+                                           A64GuestMemory::kPageSize, &error) &&
+            !anonymous_memory.Write(second_mapping, &sentinel, sizeof(sentinel)),
+        "discard preserves permissions on a read-only anonymous page");
   Check(anonymous_memory.Unmap(anonymous_base +
                                    A64GuestMemory::kPageSize,
                                2U * A64GuestMemory::kPageSize, &error),
