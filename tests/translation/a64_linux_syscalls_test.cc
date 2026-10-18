@@ -93,6 +93,37 @@ int main() {
                 EINVAL),
         "mprotect rejects an unaligned guest address");
 
+  const std::array<std::uint64_t, 6> madvise_normal{base, 1, 0, 0, 0, 0};
+  const std::array<std::uint64_t, 6> madvise_willneed{base, 1, 3, 0, 0, 0};
+  Check(syscalls.Dispatch(A64LinuxSyscalls::kMadvise, madvise_normal).value == 0 &&
+            syscalls.Dispatch(A64LinuxSyscalls::kMadvise, madvise_willneed).value == 0,
+        "madvise accepts safe NORMAL and WILLNEED hints on mapped guest pages");
+  auto misaligned_madvise = madvise_normal;
+  misaligned_madvise[0] = base + 1;
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                  misaligned_madvise), EINVAL),
+        "madvise rejects unaligned guest addresses");
+  auto zero_length_madvise = madvise_normal;
+  zero_length_madvise[1] = 0;
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                  zero_length_madvise), EINVAL),
+        "madvise rejects zero-length ranges");
+  const std::array<std::uint64_t, 6> unmapped_madvise{
+      0x900000ULL, A64GuestMemory::kPageSize, 0, 0, 0, 0};
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                  unmapped_madvise), ENOMEM),
+        "madvise rejects ranges containing unmapped guest pages");
+  auto unsupported_madvise = madvise_normal;
+  unsupported_madvise[2] = 4;  // MADV_DONTNEED changes content semantics.
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                  unsupported_madvise), ENOSYS),
+        "madvise does not fake unsupported DONTNEED content-discard semantics");
+  auto invalid_madvise = madvise_normal;
+  invalid_madvise[2] = 7;  // Not a Linux AArch64 MADV value.
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                  invalid_madvise), EINVAL),
+        "madvise rejects unknown advice values");
+
   const std::array<std::uint64_t, 6> invalid_flags{
       0, 4096, 3, 0x32, std::numeric_limits<std::uint64_t>::max(), 0};
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap, invalid_flags),
