@@ -301,6 +301,20 @@ int main() {
     Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask,
                                     invalid_old_signal_set), EFAULT),
           "rt_sigprocmask rejects an unwritable guest old-mask buffer");
+    auto invalid_signal_how = set_guest_mask;
+    invalid_signal_how[0] = 3;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask,
+                                    invalid_signal_how), EINVAL),
+          "rt_sigprocmask rejects unsupported signal-mask operations");
+    const auto query_after_invalid_mask =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, query_guest_mask);
+    current_signal_mask = 0;
+    const bool read_after_invalid_mask = memory.Read(
+        kGuestSyscallScratch + 16, &current_signal_mask,
+        sizeof(current_signal_mask));
+    Check(query_after_invalid_mask.value == 0 && read_after_invalid_mask &&
+              current_signal_mask == (kSignalTwo | kSignalThree),
+          "failed rt_sigprocmask calls leave the active guest mask unchanged");
 
     const std::array<std::uint64_t, 6> uname_arguments{
         kGuestSyscallScratch, 0, 0, 0, 0, 0};
