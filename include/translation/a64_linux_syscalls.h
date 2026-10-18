@@ -51,6 +51,7 @@ class A64LinuxSyscalls final {
   static constexpr std::uint64_t kMunmap = 215;
   static constexpr std::uint64_t kMmap = 222;
   static constexpr std::uint64_t kMprotect = 226;
+  static constexpr std::uint64_t kRtSigprocmask = 135;
 
   explicit A64LinuxSyscalls(A64GuestMemory& memory) noexcept;
   A64LinuxSyscallResult Dispatch(
@@ -60,6 +61,9 @@ class A64LinuxSyscalls final {
  private:
   A64GuestMemory& memory_;
   std::uint64_t program_break_ = kInitialProgramBreak;
+  // Linux AArch64 exposes a 64-signal mask as one 8-byte kernel sigset.
+  // This state models the runtime's single guest execution context only.
+  std::uint64_t guest_signal_mask_ = 0;
 };
 
 }  // namespace mocktail::translation
