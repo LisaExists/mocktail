@@ -86,6 +86,7 @@ void PrintUsage(const char* program) {
       << "  --call-native CLASS NAME SIGNATURE\n"
       << "                           Run JNI_OnLoad, then invoke a registered static native\n"
       << "  --java-class NAME        Add a class name available to FindClass (repeatable)\n"
+      << "  --java-classes-file PATH Read JNI slash-form class names, one per line\n"
       << "  --arg0 VALUE ...        For --call: set X0-X7; for --call-native: Java args 0-5\n"
       << "  --budget COUNT          Guest instruction budget for --call/--jni-onload\n"
       << "  --memory-mib COUNT      Guest memory limit (16 through 16384 MiB)\n"
@@ -114,6 +115,7 @@ int main(int argc, char** argv) {
   std::string native_signature;
   std::vector<std::string> external_dependencies;
   std::vector<std::string> java_classes;
+  std::vector<std::string> java_class_list_files;
   bool list_exports = false;
   bool run_initializers = false;
   bool jni_onload = false;
@@ -170,6 +172,12 @@ int main(int argc, char** argv) {
         return Fail("--java-class requires a non-empty JNI slash-form name such as com/example/Native");
       }
       java_classes.push_back(std::move(class_name));
+      continue;
+    }
+    if (option == "--java-classes-file") {
+      std::string list_path;
+      if (!take_value("--java-classes-file", &list_path)) return 2;
+      java_class_list_files.push_back(std::move(list_path));
       continue;
     }
     if (option == "--external-dependency") {
@@ -277,6 +285,47 @@ int main(int argc, char** argv) {
       }
     }
   }
+  if (!java_class_list_files.empty() && !jni_onload && !call_native) {
+    return Fail("--java-classes-file requires --jni-onload or --call-native");
+  }
+
+  // APK/APKS wrappers pass class names gathered from DEX type tables as a
+  // newline-delimited file. Avoid expanding thousands of class names into
+  // argv and hitting the host's ARG_MAX limit.
+  constexpr std::size_t kMaximumJavaClassListBytes = 64U * 1024U * 1024U;
+  constexpr std::size_t kMaximumJavaClasses = 250000;
+  std::size_t class_list_bytes = 0;
+  for (const auto& list_path : java_class_list_files) {
+    std::ifstream list_file(list_path, std::ios::binary);
+    if (!list_file) return Fail("cannot open Java class list: " + list_path);
+    std::string line;
+    while (std::getline(list_file, line)) {
+      if (line.size() >= kMaximumJavaClassListBytes ||
+          class_list_bytes > kMaximumJavaClassListBytes - (line.size() + 1U)) {
+        return Fail("Java class list exceeds the 64 MiB safety limit");
+      }
+      class_list_bytes += line.size() + 1U;
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      if (line.empty()) continue;
+      if (line.size() > 4096 || line.front() == '/' || line.back() == '/' ||
+          line.find('.') != std::string::npos ||
+          line.find(';') != std::string::npos ||
+          line.find('[') != std::string::npos ||
+          line.find(']') != std::string::npos ||
+          line.find('\0') != std::string::npos ||
+          line.find("//") != std::string::npos) {
+        return Fail("Java class list contains an invalid JNI slash-form name");
+      }
+      if (java_classes.size() >= kMaximumJavaClasses) {
+        return Fail("Java class list exceeds the 250000 class safety limit");
+      }
+      java_classes.push_back(line);
+    }
+    if (list_file.bad()) {
+      return Fail("failed while reading Java class list: " + list_path);
+    }
+  }
+
   if (run_initializers && call_symbol.empty() && !jni_onload && !call_native) {
     return Fail("--run-initializers requires --call, --jni-onload, or --call-native");
   }
