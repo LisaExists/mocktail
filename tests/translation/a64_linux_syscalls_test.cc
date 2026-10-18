@@ -98,6 +98,34 @@ int main() {
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap, invalid_flags),
                 EINVAL),
         "mmap rejects MAP_FIXED rather than replacing existing guest memory");
+
+  const std::array<std::uint64_t, 6> fixed_noreplace_collision{
+      base, A64GuestMemory::kPageSize, 3, 0x100022,
+      std::numeric_limits<std::uint64_t>::max(), 0};
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap,
+                                  fixed_noreplace_collision), EEXIST) &&
+            memory.IsMapped(base, A64GuestMemory::kPageSize),
+        "MAP_FIXED_NOREPLACE reports EEXIST without replacing an occupied page");
+  auto fixed_noreplace_success = fixed_noreplace_collision;
+  fixed_noreplace_success[0] = base + 0x10000;
+  const auto fixed_noreplace_result =
+      syscalls.Dispatch(A64LinuxSyscalls::kMmap, fixed_noreplace_success);
+  Check(fixed_noreplace_result.value == fixed_noreplace_success[0] &&
+            memory.IsMapped(fixed_noreplace_success[0],
+                            A64GuestMemory::kPageSize),
+        "MAP_FIXED_NOREPLACE maps an available aligned guest address exactly");
+  if (fixed_noreplace_result.value == fixed_noreplace_success[0]) {
+    const std::array<std::uint64_t, 6> cleanup_fixed_noreplace{
+        fixed_noreplace_result.value, A64GuestMemory::kPageSize, 0, 0, 0, 0};
+    static_cast<void>(syscalls.Dispatch(A64LinuxSyscalls::kMunmap,
+                                        cleanup_fixed_noreplace));
+  }
+  auto misaligned_fixed_noreplace = fixed_noreplace_success;
+  misaligned_fixed_noreplace[0] += 1;
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap,
+                                  misaligned_fixed_noreplace), EINVAL),
+        "MAP_FIXED_NOREPLACE rejects unaligned guest addresses");
+
   const std::array<std::uint64_t, 6> file_mapping{0, 4096, 1, 2, 0, 0};
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMmap, file_mapping),
                 ENOSYS),
