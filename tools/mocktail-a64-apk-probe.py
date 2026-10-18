@@ -56,7 +56,7 @@ def parse_dex_class_names(data: bytes) -> list[str]:
     tables, and descriptor strings. It never parses or executes bytecode.
     Returned names use JNI slash form (for example, com/example/Native).
     """
-    if len(data) < 112 or data[:4] != b"dex\\n":
+    if len(data) < 112 or data[:4] != b"dex\n":
         raise ValueError("missing or truncated DEX header")
     if data[4:7] not in SUPPORTED_DEX_VERSIONS or data[7] != 0:
         raise ValueError("unsupported DEX version/magic")
@@ -94,7 +94,7 @@ def parse_dex_class_names(data: bytes) -> list[str]:
         if cursor < header_size or cursor >= file_size:
             raise ValueError("DEX string data offset is outside the file")
         _utf16_length, cursor = _read_uleb128(data, cursor)
-        end = data.find(b"\\0", cursor, min(file_size, cursor + MAX_DEX_STRING_BYTES + 1))
+        end = data.find(b"\0", cursor, min(file_size, cursor + MAX_DEX_STRING_BYTES + 1))
         if end < 0:
             raise ValueError("DEX descriptor string is unterminated or exceeds 4096 bytes")
         encoded = data[cursor:end]
@@ -123,7 +123,7 @@ def parse_dex_class_names(data: bytes) -> list[str]:
 
 
 def _is_root_dex_member(name: str) -> bool:
-    if "/" in name or "\\\\" in name:
+    if "/" in name or "\\" in name:
         return False
     if name == "classes.dex":
         return True
@@ -556,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"warning: {warning}", file=sys.stderr)
             if dex_classes:
                 class_list_path = Path(directory) / "java-classes.txt"
-                class_list_path.write_text("\\n".join(dex_classes) + "\\n", encoding="utf-8")
+                class_list_path.write_text("\n".join(dex_classes) + "\n", encoding="utf-8")
                 command.extend(["--java-classes-file", str(class_list_path)])
                 print(
                     f"Seeded JNI FindClass with {len(dex_classes)} class name(s) from APK DEX metadata.",
