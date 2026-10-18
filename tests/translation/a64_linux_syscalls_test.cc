@@ -321,6 +321,29 @@ int main() {
     Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kUname, invalid_uname),
                   EFAULT),
           "uname rejects an unmapped guest output pointer");
+
+    constexpr std::uint64_t kClearTidAddress = kGuestSyscallScratch + 64;
+    const std::uint32_t initial_tid_word = 0xAABBCCDDU;
+    const bool initialized_tid_word = memory.Write(
+        kClearTidAddress, &initial_tid_word, sizeof(initial_tid_word));
+    const std::array<std::uint64_t, 6> set_tid_address{
+        kClearTidAddress, 0, 0, 0, 0, 0};
+    const auto set_tid_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kSetTidAddress, set_tid_address);
+    Check(initialized_tid_word &&
+              set_tid_result.value == A64LinuxSyscalls::kGuestThreadId,
+          "set_tid_address returns the synthetic guest TID without exposing it to the host");
+
+    const std::array<std::uint64_t, 6> set_robust_list{
+        kGuestSyscallScratch, 3U * sizeof(std::uint64_t), 0, 0, 0, 0};
+    Check(syscalls.Dispatch(A64LinuxSyscalls::kSetRobustList,
+                            set_robust_list).value == 0,
+          "set_robust_list accepts the AArch64 kernel robust-list-head size");
+    auto invalid_robust_list = set_robust_list;
+    invalid_robust_list[1] -= 8;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kSetRobustList,
+                                    invalid_robust_list), EINVAL),
+          "set_robust_list rejects an incorrect structure size");
   }
 
   const auto guest_pid = syscalls.Dispatch(A64LinuxSyscalls::kGetPid, empty_arguments);
@@ -379,6 +402,11 @@ int main() {
       syscalls.Dispatch(A64LinuxSyscalls::kExitGroup, exit_args);
   Check(exit_result.should_exit && exit_result.exit_status == 7,
         "exit_group requests guest-process termination without exiting the host");
+  std::uint32_t cleared_tid_word = UINT32_MAX;
+  const bool read_cleared_tid = memory.Read(
+      0x500040ULL, &cleared_tid_word, sizeof(cleared_tid_word));
+  Check(read_cleared_tid && cleared_tid_word == 0,
+        "guest thread exit clears the registered clear_child_tid word in guest memory");
   std::cout << failures << " guest syscall test(s) failed\n";
   return failures == 0 ? 0 : 1;
 }
