@@ -160,6 +160,54 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
     std::uint64_t number,
     const std::array<std::uint64_t, 6>& arguments) {
   switch (number) {
+    case kRtSigprocmask: {
+      // Linux AArch64 uses an 8-byte kernel sigset even though libc's public
+      // sigset_t is larger. Model only the current guest execution context;
+      // this updates virtual guest state and never changes the host mask.
+      if (arguments[3] != sizeof(std::uint64_t)) {
+        return ErrorResult(EINVAL);
+      }
+
+      std::uint64_t requested_mask = 0;
+      if (arguments[1] != 0 &&
+          !memory_.Read(arguments[1], &requested_mask,
+                        sizeof(requested_mask))) {
+        return ErrorResult(EFAULT);
+      }
+
+      const auto previous_mask = guest_signal_mask_;
+      if (arguments[2] != 0 &&
+          !memory_.Write(arguments[2], &previous_mask,
+                         sizeof(previous_mask))) {
+        return ErrorResult(EFAULT);
+      }
+
+      if (arguments[1] != 0) {
+        // SIGKILL (9) and SIGSTOP (19) cannot be blocked by Linux.
+        constexpr std::uint64_t kUnblockableSignals =
+            (std::uint64_t{1} << (9U - 1U)) |
+            (std::uint64_t{1} << (19U - 1U));
+        const auto mask = requested_mask & ~kUnblockableSignals;
+        switch (arguments[0]) {
+          case 0:  // SIG_BLOCK
+            guest_signal_mask_ |= mask;
+            break;
+          case 1:  // SIG_UNBLOCK
+            guest_signal_mask_ &= ~mask;
+            break;
+          case 2:  // SIG_SETMASK
+            guest_signal_mask_ = mask;
+            break;
+          default:
+            return ErrorResult(EINVAL);
+        }
+      }
+
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
     case kGetRandom: {
 #if defined(__linux__)
       constexpr std::uint64_t kMaximumGetRandomReturn = 32ULL * 1024ULL * 1024ULL;
