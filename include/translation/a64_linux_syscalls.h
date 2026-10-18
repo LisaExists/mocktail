@@ -52,6 +52,8 @@ class A64LinuxSyscalls final {
   static constexpr std::uint64_t kMmap = 222;
   static constexpr std::uint64_t kMprotect = 226;
   static constexpr std::uint64_t kRtSigprocmask = 135;
+  static constexpr std::uint64_t kSetTidAddress = 96;
+  static constexpr std::uint64_t kSetRobustList = 99;
 
   explicit A64LinuxSyscalls(A64GuestMemory& memory) noexcept;
   A64LinuxSyscallResult Dispatch(
@@ -64,6 +66,10 @@ class A64LinuxSyscalls final {
   // Linux AArch64 exposes a 64-signal mask as one 8-byte kernel sigset.
   // This state models the runtime's single guest execution context only.
   std::uint64_t guest_signal_mask_ = 0;
+  // clear_child_tid is guest memory and is cleared on guest thread exit.
+  std::uint64_t clear_child_tid_address_ = 0;
+  // Stored for ABI bookkeeping only; robust-owner-death handling requires threads.
+  std::uint64_t robust_list_head_address_ = 0;
 };
 
 }  // namespace mocktail::translation
