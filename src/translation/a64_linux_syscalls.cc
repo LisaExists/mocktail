@@ -36,6 +36,15 @@ constexpr std::uint64_t kMapAllowedFlags =
     kMapShared | kMapPrivate | kMapAnonymous | kMapNoReserve | kMapStack |
     kMapFixedNoReplace;
 
+// Numeric prctl options are part of the Linux userspace ABI. These operations
+// affect only virtual guest state and must never call the host's prctl().
+constexpr std::uint64_t kPrGetDumpable = 3;
+constexpr std::uint64_t kPrSetDumpable = 4;
+constexpr std::uint64_t kPrSetName = 15;
+constexpr std::uint64_t kPrGetName = 16;
+constexpr std::uint64_t kPrSetNoNewPrivs = 38;
+constexpr std::uint64_t kPrGetNoNewPrivs = 39;
+
 A64LinuxSyscallResult ErrorResult(int error) {
   A64LinuxSyscallResult result;
   result.value = static_cast<std::uint64_t>(
@@ -209,6 +218,85 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
       A64LinuxSyscallResult result;
       result.value = 0;
       return result;
+    }
+
+    case kPrctl: {
+      // Only expose options whose state can be represented honestly by this
+      // single-context prototype. No host credentials, process flags or thread
+      // name are modified.
+      switch (arguments[0]) {
+        case kPrSetName: {
+          if (arguments[1] == 0) return ErrorResult(EFAULT);
+          std::array<char, 16> name{};
+          for (std::size_t index = 0; index < name.size(); ++index) {
+            if (arguments[1] >
+                std::numeric_limits<std::uint64_t>::max() - index) {
+              return ErrorResult(EFAULT);
+            }
+            char character = '\0';
+            if (!memory_.Read(arguments[1] + index, &character,
+                              sizeof(character))) {
+              return ErrorResult(EFAULT);
+            }
+            if (character == '\0') break;
+            // Linux TASK_COMM_LEN is 16 bytes, including the final NUL.
+            // Truncate longer names exactly at the 15-byte payload limit.
+            if (index + 1U < name.size()) name[index] = character;
+          }
+          guest_thread_name_ = name;
+          A64LinuxSyscallResult result;
+          result.value = 0;
+          return result;
+        }
+
+        case kPrGetName: {
+          if (arguments[1] == 0 ||
+              !memory_.Write(arguments[1], guest_thread_name_.data(),
+                             guest_thread_name_.size())) {
+            return ErrorResult(EFAULT);
+          }
+          A64LinuxSyscallResult result;
+          result.value = 0;
+          return result;
+        }
+
+        case kPrSetDumpable: {
+          if (arguments[1] > 1) return ErrorResult(EINVAL);
+          guest_dumpable_ = arguments[1];
+          A64LinuxSyscallResult result;
+          result.value = 0;
+          return result;
+        }
+
+        case kPrGetDumpable: {
+          A64LinuxSyscallResult result;
+          result.value = guest_dumpable_;
+          return result;
+        }
+
+        case kPrSetNoNewPrivs: {
+          // The Linux flag is irreversible. Reject malformed calls instead
+          // of pretending they changed host or guest security policy.
+          if (arguments[1] != 1 || arguments[2] != 0 ||
+              arguments[3] != 0 || arguments[4] != 0) {
+            return ErrorResult(EINVAL);
+          }
+          guest_no_new_privs_ = true;
+          A64LinuxSyscallResult result;
+          result.value = 0;
+          return result;
+        }
+
+        case kPrGetNoNewPrivs: {
+          A64LinuxSyscallResult result;
+          result.value = guest_no_new_privs_ ? 1U : 0U;
+          return result;
+        }
+
+        default:
+          // Unknown options return EINVAL, as Linux prctl does.
+          return ErrorResult(EINVAL);
+      }
     }
 
     case kSetTidAddress: {
