@@ -316,6 +316,80 @@ int main() {
               current_signal_mask == (kSignalTwo | kSignalThree),
           "failed rt_sigprocmask calls leave the active guest mask unchanged");
 
+    // prctl virtualizes a narrow subset of metadata for the current guest
+    // context. These options must never change the real host process state.
+    const char requested_thread_name[] = "abcdefghijklmnopq";
+    const bool wrote_requested_thread_name = memory.Write(
+        kGuestSyscallScratch + 32, requested_thread_name,
+        sizeof(requested_thread_name));
+    const std::array<std::uint64_t, 6> set_thread_name{
+        15, kGuestSyscallScratch + 32, 0, 0, 0, 0};  // PR_SET_NAME
+    const auto set_thread_name_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kPrctl, set_thread_name);
+    const std::array<std::uint64_t, 6> get_thread_name{
+        16, kGuestSyscallScratch + 64, 0, 0, 0, 0};  // PR_GET_NAME
+    const auto get_thread_name_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kPrctl, get_thread_name);
+    std::array<char, 16> actual_thread_name{};
+    const bool read_thread_name = memory.Read(
+        kGuestSyscallScratch + 64, actual_thread_name.data(),
+        actual_thread_name.size());
+    Check(wrote_requested_thread_name && set_thread_name_result.value == 0 &&
+              get_thread_name_result.value == 0 && read_thread_name &&
+              std::string(actual_thread_name.data()) == "abcdefghijklmno",
+          "prctl set/get name keeps a NUL-terminated 15-byte guest thread name");
+
+    auto invalid_thread_name = set_thread_name;
+    invalid_thread_name[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                    invalid_thread_name), EFAULT),
+          "prctl PR_SET_NAME rejects an unreadable guest string");
+    auto invalid_thread_name_output = get_thread_name;
+    invalid_thread_name_output[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                    invalid_thread_name_output), EFAULT),
+          "prctl PR_GET_NAME rejects an unwritable guest buffer");
+
+    const std::array<std::uint64_t, 6> set_dumpable{4, 0, 0, 0, 0, 0};
+    const std::array<std::uint64_t, 6> get_dumpable{3, 0, 0, 0, 0, 0};
+    const auto set_dumpable_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kPrctl, set_dumpable);
+    const auto get_dumpable_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kPrctl, get_dumpable);
+    Check(set_dumpable_result.value == 0 && get_dumpable_result.value == 0,
+          "prctl PR_SET_DUMPABLE and PR_GET_DUMPABLE use guest-only state");
+    auto invalid_dumpable = set_dumpable;
+    invalid_dumpable[1] = 2;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                    invalid_dumpable), EINVAL) &&
+              syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                get_dumpable).value == 0,
+          "prctl rejects invalid dumpable values without changing guest state");
+    const std::array<std::uint64_t, 6> restore_dumpable{4, 1, 0, 0, 0, 0};
+    Check(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                            restore_dumpable).value == 0,
+          "prctl can restore the guest dumpable flag");
+
+    const std::array<std::uint64_t, 6> set_no_new_privs{38, 1, 0, 0, 0, 0};
+    const std::array<std::uint64_t, 6> get_no_new_privs{39, 0, 0, 0, 0, 0};
+    Check(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                            set_no_new_privs).value == 0 &&
+              syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                get_no_new_privs).value == 1,
+          "prctl PR_SET_NO_NEW_PRIVS is recorded in guest state");
+    auto attempt_unset_no_new_privs = set_no_new_privs;
+    attempt_unset_no_new_privs[1] = 0;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                    attempt_unset_no_new_privs), EINVAL) &&
+              syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                get_no_new_privs).value == 1,
+          "prctl cannot unset NO_NEW_PRIVS after it is set");
+    const std::array<std::uint64_t, 6> unknown_prctl{
+        UINT64_MAX, 0, 0, 0, 0, 0};
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl, unknown_prctl),
+                  EINVAL),
+          "prctl rejects unknown options instead of forwarding them to the host");
+
     const std::array<std::uint64_t, 6> uname_arguments{
         kGuestSyscallScratch, 0, 0, 0, 0, 0};
     const auto uname_result =
