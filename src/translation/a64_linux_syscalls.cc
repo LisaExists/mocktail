@@ -211,6 +211,28 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
       return result;
     }
 
+    case kSetTidAddress: {
+      // The runtime has one guest execution context. Keep clear_child_tid in
+      // guest address space; never pass this guest pointer to the host kernel.
+      clear_child_tid_address_ = arguments[0];
+      A64LinuxSyscallResult result;
+      result.value = kGuestThreadId;
+      return result;
+    }
+
+    case kSetRobustList: {
+      // struct robust_list_head is three 64-bit fields on AArch64. The head
+      // is retained as metadata, but owner-death recovery is not implemented
+      // because the prototype does not schedule concurrent guest threads.
+      if (arguments[1] != 3U * sizeof(std::uint64_t)) {
+        return ErrorResult(EINVAL);
+      }
+      robust_list_head_address_ = arguments[0];
+      A64LinuxSyscallResult result;
+      result.value = 0;
+      return result;
+    }
+
     case kGetRandom: {
 #if defined(__linux__)
       constexpr std::uint64_t kMaximumGetRandomReturn = 32ULL * 1024ULL * 1024ULL;
@@ -509,6 +531,15 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
 
     case kExit:
     case kExitGroup: {
+      if (clear_child_tid_address_ != 0) {
+        const std::uint32_t cleared_tid = 0;
+        // The Linux kernel also futex-wakes waiters here. Guest futex/thread
+        // scheduling is still absent, but clearing the guest word preserves
+        // the memory-side effect without waking any host thread.
+        static_cast<void>(memory_.Write(clear_child_tid_address_, &cleared_tid,
+                                        sizeof(cleared_tid)));
+        clear_child_tid_address_ = 0;
+      }
       A64LinuxSyscallResult result;
       result.value = 0;
       result.should_exit = true;
