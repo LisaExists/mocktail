@@ -137,6 +137,21 @@ class DexClassDiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container size"):
             MODULE.parse_dex_class_names(bytes(data))
 
+    def test_discovers_classes_from_dex_041_container_in_apk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            apk_path = Path(directory) / "client-android16.apk"
+            with zipfile.ZipFile(apk_path, "w") as archive:
+                archive.writestr(
+                    "classes.dex",
+                    make_dex041_container([
+                        ["Lcom/mocktail/Smoke;"],
+                        ["Landroid/os/Build;"],
+                    ]),
+                )
+            classes, warnings = MODULE.collect_apk_java_classes([apk_path])
+            self.assertEqual(classes, ["android/os/Build", "com/mocktail/Smoke"])
+            self.assertEqual(warnings, [])
+
     def test_discovers_classes_from_apk_and_multidex_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             apk_path = Path(directory) / "client.apk"
