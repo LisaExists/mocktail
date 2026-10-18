@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include "translation/a64_elf_loader.h"
 #include "translation/a64_guest_memory.h"
@@ -129,6 +130,8 @@ int main() {
             !memory.Write(base, &value, sizeof(value)),
         "MADV_DONTNEED zeroes anonymous guest memory without changing permissions");
 
+  A64GuestMemory image_memory(64U * 1024U);
+  A64LinuxSyscalls image_syscalls(image_memory);
   mocktail::translation::A64LoadedImage backing_image;
   mocktail::translation::A64LoadSegment backing_segment;
   backing_segment.guest_address = 0x700000ULL;
@@ -136,16 +139,16 @@ int main() {
   backing_segment.flags = 4U;  // PF_R
   backing_segment.bytes.resize(A64GuestMemory::kPageSize, 0x5A);
   backing_image.segments.push_back(std::move(backing_segment));
-  const bool mapped_image = memory.MapImage(backing_image);
+  const bool mapped_image = image_memory.MapImage(backing_image);
   std::uint8_t image_sentinel = 0;
-  Check(mapped_image && memory.Read(0x700000ULL, &image_sentinel, 1) &&
+  Check(mapped_image && image_memory.Read(0x700000ULL, &image_sentinel, 1) &&
             image_sentinel == 0x5A,
         "maps an ELF-backed guest page for discard-safety validation");
   const std::array<std::uint64_t, 6> discard_image{
       0x700000ULL, 1, 4, 0, 0, 0};
-  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise, discard_image),
-                ENOSYS) &&
-            memory.Read(0x700000ULL, &image_sentinel, 1) &&
+  Check(IsError(image_syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                        discard_image), ENOSYS) &&
+            image_memory.Read(0x700000ULL, &image_sentinel, 1) &&
             image_sentinel == 0x5A,
         "MADV_DONTNEED refuses ELF image pages without losing reloadable bytes");
   auto unsupported_madvise = madvise_normal;
