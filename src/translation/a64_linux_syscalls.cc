@@ -44,6 +44,7 @@ constexpr std::uint64_t kPrSetName = 15;
 constexpr std::uint64_t kPrGetName = 16;
 constexpr std::uint64_t kPrSetNoNewPrivs = 38;
 constexpr std::uint64_t kPrGetNoNewPrivs = 39;
+constexpr std::uint64_t kPrGetTidAddress = 40;
 
 A64LinuxSyscallResult ErrorResult(int error) {
   A64LinuxSyscallResult result;
@@ -290,6 +291,19 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
         case kPrGetNoNewPrivs: {
           A64LinuxSyscallResult result;
           result.value = guest_no_new_privs_ ? 1U : 0U;
+          return result;
+        }
+
+        case kPrGetTidAddress: {
+          // Return the guest clear_child_tid address, never a host pointer.
+          // PR_GET_TID_ADDRESS requires a writable user pointer.
+          if (arguments[1] == 0 ||
+              !memory_.Write(arguments[1], &clear_child_tid_address_,
+                             sizeof(clear_child_tid_address_))) {
+            return ErrorResult(EFAULT);
+          }
+          A64LinuxSyscallResult result;
+          result.value = 0;
           return result;
         }
 
