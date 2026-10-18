@@ -119,7 +119,7 @@ def _parse_dex_logical_classes(
                 not name.startswith("/")
                 and not name.endswith("/")
                 and "//" not in name
-                and "." not in name
+                and not any(character in name for character in (".", ";", "[", "]", "\0"))
             ):
                 class_names.add(name)
     return class_names
