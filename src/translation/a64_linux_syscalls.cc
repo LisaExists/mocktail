@@ -33,7 +33,8 @@ constexpr std::uint64_t kMapNoReserve = 0x4000;
 constexpr std::uint64_t kMapStack = 0x20000;
 constexpr std::uint64_t kMapFixedNoReplace = 0x100000;
 constexpr std::uint64_t kMapAllowedFlags =
-    kMapShared | kMapPrivate | kMapAnonymous | kMapNoReserve | kMapStack;
+    kMapShared | kMapPrivate | kMapAnonymous | kMapNoReserve | kMapStack |
+    kMapFixedNoReplace;
 
 A64LinuxSyscallResult ErrorResult(int error) {
   A64LinuxSyscallResult result;
@@ -364,9 +365,32 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
       if ((flags & kMapAnonymous) == 0) return ErrorResult(ENOSYS);
       if ((sharing != kMapShared && sharing != kMapPrivate) ||
           (flags & ~kMapAllowedFlags) != 0 ||
-          (flags & (kMapFixed | kMapFixedNoReplace)) != 0 ||
-          arguments[5] != 0) {
+          (flags & kMapFixed) != 0 || arguments[5] != 0) {
         return ErrorResult(EINVAL);
+      }
+
+      // MAP_FIXED_NOREPLACE is useful to guest allocators that need a stable
+      // address without clobbering an existing image, stack, or heap mapping.
+      // Unlike MAP_FIXED, it is safe to implement with the non-overwriting
+      // guest memory mapper: an occupied range becomes -EEXIST.
+      if ((flags & kMapFixedNoReplace) != 0) {
+        if (arguments[0] % A64GuestMemory::kPageSize != 0) {
+          return ErrorResult(EINVAL);
+        }
+        std::string error;
+        if (!memory_.Map(arguments[0], rounded_size, permissions, &error)) {
+          if (error.find("overlaps an existing page") != std::string::npos) {
+            return ErrorResult(EEXIST);
+          }
+          if (error.find("address range overflows") != std::string::npos ||
+              error.find("page-aligned") != std::string::npos) {
+            return ErrorResult(EINVAL);
+          }
+          return ErrorResult(ENOMEM);
+        }
+        A64LinuxSyscallResult result;
+        result.value = arguments[0];
+        return result;
       }
 
       if (arguments[0] != 0 &&
