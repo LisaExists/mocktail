@@ -155,7 +155,7 @@ int main() {
                                sizeof(sentinel)),
         "writes sentinel data to the second anonymous page");
   const bool rejected_partial_discard = !anonymous_memory.DiscardAnonymous(
-      anonymous_base, 3U * A64GuestMemory::kPageSize, &error);
+      anonymous_base, 4U * A64GuestMemory::kPageSize, &error);
   std::uint64_t first_before_discard = 0;
   std::uint64_t second_before_discard = 0;
   const bool read_before_discard =
