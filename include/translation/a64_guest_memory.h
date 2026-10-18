@@ -73,6 +73,13 @@ class A64GuestMemory final {
   bool Initialize(std::uint64_t address, const void* source,
                   std::size_t length) noexcept;
 
+  // Implements the content side of Linux MADV_DONTNEED for anonymous guest
+  // pages only. It requires an aligned, fully mapped range and validates all
+  // pages before zeroing any of them. ELF image pages have no retained backing
+  // file and therefore are deliberately not discardable through this method.
+  bool DiscardAnonymous(std::uint64_t address, std::uint64_t size,
+                        std::string* error = nullptr) noexcept;
+
   std::size_t mapped_bytes() const noexcept { return mapped_bytes_; }
   std::size_t max_mapped_bytes() const noexcept { return max_mapped_bytes_; }
 
@@ -80,6 +87,9 @@ class A64GuestMemory final {
   struct Page final {
     std::array<std::uint8_t, kPageSize> bytes{};
     std::uint8_t permissions = 0;
+    // Map() and MapAnywhere() create anonymous backing. ELF MapImage() pages
+    // are not discardable until file-backed fault-in semantics are available.
+    bool anonymous = true;
   };
 
   static bool AddOverflows(std::uint64_t address,
