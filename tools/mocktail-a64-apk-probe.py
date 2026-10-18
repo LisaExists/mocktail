@@ -26,6 +26,173 @@ MAX_LIBRARY_COUNT = 256
 MAX_NESTED_APK_SIZE = 512 * 1024 * 1024
 MAX_APK_SET_SIZE = 2 * 1024 * 1024 * 1024
 
+MAX_DEX_BYTES = 256 * 1024 * 1024
+MAX_DEX_TYPES = 250_000
+MAX_DEX_STRING_BYTES = 4096
+SUPPORTED_DEX_VERSIONS = {
+    b"035", b"037", b"038", b"039", b"040", b"041",
+}
+
+
+def _read_uleb128(data: bytes, offset: int) -> tuple[int, int]:
+    value = 0
+    for shift in range(0, 35, 7):
+        if offset >= len(data):
+            raise ValueError("truncated DEX ULEB128 value")
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            if value > 0xFFFFFFFF:
+                raise ValueError("DEX ULEB128 value exceeds 32-bit range")
+            return value, offset
+    raise ValueError("DEX ULEB128 value exceeds five bytes")
+
+
+def parse_dex_class_names(data: bytes) -> list[str]:
+    """Extract referenced Java class names from a bounded DEX type table.
+
+    This intentionally reads only the DEX header, string/type identifier
+    tables, and descriptor strings. It never parses or executes bytecode.
+    Returned names use JNI slash form (for example, com/example/Native).
+    """
+    if len(data) < 112 or data[:4] != b"dex\\n":
+        raise ValueError("missing or truncated DEX header")
+    if data[4:7] not in SUPPORTED_DEX_VERSIONS or data[7] != 0:
+        raise ValueError("unsupported DEX version/magic")
+    file_size, header_size, endian_tag = struct.unpack_from("<III", data, 32)
+    if file_size < 112 or file_size > len(data) or header_size != 112:
+        raise ValueError("invalid DEX file/header size")
+    if endian_tag != 0x12345678:
+        raise ValueError("unsupported DEX endianness")
+    data = data[:file_size]
+
+    string_count, string_offset = struct.unpack_from("<II", data, 56)
+    type_count, type_offset = struct.unpack_from("<II", data, 64)
+    if string_count > MAX_DEX_TYPES or type_count > MAX_DEX_TYPES:
+        raise ValueError("DEX string/type table exceeds the 250000 entry limit")
+
+    def table_bounds(offset: int, count: int, item_size: int, label: str) -> None:
+        if count == 0:
+            return
+        if offset < header_size or offset > file_size or count > (file_size - offset) // item_size:
+            raise ValueError(f"DEX {label} table is outside the file")
+
+    table_bounds(string_offset, string_count, 4, "string identifier")
+    table_bounds(type_offset, type_count, 4, "type identifier")
+    string_data_offsets = [
+        struct.unpack_from("<I", data, string_offset + index * 4)[0]
+        for index in range(string_count)
+    ]
+
+    class_names: set[str] = set()
+    for index in range(type_count):
+        descriptor_index = struct.unpack_from("<I", data, type_offset + index * 4)[0]
+        if descriptor_index >= string_count:
+            raise ValueError("DEX type descriptor index is outside string table")
+        cursor = string_data_offsets[descriptor_index]
+        if cursor < header_size or cursor >= file_size:
+            raise ValueError("DEX string data offset is outside the file")
+        _utf16_length, cursor = _read_uleb128(data, cursor)
+        end = data.find(b"\\0", cursor, min(file_size, cursor + MAX_DEX_STRING_BYTES + 1))
+        if end < 0:
+            raise ValueError("DEX descriptor string is unterminated or exceeds 4096 bytes")
+        encoded = data[cursor:end]
+        if not encoded or len(encoded) > MAX_DEX_STRING_BYTES:
+            raise ValueError("DEX descriptor string is empty or too long")
+        try:
+            descriptor = encoded.decode("ascii")
+        except UnicodeDecodeError:
+            # JNI class names can technically contain Unicode. Skip those
+            # uncommon names rather than mis-decoding modified UTF-8.
+            continue
+        if (
+            descriptor.startswith("L")
+            and descriptor.endswith(";")
+            and len(descriptor) > 2
+        ):
+            name = descriptor[1:-1]
+            if (
+                not name.startswith("/")
+                and not name.endswith("/")
+                and "//" not in name
+                and "." not in name
+            ):
+                class_names.add(name)
+    return sorted(class_names)
+
+
+def _is_root_dex_member(name: str) -> bool:
+    if "/" in name or "\\\\" in name:
+        return False
+    if name == "classes.dex":
+        return True
+    if name.startswith("classes") and name.endswith(".dex"):
+        suffix = name[len("classes"):-len(".dex")]
+        return bool(suffix) and suffix.isdigit() and int(suffix) >= 2
+    return False
+
+
+def _collect_dex_from_archive(
+    archive: zipfile.ZipFile, label: str, classes: set[str], warnings: list[str]
+) -> None:
+    for info in archive.infolist():
+        if info.is_dir() or not _is_root_dex_member(info.filename):
+            continue
+        if info.file_size > MAX_DEX_BYTES:
+            warnings.append(f"{label}:{info.filename}: DEX exceeds 256 MiB; skipped")
+            continue
+        try:
+            data = archive.read(info)
+            classes.update(parse_dex_class_names(data))
+        except (OSError, RuntimeError, zipfile.BadZipFile, ValueError) as exc:
+            warnings.append(f"{label}:{info.filename}: cannot inspect DEX: {exc}")
+        if len(classes) > MAX_DEX_TYPES:
+            warnings.append("APK DEX type catalogue exceeds 250000 unique classes; further DEX entries skipped")
+            return
+
+
+def collect_apk_java_classes(apk_paths: Iterable[Path]) -> tuple[list[str], list[str]]:
+    """Collect class names from APK/APKS DEX metadata for JNI FindClass seeding."""
+    classes: set[str] = set()
+    warnings: list[str] = []
+    for apk_path in apk_paths:
+        try:
+            with zipfile.ZipFile(apk_path) as archive:
+                if apk_path.suffix.lower() != ".apks":
+                    _collect_dex_from_archive(archive, str(apk_path), classes, warnings)
+                    continue
+                nested_apks = [
+                    info for info in archive.infolist()
+                    if not info.is_dir() and info.filename.lower().endswith(".apk")
+                ]
+                if not nested_apks:
+                    warnings.append(f"{apk_path}: APK set contains no nested APK files")
+                    continue
+                nested_total = sum(info.file_size for info in nested_apks)
+                if nested_total > MAX_APK_SET_SIZE:
+                    warnings.append(f"{apk_path}: expanded APK set exceeds 2 GiB; DEX class discovery skipped")
+                    continue
+                for info in nested_apks:
+                    if info.file_size > MAX_NESTED_APK_SIZE:
+                        warnings.append(f"{apk_path}:{info.filename}: split APK exceeds 512 MiB; skipped")
+                        continue
+                    try:
+                        nested_data = archive.read(info)
+                        with zipfile.ZipFile(io.BytesIO(nested_data)) as split:
+                            _collect_dex_from_archive(
+                                split, f"{apk_path}:{info.filename}", classes, warnings
+                            )
+                    except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                        warnings.append(f"{apk_path}:{info.filename}: cannot inspect split DEX: {exc}")
+                    if len(classes) > MAX_DEX_TYPES:
+                        break
+        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            warnings.append(f"{apk_path}: cannot inspect DEX metadata: {exc}")
+    if len(classes) > MAX_DEX_TYPES:
+        classes = set(sorted(classes)[:MAX_DEX_TYPES])
+    return sorted(classes), warnings
+
 
 def is_aarch64_elf(data: bytes) -> bool:
     """Return whether bytes start with a little-endian ELF64 EM_AARCH64 header."""
@@ -379,6 +546,28 @@ def main(argv: list[str] | None = None) -> int:
             value = getattr(args, f"arg{index}")
             if value is not None:
                 command.extend([f"--arg{index}", value])
+
+        # JNI_OnLoad commonly calls FindClass for app and Android framework
+        # types referenced by DEX. Seed those names automatically so testing a
+        # real APK does not require thousands of hand-written --java-class flags.
+        if args.jni_onload or args.call_native:
+            dex_classes, dex_warnings = collect_apk_java_classes(args.apks)
+            for warning in dex_warnings:
+                print(f"warning: {warning}", file=sys.stderr)
+            if dex_classes:
+                class_list_path = Path(directory) / "java-classes.txt"
+                class_list_path.write_text("\\n".join(dex_classes) + "\\n", encoding="utf-8")
+                command.extend(["--java-classes-file", str(class_list_path)])
+                print(
+                    f"Seeded JNI FindClass with {len(dex_classes)} class name(s) from APK DEX metadata.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "warning: no DEX class names found; use --java-class for classes not present in supplied APKs",
+                    file=sys.stderr,
+                )
+
         command.extend(extracted)
 
         print(
