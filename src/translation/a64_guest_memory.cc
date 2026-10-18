@@ -251,6 +251,7 @@ bool A64GuestMemory::MapImage(const A64LoadedImage& image,
         return fail("ELF guest mapping collides with an existing guest page");
       }
       iterator->second.permissions = planned.second;
+      iterator->second.anonymous = false;
       inserted.push_back(planned.first);
     }
   } catch (const std::bad_alloc&) {
@@ -337,6 +338,43 @@ bool A64GuestMemory::Initialize(std::uint64_t address, const void* source,
                                 std::size_t length) noexcept {
   return Transfer(address, const_cast<void*>(source), length, kWrite, true,
                   true);
+}
+
+bool A64GuestMemory::DiscardAnonymous(std::uint64_t address,
+                                      std::uint64_t size,
+                                      std::string* error) noexcept {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (size == 0 || address % kPageSize != 0 || size % kPageSize != 0) {
+    return fail("anonymous discard range must be non-empty and page-aligned");
+  }
+  if (AddOverflows(address, size)) {
+    return fail("anonymous discard range overflows");
+  }
+
+  // Validate the entire range first so a bad final page cannot leave a partly
+  // discarded range. Image pages are deliberately rejected rather than losing
+  // bytes that would need to be reloaded from a file after MADV_DONTNEED.
+  const auto end = address + size;
+  for (auto page_address = address; page_address < end;
+       page_address += kPageSize) {
+    const auto found = pages_.find(page_address);
+    if (found == pages_.end()) {
+      return fail("anonymous discard range contains an unmapped page");
+    }
+    if (!found->second.anonymous) {
+      return fail("anonymous discard range contains an ELF image page");
+    }
+  }
+
+  for (auto page_address = address; page_address < end;
+       page_address += kPageSize) {
+    pages_.find(page_address)->second.bytes.fill(0);
+  }
+  if (error != nullptr) error->clear();
+  return true;
 }
 
 bool A64GuestMemory::IsExecutable(std::uint64_t address,
