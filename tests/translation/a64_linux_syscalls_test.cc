@@ -210,6 +210,98 @@ int main() {
                                     invalid_clock_pointer), EFAULT),
           "clock_gettime rejects an unmapped guest timespec pointer");
 
+    // Exercise the kernel's 8-byte AArch64 rt_sigprocmask ABI. This
+    // virtual mask is private to A64LinuxSyscalls and must never alter the
+    // host process's signal mask.
+    constexpr std::uint64_t kSignalOne = std::uint64_t{1} << 0U;
+    constexpr std::uint64_t kSignalTwo = std::uint64_t{1} << 1U;
+    constexpr std::uint64_t kSignalThree = std::uint64_t{1} << 2U;
+    constexpr std::uint64_t kSignalKill = std::uint64_t{1} << 8U;
+    constexpr std::uint64_t kSignalStop = std::uint64_t{1} << 18U;
+    std::uint64_t requested_signal_mask =
+        kSignalOne | kSignalTwo | kSignalKill | kSignalStop;
+    const bool wrote_requested_mask = memory.Write(
+        kGuestSyscallScratch, &requested_signal_mask,
+        sizeof(requested_signal_mask));
+    const std::array<std::uint64_t, 6> set_guest_mask{
+        2, kGuestSyscallScratch, kGuestSyscallScratch + 8,
+        sizeof(std::uint64_t), 0, 0};
+    const auto set_mask_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, set_guest_mask);
+    std::uint64_t previous_signal_mask = UINT64_MAX;
+    const bool read_previous_mask = memory.Read(
+        kGuestSyscallScratch + 8, &previous_signal_mask,
+        sizeof(previous_signal_mask));
+    Check(wrote_requested_mask && set_mask_result.value == 0 &&
+              read_previous_mask && previous_signal_mask == 0,
+          "rt_sigprocmask sets a guest-only signal mask and returns the prior mask");
+
+    const std::array<std::uint64_t, 6> query_guest_mask{
+        0, 0, kGuestSyscallScratch + 16, sizeof(std::uint64_t), 0, 0};
+    const auto query_mask_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, query_guest_mask);
+    std::uint64_t current_signal_mask = 0;
+    const bool read_current_mask = memory.Read(
+        kGuestSyscallScratch + 16, &current_signal_mask,
+        sizeof(current_signal_mask));
+    Check(query_mask_result.value == 0 && read_current_mask &&
+              current_signal_mask == (kSignalOne | kSignalTwo),
+          "rt_sigprocmask never blocks SIGKILL or SIGSTOP");
+
+    requested_signal_mask = kSignalThree | kSignalKill;
+    const bool wrote_block_mask = memory.Write(
+        kGuestSyscallScratch, &requested_signal_mask,
+        sizeof(requested_signal_mask));
+    auto block_guest_mask = set_guest_mask;
+    block_guest_mask[0] = 0;  // SIG_BLOCK
+    const auto block_mask_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, block_guest_mask);
+    const auto query_after_block =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, query_guest_mask);
+    current_signal_mask = 0;
+    const bool read_after_block = memory.Read(
+        kGuestSyscallScratch + 16, &current_signal_mask,
+        sizeof(current_signal_mask));
+    Check(wrote_block_mask && block_mask_result.value == 0 &&
+              query_after_block.value == 0 && read_after_block &&
+              current_signal_mask == (kSignalOne | kSignalTwo | kSignalThree),
+          "rt_sigprocmask SIG_BLOCK adds permitted signals without blocking SIGKILL");
+
+    requested_signal_mask = kSignalOne;
+    const bool wrote_unblock_mask = memory.Write(
+        kGuestSyscallScratch, &requested_signal_mask,
+        sizeof(requested_signal_mask));
+    auto unblock_guest_mask = set_guest_mask;
+    unblock_guest_mask[0] = 1;  // SIG_UNBLOCK
+    const auto unblock_mask_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, unblock_guest_mask);
+    const auto query_after_unblock =
+        syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask, query_guest_mask);
+    current_signal_mask = 0;
+    const bool read_after_unblock = memory.Read(
+        kGuestSyscallScratch + 16, &current_signal_mask,
+        sizeof(current_signal_mask));
+    Check(wrote_unblock_mask && unblock_mask_result.value == 0 &&
+              query_after_unblock.value == 0 && read_after_unblock &&
+              current_signal_mask == (kSignalTwo | kSignalThree),
+          "rt_sigprocmask SIG_UNBLOCK removes only the requested guest signal");
+
+    auto invalid_sigset_size = set_guest_mask;
+    invalid_sigset_size[3] = 16;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask,
+                                    invalid_sigset_size), EINVAL),
+          "rt_sigprocmask requires the 8-byte AArch64 kernel sigset size");
+    auto invalid_signal_set = set_guest_mask;
+    invalid_signal_set[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask,
+                                    invalid_signal_set), EFAULT),
+          "rt_sigprocmask rejects an unreadable guest signal set");
+    auto invalid_old_signal_set = set_guest_mask;
+    invalid_old_signal_set[2] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kRtSigprocmask,
+                                    invalid_old_signal_set), EFAULT),
+          "rt_sigprocmask rejects an unwritable guest old-mask buffer");
+
     const std::array<std::uint64_t, 6> uname_arguments{
         kGuestSyscallScratch, 0, 0, 0, 0, 0};
     const auto uname_result =
