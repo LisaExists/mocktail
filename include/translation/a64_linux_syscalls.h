@@ -51,6 +51,7 @@ class A64LinuxSyscalls final {
   static constexpr std::uint64_t kMunmap = 215;
   static constexpr std::uint64_t kMmap = 222;
   static constexpr std::uint64_t kMprotect = 226;
+  static constexpr std::uint64_t kMadvise = 233;
   static constexpr std::uint64_t kRtSigprocmask = 135;
   static constexpr std::uint64_t kSetTidAddress = 96;
   static constexpr std::uint64_t kSetRobustList = 99;
