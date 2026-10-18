@@ -174,6 +174,9 @@ A64LinuxSyscallResult A64LinuxSyscalls::Dispatch(
                         sizeof(requested_mask))) {
         return ErrorResult(EFAULT);
       }
+      if (arguments[1] != 0 && arguments[0] > 2) {
+        return ErrorResult(EINVAL);
+      }
 
       const auto previous_mask = guest_signal_mask_;
       if (arguments[2] != 0 &&
