@@ -422,6 +422,23 @@ int main() {
               set_tid_result.value == A64LinuxSyscalls::kGuestThreadId,
           "set_tid_address returns the synthetic guest TID without exposing it to the host");
 
+    const std::array<std::uint64_t, 6> get_tid_address{
+        40, kGuestSyscallScratch + 80, 0, 0, 0, 0};  // PR_GET_TID_ADDRESS
+    const auto get_tid_address_result =
+        syscalls.Dispatch(A64LinuxSyscalls::kPrctl, get_tid_address);
+    std::uint64_t actual_clear_tid_address = 0;
+    const bool read_clear_tid_address = memory.Read(
+        kGuestSyscallScratch + 80, &actual_clear_tid_address,
+        sizeof(actual_clear_tid_address));
+    Check(get_tid_address_result.value == 0 && read_clear_tid_address &&
+              actual_clear_tid_address == kClearTidAddress,
+          "prctl PR_GET_TID_ADDRESS returns the guest clear_child_tid pointer");
+    auto invalid_get_tid_address = get_tid_address;
+    invalid_get_tid_address[1] = 0x900000ULL;
+    Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kPrctl,
+                                    invalid_get_tid_address), EFAULT),
+          "prctl PR_GET_TID_ADDRESS rejects an unwritable guest output pointer");
+
     const std::array<std::uint64_t, 6> set_robust_list{
         kGuestSyscallScratch, 3U * sizeof(std::uint64_t), 0, 0, 0, 0};
     Check(syscalls.Dispatch(A64LinuxSyscalls::kSetRobustList,
