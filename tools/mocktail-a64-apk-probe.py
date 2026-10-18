@@ -49,34 +49,36 @@ def _read_uleb128(data: bytes, offset: int) -> tuple[int, int]:
     raise ValueError("DEX ULEB128 value exceeds five bytes")
 
 
-def parse_dex_class_names(data: bytes) -> list[str]:
-    """Extract referenced Java class names from a bounded DEX type table.
+def _parse_dex_logical_classes(
+    data: bytes, header_offset: int, container_size: int, header_size: int
+) -> set[str]:
+    """Parse one DEX logical file whose table offsets are absolute container offsets."""
+    file_size = struct.unpack_from("<I", data, header_offset + 32)[0]
+    if (
+        file_size < header_size
+        or header_offset > container_size
+        or file_size > container_size - header_offset
+    ):
+        raise ValueError("invalid DEX logical file size")
 
-    This intentionally reads only the DEX header, string/type identifier
-    tables, and descriptor strings. It never parses or executes bytecode.
-    Returned names use JNI slash form (for example, com/example/Native).
-    """
-    if len(data) < 112 or data[:4] != b"dex\n":
-        raise ValueError("missing or truncated DEX header")
-    if data[4:7] not in SUPPORTED_DEX_VERSIONS or data[7] != 0:
-        raise ValueError("unsupported DEX version/magic")
-    file_size, header_size, endian_tag = struct.unpack_from("<III", data, 32)
-    if file_size < 112 or file_size > len(data) or header_size != 112:
-        raise ValueError("invalid DEX file/header size")
-    if endian_tag != 0x12345678:
-        raise ValueError("unsupported DEX endianness")
-    data = data[:file_size]
-
-    string_count, string_offset = struct.unpack_from("<II", data, 56)
-    type_count, type_offset = struct.unpack_from("<II", data, 64)
+    string_count, string_offset = struct.unpack_from(
+        "<II", data, header_offset + 56
+    )
+    type_count, type_offset = struct.unpack_from(
+        "<II", data, header_offset + 64
+    )
     if string_count > MAX_DEX_TYPES or type_count > MAX_DEX_TYPES:
         raise ValueError("DEX string/type table exceeds the 250000 entry limit")
 
     def table_bounds(offset: int, count: int, item_size: int, label: str) -> None:
         if count == 0:
             return
-        if offset < header_size or offset > file_size or count > (file_size - offset) // item_size:
-            raise ValueError(f"DEX {label} table is outside the file")
+        if (
+            offset < header_offset + header_size
+            or offset > container_size
+            or count > (container_size - offset) // item_size
+        ):
+            raise ValueError(f"DEX {label} table is outside the container")
 
     table_bounds(string_offset, string_count, 4, "string identifier")
     table_bounds(type_offset, type_count, 4, "type identifier")
@@ -87,14 +89,19 @@ def parse_dex_class_names(data: bytes) -> list[str]:
 
     class_names: set[str] = set()
     for index in range(type_count):
-        descriptor_index = struct.unpack_from("<I", data, type_offset + index * 4)[0]
+        descriptor_index = struct.unpack_from(
+            "<I", data, type_offset + index * 4
+        )[0]
         if descriptor_index >= string_count:
             raise ValueError("DEX type descriptor index is outside string table")
         cursor = string_data_offsets[descriptor_index]
-        if cursor < header_size or cursor >= file_size:
-            raise ValueError("DEX string data offset is outside the file")
+        if cursor < header_offset + header_size or cursor >= container_size:
+            raise ValueError("DEX string data offset is outside the container")
         _utf16_length, cursor = _read_uleb128(data, cursor)
-        end = data.find(b"\0", cursor, min(file_size, cursor + MAX_DEX_STRING_BYTES + 1))
+        end = data.find(
+            b"\0", cursor,
+            min(container_size, cursor + MAX_DEX_STRING_BYTES + 1),
+        )
         if end < 0:
             raise ValueError("DEX descriptor string is unterminated or exceeds 4096 bytes")
         encoded = data[cursor:end]
@@ -106,11 +113,7 @@ def parse_dex_class_names(data: bytes) -> list[str]:
             # JNI class names can technically contain Unicode. Skip those
             # uncommon names rather than mis-decoding modified UTF-8.
             continue
-        if (
-            descriptor.startswith("L")
-            and descriptor.endswith(";")
-            and len(descriptor) > 2
-        ):
+        if descriptor.startswith("L") and descriptor.endswith(";") and len(descriptor) > 2:
             name = descriptor[1:-1]
             if (
                 not name.startswith("/")
@@ -119,6 +122,86 @@ def parse_dex_class_names(data: bytes) -> list[str]:
                 and "." not in name
             ):
                 class_names.add(name)
+    return class_names
+
+
+def parse_dex_class_names(data: bytes) -> list[str]:
+    """Extract Java class names from bounded DEX tables, including DEX 041 containers.
+
+    Only headers, string/type identifier tables, and descriptor strings are
+    read. Bytecode is never parsed or executed.
+    """
+    if len(data) < 112 or data[:4] != b"dex\n":
+        raise ValueError("missing or truncated DEX header")
+    if data[7] != 0:
+        raise ValueError("invalid DEX magic terminator")
+    version = data[4:7]
+    if version not in SUPPORTED_DEX_VERSIONS:
+        raise ValueError("unsupported DEX version/magic")
+
+    if version != b"041":
+        if len(data) < 112:
+            raise ValueError("missing or truncated DEX header")
+        file_size, header_size, endian_tag = struct.unpack_from("<III", data, 32)
+        if header_size != 112:
+            raise ValueError("invalid DEX header size")
+        if file_size < header_size or file_size > len(data):
+            raise ValueError("invalid DEX file/header size")
+        if endian_tag != 0x12345678:
+            raise ValueError("unsupported DEX endianness")
+        return sorted(_parse_dex_logical_classes(data, 0, file_size, header_size))
+
+    # DEX 041 uses a container header (120 bytes) and absolute offsets that may
+    # refer to data shared by this or later logical DEX files in the container.
+    # Walk each logical header using file_size, validating its location and
+    # container_size rather than treating the container as a v039-style file.
+    if len(data) < 120:
+        raise ValueError("truncated DEX 041 container header")
+    _logical_size, header_size, endian_tag = struct.unpack_from("<III", data, 32)
+    container_size, first_header_offset = struct.unpack_from("<II", data, 112)
+    if header_size != 120 or endian_tag != 0x12345678:
+        raise ValueError("invalid DEX 041 header size or endianness")
+    if (
+        container_size < header_size
+        or container_size > len(data)
+        or first_header_offset != 0
+    ):
+        raise ValueError("invalid DEX 041 container size or first header offset")
+
+    class_names: set[str] = set()
+    header_offset = 0
+    logical_file_count = 0
+    while header_offset < container_size:
+        if logical_file_count >= MAX_DEX_TYPES:
+            raise ValueError("DEX 041 container has too many logical files")
+        if container_size - header_offset < 120:
+            raise ValueError("truncated DEX 041 logical header")
+        if data[header_offset:header_offset + 8] != b"dex\n041\0":
+            raise ValueError("invalid DEX 041 logical header in container")
+        file_size, logical_header_size, logical_endian = struct.unpack_from(
+            "<III", data, header_offset + 32
+        )
+        logical_container_size, recorded_header_offset = struct.unpack_from(
+            "<II", data, header_offset + 112
+        )
+        if (
+            logical_header_size != 120
+            or logical_endian != 0x12345678
+            or logical_container_size != container_size
+            or recorded_header_offset != header_offset
+            or file_size < 120
+            or file_size > container_size - header_offset
+        ):
+            raise ValueError("invalid DEX 041 logical-file bounds")
+        class_names.update(
+            _parse_dex_logical_classes(data, header_offset, container_size, 120)
+        )
+        if len(class_names) > MAX_DEX_TYPES:
+            raise ValueError("DEX container exceeds 250000 unique classes")
+        header_offset += file_size
+        logical_file_count += 1
+    if header_offset != container_size or logical_file_count == 0:
+        raise ValueError("DEX 041 logical files do not fill the container")
     return sorted(class_names)
 
 
