@@ -98,6 +98,10 @@ int main() {
   Check(syscalls.Dispatch(A64LinuxSyscalls::kMadvise, madvise_normal).value == 0 &&
             syscalls.Dispatch(A64LinuxSyscalls::kMadvise, madvise_willneed).value == 0,
         "madvise accepts safe NORMAL and WILLNEED hints on mapped guest pages");
+  std::uint64_t advised_value = 0;
+  Check(memory.Read(base, &advised_value, sizeof(advised_value)) &&
+            advised_value == value,
+        "non-mutating madvise hints preserve guest page contents");
   auto misaligned_madvise = madvise_normal;
   misaligned_madvise[0] = base + 1;
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
@@ -113,11 +117,21 @@ int main() {
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
                                   unmapped_madvise), ENOMEM),
         "madvise rejects ranges containing unmapped guest pages");
+  auto discard_madvise = madvise_normal;
+  discard_madvise[2] = 4;  // MADV_DONTNEED
+  const auto discarded = syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
+                                            discard_madvise);
+  std::uint64_t discarded_value = UINT64_MAX;
+  Check(discarded.value == 0 &&
+            memory.Read(base, &discarded_value, sizeof(discarded_value)) &&
+            discarded_value == 0 &&
+            !memory.Write(base, &value, sizeof(value)),
+        "MADV_DONTNEED zeroes anonymous guest memory without changing permissions");
   auto unsupported_madvise = madvise_normal;
-  unsupported_madvise[2] = 4;  // MADV_DONTNEED changes content semantics.
+  unsupported_madvise[2] = 8;  // MADV_FREE requires lazy reclaim semantics.
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
                                   unsupported_madvise), ENOSYS),
-        "madvise does not fake unsupported DONTNEED content-discard semantics");
+        "madvise fails closed for unsupported lazy MADV_FREE semantics");
   auto invalid_madvise = madvise_normal;
   invalid_madvise[2] = 7;  // Not a Linux AArch64 MADV value.
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
