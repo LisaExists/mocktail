@@ -32,6 +32,42 @@ The prototype lays out each loaded module's `PT_TLS` template at an aligned stat
 
 When `aarch64-linux-gnu-gcc` is installed, CMake also generates a genuine AArch64 `.so` fixture and sends it through the ELF loader and Dynarmic, stopping at a controlled `BRK`. The dedicated branch workflow installs this cross-toolchain so that the real-ELF path is tested in CI. This demonstrates basic code execution from a linker-produced guest image, not compatibility with the Android linker or the Roblox client.
 
+## Reproducible translation test run
+
+From the repository root on an x86-64 Linux host, configure and build the opt-in translation targets (the regular Mocktail build remains unchanged when this option is off):
+
+```bash
+cmake -S . -B build-arm-translation \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON \
+  -DMOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION=ON
+
+cmake --build build-arm-translation --parallel 2 --target \
+  mocktail_a64_elf_loader_test \
+  mocktail_a64_guest_memory_test \
+  mocktail_a64_guest_module_loader_test \
+  mocktail_a64_linux_syscalls_test \
+  mocktail_a64_guest_runtime_test \
+  mocktail_a64_guest_jni_test \
+  mocktail_a64_guest_probe \
+  mocktail_a64_translation_smoke
+
+ctest --test-dir build-arm-translation \
+  -R '^RobloxArmTranslation\\.' --output-on-failure --timeout 120
+```
+
+The build uses the installed Boost development headers and fetches the pinned Dynarmic source. If `aarch64-linux-gnu-gcc` and Clang are available, CMake also builds real linker-produced AArch64 ELF and Android-targeted ELF fixtures, which activate additional smoke tests. A passing synthetic test suite validates only the features those fixtures exercise.
+
+Before attempting any execution against a real Roblox package, run the static preflight and ELF audit:
+
+```bash
+python3 tools/roblox-arm-preflight.py /path/to/Roblox.apk
+python3 tools/a64-elf-audit.py --json /path/to/Roblox.apk \
+  > roblox-arm64-audit.json
+```
+
+The optional native probe may then load the APK's supplied ARM64 shared-object dependency set. Listing exports is non-executing; `--call SYMBOL`, `--jni-onload`, `--call-native`, and `--run-initializers` explicitly enter guest code. Use the probe only against libraries you trust, and treat missing symbols, unresolved Android platform libraries, or unsupported ABI behavior as useful compatibility findings rather than as evidence that the complete Roblox application should start.
+
 ## Auditing an actual APK/APKS package
 
 After obtaining the official ARM64 APK, an `.apks` split-set archive, or each APK from a split install, run the read-only audit first:
@@ -78,7 +114,8 @@ The first milestone is to build the CPU smoke target on x86-64. Do not enable AR
 - [x] Add bounded guest `mmap`-style address allocation, `mprotect` permissions, Linux-style `munmap` support that tolerates unmapped holes, and a private `brk` heap.
 - [x] Add an allow-listed AArch64 syscall dispatcher for anonymous memory operations (including `MAP_FIXED_NOREPLACE`), guest process exit/`clear_child_tid`, monotonic/realtime clock queries, guest uname identity, bounded getrandom, synthetic process/credential identity, single-context `rt_sigprocmask`, robust-list metadata, and scheduler-yield fallback, with regression tests.
 - [x] Add a bounded two-pass guest module-set loader with `DT_NEEDED` closure discovery, non-overlapping image placement, unversioned export indexing, and dependency relocation tests.
-- [x] Add configurable no-access guard pages around the guest stack and test both sides with multiple guard pages.\n- [ ] Add guest-memory synchronization before supporting concurrent guest threads or parallel JIT access.
+- [x] Add configurable no-access guard pages around the guest stack and test both sides with multiple guard pages.
+- [ ] Add guest-memory synchronization before supporting concurrent guest threads or parallel JIT access.
 - [x] Add explicit guest-to-host SVC thunks with bounded memory/string routines, case-insensitive string comparisons, guest errno accessors, TLS helpers, and tracked guest allocations; continue expanding coverage based on real package imports.
 - [x] Add a configurable synthetic Android property profile and guest-safe `__system_property_get` thunk, tested from Android-targeted translated JNI code.
 - [x] Add guest-opaque `prop_info` handles with `__system_property_find`, `__system_property_read`, `__system_property_serial`, and `__system_property_area_serial`; handle lookup, stable serials, and invalid guest buffers are covered by the Android JNI fixture.
