@@ -11,6 +11,7 @@
 #include <limits>
 #include <string>
 
+#include "translation/a64_elf_loader.h"
 #include "translation/a64_guest_memory.h"
 
 namespace {
@@ -127,6 +128,26 @@ int main() {
             discarded_value == 0 &&
             !memory.Write(base, &value, sizeof(value)),
         "MADV_DONTNEED zeroes anonymous guest memory without changing permissions");
+
+  mocktail::translation::A64LoadedImage backing_image;
+  mocktail::translation::A64LoadSegment backing_segment;
+  backing_segment.guest_address = 0x700000ULL;
+  backing_segment.virtual_address = 0x1000ULL;
+  backing_segment.flags = 4U;  // PF_R
+  backing_segment.bytes.resize(A64GuestMemory::kPageSize, 0x5A);
+  backing_image.segments.push_back(std::move(backing_segment));
+  const bool mapped_image = memory.MapImage(backing_image);
+  std::uint8_t image_sentinel = 0;
+  Check(mapped_image && memory.Read(0x700000ULL, &image_sentinel, 1) &&
+            image_sentinel == 0x5A,
+        "maps an ELF-backed guest page for discard-safety validation");
+  const std::array<std::uint64_t, 6> discard_image{
+      0x700000ULL, 1, 4, 0, 0, 0};
+  Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise, discard_image),
+                ENOSYS) &&
+            memory.Read(0x700000ULL, &image_sentinel, 1) &&
+            image_sentinel == 0x5A,
+        "MADV_DONTNEED refuses ELF image pages without losing reloadable bytes");
   auto unsupported_madvise = madvise_normal;
   unsupported_madvise[2] = 8;  // MADV_FREE requires lazy reclaim semantics.
   Check(IsError(syscalls.Dispatch(A64LinuxSyscalls::kMadvise,
