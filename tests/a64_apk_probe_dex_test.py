@@ -94,6 +94,7 @@ class DexClassDiscoveryTests(unittest.TestCase):
             "Landroid/os/Build;",
             "I",
             "[Ljava/lang/String;",
+            "Lcom/mocktail/Bad;Name;",
         ])
         self.assertEqual(
             MODULE.parse_dex_class_names(data),
