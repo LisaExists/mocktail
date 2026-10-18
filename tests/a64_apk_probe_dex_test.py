@@ -74,9 +74,11 @@ class DexClassDiscoveryTests(unittest.TestCase):
             ["android/os/Build", "com/mocktail/Smoke"],
         )
 
-    def test_rejects_invalid_dex_magic(self):
+    def test_rejects_unsupported_dex_version(self):
+        data = bytearray(make_dex(["Lcom/mocktail/Smoke;"]))
+        data[4:7] = b"999"
         with self.assertRaisesRegex(ValueError, "DEX version/magic"):
-            MODULE.parse_dex_class_names(b"not a dex file" + bytes(128))
+            MODULE.parse_dex_class_names(bytes(data))
 
     def test_rejects_type_descriptors_outside_string_table(self):
         data = bytearray(make_dex(["Lcom/mocktail/Smoke;"]))
