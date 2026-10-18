@@ -40,7 +40,7 @@ def make_dex(descriptors: list[str], *, version: str = "039") -> bytes:
         string_payload.append(0)
     file_size = string_data_offset + len(string_payload)
     data = bytearray(file_size)
-    data[:8] = b"dex\\n" + version.encode("ascii") + b"\\0"
+    data[:8] = b"dex\n" + version.encode("ascii") + b"\0"
     struct.pack_into("<III", data, 32, file_size, header_size, 0x12345678)
     struct.pack_into("<II", data, 56, len(strings), string_ids_offset)
     struct.pack_into("<II", data, 64, len(descriptors), type_ids_offset)
