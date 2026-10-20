@@ -192,7 +192,7 @@ def main() -> int:
                     "Prepared 1 ARM64 library/libraries",
                     "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
-                    "Registered native methods: 4",
+                    "Registered native methods: 6",
                     "com/mocktail/Smoke.nativeSum(II)I",
                 ),
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",
@@ -265,6 +265,36 @@ def main() -> int:
                 mixed_native_command,
                 ("Guest JNI native com/mocktail/Smoke.nativeMixed(IFDII)I returned X0=0x30 (48)",),
                 "mixed integer/float/double JNI arguments use independent AAPCS64 registers",
+            )
+
+            float_return_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeFloatReturn", "(F)F",
+                "--arg0", "0x3FA00000",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                float_return_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeFloatReturn(F)F returned V0=0x3fe00000 (raw IEEE-754 bits)",),
+                "float JNI return value is read from V0 through the APK probe",
+            )
+
+            double_return_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeDoubleReturn", "(D)D",
+                "--arg0", "0x4004000000000000",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                double_return_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeDoubleReturn(D)D returned V0=0x4008000000000000 (raw IEEE-754 bits)",),
+                "double JNI return value is read from V0 through the APK probe",
             )
 
         if android_dl_elf is not None:

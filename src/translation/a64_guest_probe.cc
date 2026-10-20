@@ -511,9 +511,16 @@ int main(int argc, char** argv) {
       return Fail("guest JNI native call failed: " + result.error);
     }
     std::cout << "Guest JNI native " << native_class << '.' << native_name
-              << native_signature << " returned X0=0x" << std::hex
-              << result.value << std::dec << " (" << result.value << "), "
-              << result.ticks << " guest instruction(s) executed.\n";
+              << native_signature << " returned "
+              << (result.value_is_floating_point ? "V0" : "X0") << "=0x"
+              << std::hex << result.value << std::dec;
+    if (result.value_is_floating_point) {
+      std::cout << " (raw IEEE-754 bits)";
+    } else {
+      std::cout << " (" << result.value << ')';
+    }
+    std::cout << ", " << result.ticks
+              << " guest instruction(s) executed.\n";
   } else if (!call_symbol.empty()) {
     const auto result =
         runtime.CallSymbol(call_symbol, arguments, instruction_budget);

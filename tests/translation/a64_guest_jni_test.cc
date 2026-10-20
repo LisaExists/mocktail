@@ -102,10 +102,12 @@ int main(int argc, char** argv) {
                  native.guest_address != 0;
         }) != natives.end();
   };
-  Check(natives.size() == 4 && has_native("nativeSum", "(II)I") &&
+  Check(natives.size() == 6 && has_native("nativeSum", "(II)I") &&
             has_native("nativeSum8", "(IIIIIIII)I") &&
             has_native("nativeFloatScaled", "(F)I") &&
-            has_native("nativeMixed", "(IFDII)I"),
+            has_native("nativeMixed", "(IFDII)I") &&
+            has_native("nativeFloatReturn", "(F)F") &&
+            has_native("nativeDoubleReturn", "(D)D"),
         "RegisterNatives records validated executable guest functions", &failures);
 
   const auto native_result = runtime.CallRegisteredJniNative(
@@ -143,6 +145,21 @@ int main(int argc, char** argv) {
   Check(mixed_native_result.success && mixed_native_result.value == 48,
         "allocates mixed integer/float/double arguments to independent AAPCS64 registers",
         &failures);
+
+  const auto float_return_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeFloatReturn", "(F)F",
+      std::vector<std::uint64_t>{0x3FA00000ULL}, 100000);
+  Check(float_return_result.success &&
+            float_return_result.value_is_floating_point &&
+            float_return_result.value == 0x3FE00000ULL,
+        "captures a float return value from V0 as raw IEEE-754 bits", &failures);
+  const auto double_return_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeDoubleReturn", "(D)D",
+      std::vector<std::uint64_t>{0x4004000000000000ULL}, 100000);
+  Check(double_return_result.success &&
+            double_return_result.value_is_floating_point &&
+            double_return_result.value == 0x4008000000000000ULL,
+        "captures a double return value from V0 as raw IEEE-754 bits", &failures);
 
   const auto missing_native = runtime.CallRegisteredJniNative(
       "com/mocktail/Smoke", "missingNative", "()I",

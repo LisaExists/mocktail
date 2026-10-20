@@ -1808,8 +1808,21 @@ class A64GuestRuntime::Impl final {
         stack_arguments.push_back(java_arguments[index]);
       }
     }
-    return Call(native->guest_address, arguments, instruction_budget,
-                stack_arguments, &vector_arguments);
+    auto result = Call(native->guest_address, arguments, instruction_budget,
+                       stack_arguments, &vector_arguments);
+    if (result.success) {
+      const auto close_paren = signature.find(')');
+      if (close_paren != std::string::npos &&
+          close_paren + 1U < signature.size()) {
+        const char return_type = signature[close_paren + 1U];
+        if (return_type == 'F' || return_type == 'D') {
+          result.value = jit_->GetVector(0)[0];
+          if (return_type == 'F') result.value &= 0xFFFFFFFFULL;
+          result.value_is_floating_point = true;
+        }
+      }
+    }
+    return result;
   }
 
   std::uint64_t java_vm_address() const noexcept {

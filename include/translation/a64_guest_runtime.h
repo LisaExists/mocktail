@@ -77,6 +77,9 @@ struct A64GuestCallResult final {
   bool guest_exit = false;
   std::uint32_t exit_status = 0;
   std::uint64_t value = 0;
+  // When true, value contains raw IEEE-754 return bits from V0 (low 32 bits
+  // for float, low 64 bits for double); otherwise it contains X0.
+  bool value_is_floating_point = false;
   std::uint64_t ticks = 0;
   std::string error;
 
