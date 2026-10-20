@@ -376,9 +376,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       mocktail_a64_android_style_elf_fixture)
 
     set(MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE
-      "${CMAKE_CURRENT_BINARY_DIR}/liblog.so")
+      "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/liblog.so")
     add_custom_command(
       OUTPUT "${MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
       COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
               --target=aarch64-linux-android24
               -fuse-ld=lld -fPIC -shared -nostdlib
@@ -402,7 +404,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,-soname,libmocktail-android-jni-smoke.so
               -o "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
-              "-L${CMAKE_CURRENT_BINARY_DIR}"
+              "-L${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
               -Wl,--no-as-needed -l:liblog.so
       DEPENDS
         "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
