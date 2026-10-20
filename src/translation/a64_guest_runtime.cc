@@ -1414,6 +1414,25 @@ class A64GuestRuntime::Impl final {
             module_options.external_dependencies.end()) {
       module_options.external_dependencies.push_back("libandroid.so");
     }
+    if (options_.register_builtin_libc) {
+      // These public Android platform SONAMEs may be supplied by the device
+      // rather than bundled in the APK. This only permits the dependency edge;
+      // imports still need a real guest module or an explicit host-call thunk.
+      const char* const android_system_dependencies[] = {
+          "liblog.so", "libm.so", "libz.so", "libEGL.so",
+          "libGLESv1_CM.so", "libGLESv2.so", "libGLESv3.so",
+          "libvulkan.so", "libjnigraphics.so", "libnativewindow.so",
+          "libsync.so", "libmediandk.so", "libOpenSLES.so", "libaaudio.so",
+          "libcamera2ndk.so", "libamidi.so", "libbinder_ndk.so",
+          "libneuralnetworks.so", "libsensor.so", "libusbhost.so"};
+      for (const auto* dependency : android_system_dependencies) {
+        if (std::find(module_options.external_dependencies.begin(),
+                      module_options.external_dependencies.end(), dependency) ==
+            module_options.external_dependencies.end()) {
+          module_options.external_dependencies.emplace_back(dependency);
+        }
+      }
+    }
     module_options.elf.tlsdesc_resolver_address = *tlsdesc_resolver;
 
     const auto configured_symbol_resolver =
