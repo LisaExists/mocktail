@@ -5,6 +5,8 @@
 #include "translation/a64_guest_memory.h"
 #include "translation/a64_guest_jni.h"
 
+#include <algorithm>
+
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -91,23 +93,34 @@ int main(int argc, char** argv) {
         &failures);
 
   const auto natives = runtime.registered_jni_natives();
-  Check(natives.size() == 1 &&
-            natives[0].class_name == "com/mocktail/Smoke" &&
-            natives[0].name == "nativeSum" &&
-            natives[0].signature == "(II)I" &&
-            natives[0].guest_address != 0,
-        "RegisterNatives records a validated executable guest function", &failures);
+  const auto has_native = [&](const std::string& name,
+                              const std::string& signature) {
+    return std::find_if(natives.begin(), natives.end(),
+        [&](const auto& native) {
+          return native.class_name == "com/mocktail/Smoke" &&
+                 native.name == name && native.signature == signature &&
+                 native.guest_address != 0;
+        }) != natives.end();
+  };
+  Check(natives.size() == 2 && has_native("nativeSum", "(II)I") &&
+            has_native("nativeSum8", "(IIIIIIII)I"),
+        "RegisterNatives records validated executable guest functions", &failures);
 
-  if (natives.size() == 1 && natives[0].guest_address != 0) {
-    const auto native_result = runtime.CallRegisteredJniNative(
-        "com/mocktail/Smoke", "nativeSum", "(II)I",
-        std::vector<std::uint64_t>{20, 22}, 100000);
-    Check(native_result.success && native_result.value == 42,
-          "calls a registered static native with JNIEnv/jclass and Java args in ABI registers",
-          &failures);
-    Check(native_result.ticks > 0,
-          "counts guest instructions in the registered native call", &failures);
-  }
+  const auto native_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeSum", "(II)I",
+      std::vector<std::uint64_t>{20, 22}, 100000);
+  Check(native_result.success && native_result.value == 42,
+        "calls a registered static native with JNIEnv/jclass and register arguments",
+        &failures);
+  Check(native_result.ticks > 0,
+        "counts guest instructions in the registered native call", &failures);
+
+  const auto stacked_native_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeSum8", "(IIIIIIII)I",
+      std::vector<std::uint64_t>{1, 2, 3, 4, 5, 6, 7, 8}, 100000);
+  Check(stacked_native_result.success && stacked_native_result.value == 36,
+        "passes JNI integer arguments beyond X2-X7 through a 16-byte-aligned guest stack",
+        &failures);
 
   const auto missing_native = runtime.CallRegisteredJniNative(
       "com/mocktail/Smoke", "missingNative", "()I",

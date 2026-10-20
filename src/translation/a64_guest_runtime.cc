@@ -1504,9 +1504,10 @@ class A64GuestRuntime::Impl final {
     return true;
   }
 
-  A64GuestCallResult Call(std::uint64_t guest_address,
-                          const Arguments& arguments,
-                          std::uint64_t instruction_budget) {
+  A64GuestCallResult Call(
+      std::uint64_t guest_address, const Arguments& arguments,
+      std::uint64_t instruction_budget,
+      const std::vector<std::uint64_t>& stack_arguments = {}) {
     auto failure = [](std::string error) {
       A64GuestCallResult result;
       result.error = std::move(error);
@@ -1524,8 +1525,33 @@ class A64GuestRuntime::Impl final {
                             : instruction_budget;
     if (budget == 0) return failure("guest instruction budget must be non-zero");
 
+    // AAPCS64 places general-purpose arguments after X7 in the caller's
+    // stack argument area. Keep SP 16-byte aligned and bound this probe path
+    // so a malformed caller cannot consume the entire guest stack.
+    constexpr std::size_t kMaximumStackArguments = 256;
+    if (stack_arguments.size() > kMaximumStackArguments) {
+      return failure("guest stack argument count exceeds the configured limit");
+    }
+    const std::uint64_t stack_top =
+        options_.stack_base + options_.stack_size - 16U;
+    const std::uint64_t stack_bytes_unaligned =
+        static_cast<std::uint64_t>(stack_arguments.size()) * sizeof(std::uint64_t);
+    const std::uint64_t stack_bytes =
+        (stack_bytes_unaligned + 15U) & ~std::uint64_t{15U};
+    if (stack_bytes > options_.stack_size - 16U || stack_bytes > stack_top) {
+      return failure("guest stack arguments exceed the available stack");
+    }
+    const std::uint64_t guest_sp = stack_top - stack_bytes;
+    for (std::size_t index = 0; index < stack_arguments.size(); ++index) {
+      const auto value = stack_arguments[index];
+      if (!memory_.Write(guest_sp + index * sizeof(value), &value,
+                         sizeof(value))) {
+        return failure("failed to write guest stack argument");
+      }
+    }
+
     callbacks_->BeginRun(budget, true);
-    jit_->SetSP(options_.stack_base + options_.stack_size - 16U);
+    jit_->SetSP(guest_sp);
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       jit_->SetRegister(index, arguments[index]);
     }
@@ -1686,8 +1712,9 @@ class A64GuestRuntime::Impl final {
     if (jni_bridge_->pending_exception()) {
       return failure("guest JNI bridge has a pending exception");
     }
-    if (java_arguments.size() > 6) {
-      return failure("JNI call supports at most six Java arguments in X2-X7");
+    constexpr std::size_t kMaximumJniArguments = 262;
+    if (java_arguments.size() > kMaximumJniArguments) {
+      return failure("JNI argument count exceeds the configured limit");
     }
 
     std::size_t descriptor_argument_count = 0;
@@ -1721,10 +1748,16 @@ class A64GuestRuntime::Impl final {
     Arguments arguments{};
     arguments[0] = jni_bridge_->jni_environment_address();
     arguments[1] = class_handle;
-    for (std::size_t index = 0; index < java_arguments.size(); ++index) {
+    const auto register_argument_count =
+        std::min<std::size_t>(java_arguments.size(), 6);
+    for (std::size_t index = 0; index < register_argument_count; ++index) {
       arguments[index + 2] = java_arguments[index];
     }
-    return Call(native->guest_address, arguments, instruction_budget);
+    const std::vector<std::uint64_t> stack_arguments(
+        java_arguments.begin() + register_argument_count,
+        java_arguments.end());
+    return Call(native->guest_address, arguments, instruction_budget,
+                stack_arguments);
   }
 
   std::uint64_t java_vm_address() const noexcept {

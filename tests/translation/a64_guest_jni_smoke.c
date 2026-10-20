@@ -83,6 +83,14 @@ int guest_native_sum(struct JNIEnv_ *env, void *clazz,
 }
 
 __attribute__((visibility("default")))
+int guest_native_sum8(struct JNIEnv_ *env, void *clazz,
+                      int a, int b, int c, int d,
+                      int e, int f, int g, int h) {
+  if (env == 0 || clazz == 0) return -1001;
+  return a + b + c + d + e + f + g + h;
+}
+
+__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (guest_constructor_ran != 0x4D4F434B) return -25;
   (void)reserved;
@@ -290,7 +298,8 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
 
   const struct JNINativeMethod methods[] = {
       {"nativeSum", "(II)I", (void *)guest_native_sum},
+      {"nativeSum8", "(IIIIIIII)I", (void *)guest_native_sum8},
   };
-  if (register_natives(env, clazz, methods, 1) != 0) return -7;
+  if (register_natives(env, clazz, methods, 2) != 0) return -7;
   return 0x00010006;
 }
