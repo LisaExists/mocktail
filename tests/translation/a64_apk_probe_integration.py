@@ -192,7 +192,7 @@ def main() -> int:
                     "Prepared 1 ARM64 library/libraries",
                     "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
-                    "Registered native methods: 2",
+                    "Registered native methods: 4",
                     "com/mocktail/Smoke.nativeSum(II)I",
                 ),
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",
@@ -234,6 +234,37 @@ def main() -> int:
                     "Guest JNI native com/mocktail/Smoke.nativeSum8(IIIIIIII)I returned X0=0x24 (36)",
                 ),
                 "eight-argument JNI native invoked from an APK with stack-passed AArch64 arguments",
+            )
+
+            float_native_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeFloatScaled", "(F)I",
+                "--arg0", "0x3FA00000",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                float_native_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeFloatScaled(F)I returned X0=0x7d (125)",),
+                "float JNI argument passed in V0 through a real APK extraction path",
+            )
+
+            mixed_native_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeMixed", "(IFDII)I",
+                "--arg0", "1", "--arg1", "0x3FC00000",
+                "--arg2", "0x4004000000000000", "--arg3", "3", "--arg4", "4",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                mixed_native_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeMixed(IFDII)I returned X0=0x30 (48)",),
+                "mixed integer/float/double JNI arguments use independent AAPCS64 registers",
             )
 
         if android_dl_elf is not None:

@@ -122,7 +122,8 @@ bool ParseJniTypeDescriptor(const std::string& descriptor,
 
 bool CountJniParameterTypes(const std::string& signature,
                             std::size_t* parameter_count,
-                            std::string* error) {
+                            std::string* error,
+                            std::vector<char>* parameter_types = nullptr) {
   auto fail = [&](const char* message) {
     if (error != nullptr) *error = message;
     return false;
@@ -133,9 +134,16 @@ bool CountJniParameterTypes(const std::string& signature,
   }
   std::size_t cursor = 1;
   std::size_t count = 0;
+  if (parameter_types != nullptr) parameter_types->clear();
   while (cursor < signature.size() && signature[cursor] != ')') {
+    const auto type_start = cursor;
     if (!ParseJniTypeDescriptor(signature, &cursor, false)) {
       return fail("invalid JNI parameter type descriptor");
+    }
+    if (parameter_types != nullptr) {
+      char type = signature[type_start];
+      if (type == '[') type = 'L';  // Arrays are object references in JNI.
+      parameter_types->push_back(type);
     }
     ++count;
     // JNI's two implicit parameters consume X0/X1, leaving six Java
@@ -1511,7 +1519,8 @@ class A64GuestRuntime::Impl final {
   A64GuestCallResult Call(
       std::uint64_t guest_address, const Arguments& arguments,
       std::uint64_t instruction_budget,
-      const std::vector<std::uint64_t>& stack_arguments = {}) {
+      const std::vector<std::uint64_t>& stack_arguments = {},
+      const std::array<Dynarmic::A64::Vector, 8>* vector_arguments = nullptr) {
     auto failure = [](std::string error) {
       A64GuestCallResult result;
       result.error = std::move(error);
@@ -1558,6 +1567,11 @@ class A64GuestRuntime::Impl final {
     jit_->SetSP(guest_sp);
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       jit_->SetRegister(index, arguments[index]);
+    }
+    if (vector_arguments != nullptr) {
+      for (std::size_t index = 0; index < vector_arguments->size(); ++index) {
+        jit_->SetVector(index, (*vector_arguments)[index]);
+      }
     }
     jit_->SetRegister(30, options_.return_trap_address);
     jit_->SetPC(guest_address);
@@ -1723,8 +1737,9 @@ class A64GuestRuntime::Impl final {
 
     std::size_t descriptor_argument_count = 0;
     std::string descriptor_error;
+    std::vector<char> parameter_types;
     if (!CountJniParameterTypes(signature, &descriptor_argument_count,
-                                &descriptor_error)) {
+                                &descriptor_error, &parameter_types)) {
       return failure(descriptor_error);
     }
     if (descriptor_argument_count != java_arguments.size()) {
@@ -1748,20 +1763,34 @@ class A64GuestRuntime::Impl final {
                      name + signature);
     }
 
-    // JNI static-native ABI: X0=JNIEnv*, X1=jclass, X2-X7=Java arguments.
+    // JNI's implicit JNIEnv*/jclass consume X0/X1. AAPCS64 allocates
+    // integer/reference arguments from X2-X7 and float/double arguments from
+    // V0-V7 independently; overflow arguments are placed in stack slots in
+    // source order. The caller supplies IEEE-754 bit patterns for F/D values.
     Arguments arguments{};
     arguments[0] = jni_bridge_->jni_environment_address();
     arguments[1] = class_handle;
-    const auto register_argument_count =
-        std::min<std::size_t>(java_arguments.size(), 6);
-    for (std::size_t index = 0; index < register_argument_count; ++index) {
-      arguments[index + 2] = java_arguments[index];
+    std::array<Dynarmic::A64::Vector, 8> vector_arguments{};
+    std::size_t next_general_register = 2;
+    std::size_t next_vector_register = 0;
+    std::vector<std::uint64_t> stack_arguments;
+    stack_arguments.reserve(java_arguments.size());
+    for (std::size_t index = 0; index < java_arguments.size(); ++index) {
+      const auto type = parameter_types[index];
+      if (type == 'F' || type == 'D') {
+        if (next_vector_register < vector_arguments.size()) {
+          vector_arguments[next_vector_register++][0] = java_arguments[index];
+        } else {
+          stack_arguments.push_back(java_arguments[index]);
+        }
+      } else if (next_general_register < arguments.size()) {
+        arguments[next_general_register++] = java_arguments[index];
+      } else {
+        stack_arguments.push_back(java_arguments[index]);
+      }
     }
-    const std::vector<std::uint64_t> stack_arguments(
-        java_arguments.begin() + register_argument_count,
-        java_arguments.end());
     return Call(native->guest_address, arguments, instruction_budget,
-                stack_arguments);
+                stack_arguments, &vector_arguments);
   }
 
   std::uint64_t java_vm_address() const noexcept {

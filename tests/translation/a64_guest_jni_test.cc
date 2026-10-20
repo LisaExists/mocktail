@@ -102,8 +102,10 @@ int main(int argc, char** argv) {
                  native.guest_address != 0;
         }) != natives.end();
   };
-  Check(natives.size() == 2 && has_native("nativeSum", "(II)I") &&
-            has_native("nativeSum8", "(IIIIIIII)I"),
+  Check(natives.size() == 4 && has_native("nativeSum", "(II)I") &&
+            has_native("nativeSum8", "(IIIIIIII)I") &&
+            has_native("nativeFloatScaled", "(F)I") &&
+            has_native("nativeMixed", "(IFDII)I"),
         "RegisterNatives records validated executable guest functions", &failures);
 
   const auto native_result = runtime.CallRegisteredJniNative(
@@ -128,6 +130,19 @@ int main(int argc, char** argv) {
     std::cerr << "[DEBUG] stacked JNI native returned "
               << stacked_native_result.value << ", expected 36\n";
   }
+
+  const auto float_native_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeFloatScaled", "(F)I",
+      std::vector<std::uint64_t>{0x3FA00000ULL}, 100000);
+  Check(float_native_result.success && float_native_result.value == 125,
+        "passes an IEEE-754 float argument through V0", &failures);
+  const auto mixed_native_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeMixed", "(IFDII)I",
+      std::vector<std::uint64_t>{1, 0x3FC00000ULL,
+                                 0x4004000000000000ULL, 3, 4}, 100000);
+  Check(mixed_native_result.success && mixed_native_result.value == 48,
+        "allocates mixed integer/float/double arguments to independent AAPCS64 registers",
+        &failures);
 
   const auto missing_native = runtime.CallRegisteredJniNative(
       "com/mocktail/Smoke", "missingNative", "()I",

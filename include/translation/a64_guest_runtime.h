@@ -132,8 +132,11 @@ class A64GuestRuntime final {
       std::uint64_t instruction_budget = 0);
 
   // Invokes a method recorded by RegisterNatives using the JNI static-native
-  // ABI (JNIEnv* in X0, jclass in X1, Java arguments in X2-X7). ART, object
-  // construction, and stack-passed JNI arguments are not implemented.
+  // ABI. Integer/reference parameters use X2-X7 and float/double parameters
+  // use V0-V7, independently; overflow arguments use AAPCS64 stack slots.
+  // java_arguments contains raw values, with F/D arguments supplied as their
+  // IEEE-754 bit patterns. ART/object construction and floating-point return
+  // value reporting are not implemented.
   A64GuestCallResult CallRegisteredJniNative(
       const std::string& class_name, const std::string& name,
       const std::string& signature,

@@ -91,6 +91,21 @@ int guest_native_sum8(struct JNIEnv_ *env, void *clazz,
 }
 
 __attribute__((visibility("default")))
+int guest_native_float_scaled(struct JNIEnv_ *env, void *clazz, float value) {
+  if (env == 0 || clazz == 0) return -1002;
+  return (int)(value * 100.0f);
+}
+
+__attribute__((visibility("default")))
+int guest_native_mixed(struct JNIEnv_ *env, void *clazz,
+                       int first, float scale, double offset,
+                       int second, int third) {
+  if (env == 0 || clazz == 0) return -1003;
+  return first + (int)(scale * 10.0f) + (int)(offset * 10.0) +
+         second + third;
+}
+
+__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (guest_constructor_ran != 0x4D4F434B) return -25;
   (void)reserved;
@@ -299,7 +314,9 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   const struct JNINativeMethod methods[] = {
       {"nativeSum", "(II)I", (void *)guest_native_sum},
       {"nativeSum8", "(IIIIIIII)I", (void *)guest_native_sum8},
+      {"nativeFloatScaled", "(F)I", (void *)guest_native_float_scaled},
+      {"nativeMixed", "(IFDII)I", (void *)guest_native_mixed},
   };
-  if (register_natives(env, clazz, methods, 2) != 0) return -7;
+  if (register_natives(env, clazz, methods, 4) != 0) return -7;
   return 0x00010006;
 }
