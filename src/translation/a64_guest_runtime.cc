@@ -1046,6 +1046,93 @@ class A64GuestRuntime::Impl final {
           return A64HostCallResult{true, 0, {}};
         })) return false;
 
+    struct MediaFormatKey {
+      const char* symbol;
+      const char* value;
+    };
+    constexpr MediaFormatKey kMediaFormatKeys[] = {
+        {"AMEDIAFORMAT_KEY_AAC_PROFILE", "aac-profile"},
+        {"AMEDIAFORMAT_KEY_BIT_RATE", "bitrate"},
+        {"AMEDIAFORMAT_KEY_BITRATE_MODE", "bitrate-mode"},
+        {"AMEDIAFORMAT_KEY_CHANNEL_COUNT", "channel-count"},
+        {"AMEDIAFORMAT_KEY_COLOR_FORMAT", "color-format"},
+        {"AMEDIAFORMAT_KEY_COLOR_RANGE", "color-range"},
+        {"AMEDIAFORMAT_KEY_COLOR_STANDARD", "color-standard"},
+        {"AMEDIAFORMAT_KEY_COLOR_TRANSFER", "color-transfer"},
+        {"AMEDIAFORMAT_KEY_COMPLEXITY", "complexity"},
+        {"AMEDIAFORMAT_KEY_CROP_BOTTOM", "crop-bottom"},
+        {"AMEDIAFORMAT_KEY_CROP_LEFT", "crop-left"},
+        {"AMEDIAFORMAT_KEY_CROP_RIGHT", "crop-right"},
+        {"AMEDIAFORMAT_KEY_CROP_TOP", "crop-top"},
+        {"AMEDIAFORMAT_KEY_CSD_0", "csd-0"},
+        {"AMEDIAFORMAT_KEY_CSD_1", "csd-1"},
+        {"AMEDIAFORMAT_KEY_CSD_2", "csd-2"},
+        {"AMEDIAFORMAT_KEY_DISPLAY_HEIGHT", "display-height"},
+        {"AMEDIAFORMAT_KEY_DISPLAY_WIDTH", "display-width"},
+        {"AMEDIAFORMAT_KEY_DURATION", "durationUs"},
+        {"AMEDIAFORMAT_KEY_ENCODER_DELAY", "encoder-delay"},
+        {"AMEDIAFORMAT_KEY_ENCODER_PADDING", "encoder-padding"},
+        {"AMEDIAFORMAT_KEY_FLAC_COMPRESSION_LEVEL", "flac-compression-level"},
+        {"AMEDIAFORMAT_KEY_FRAME_RATE", "frame-rate"},
+        {"AMEDIAFORMAT_KEY_HDR_STATIC_INFO", "hdr-static-info"},
+        {"AMEDIAFORMAT_KEY_HEIGHT", "height"},
+        {"AMEDIAFORMAT_KEY_INTRA_REFRESH_PERIOD", "intra-refresh-period"},
+        {"AMEDIAFORMAT_KEY_IS_ADTS", "is-adts"},
+        {"AMEDIAFORMAT_KEY_IS_AUTOSELECT", "is-autoselect"},
+        {"AMEDIAFORMAT_KEY_IS_DEFAULT", "is-default"},
+        {"AMEDIAFORMAT_KEY_IS_FORCED_SUBTITLE", "is-forced-subtitle"},
+        {"AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "i-frame-interval"},
+        {"AMEDIAFORMAT_KEY_LANGUAGE", "language"},
+        {"AMEDIAFORMAT_KEY_LEVEL", "level"},
+        {"AMEDIAFORMAT_KEY_MAX_B_FRAMES", "max-bframes"},
+        {"AMEDIAFORMAT_KEY_MAX_FPS_TO_ENCODER", "max-fps-to-encoder"},
+        {"AMEDIAFORMAT_KEY_MAX_HEIGHT", "max-height"},
+        {"AMEDIAFORMAT_KEY_MAX_INPUT_SIZE", "max-input-size"},
+        {"AMEDIAFORMAT_KEY_MAX_PTS_GAP_TO_ENCODER", "max-pts-gap-to-encoder"},
+        {"AMEDIAFORMAT_KEY_MAX_WIDTH", "max-width"},
+        {"AMEDIAFORMAT_KEY_MIME", "mime"},
+        {"AMEDIAFORMAT_KEY_OPERATING_RATE", "operating-rate"},
+        {"AMEDIAFORMAT_KEY_PCM_ENCODING", "pcm-encoding"},
+        {"AMEDIAFORMAT_KEY_PROFILE", "profile"},
+        {"AMEDIAFORMAT_KEY_PRIORITY", "priority"},
+        {"AMEDIAFORMAT_KEY_PUSH_BLANK_BUFFERS_ON_STOP",
+         "push-blank-buffers-on-shutdown"},
+        {"AMEDIAFORMAT_KEY_QUALITY", "quality"},
+        {"AMEDIAFORMAT_KEY_REPEAT_PREVIOUS_FRAME_AFTER",
+         "repeat-previous-frame-after"},
+        {"AMEDIAFORMAT_KEY_ROTATION", "rotation-degrees"},
+        {"AMEDIAFORMAT_KEY_SAMPLE_RATE", "sample-rate"},
+        {"AMEDIAFORMAT_KEY_SLICE_HEIGHT", "slice-height"},
+        {"AMEDIAFORMAT_KEY_STRIDE", "stride"},
+        {"AMEDIAFORMAT_KEY_TEMPORAL_LAYERING", "ts-schema"},
+        {"AMEDIAFORMAT_KEY_WIDTH", "width"},
+    };
+    std::size_t key_storage_size = 0;
+    for (const auto& key : kMediaFormatKeys) {
+      key_storage_size += std::strlen(key.value) + 1;
+    }
+    std::uint64_t key_storage_address = 0;
+    std::string key_storage_error;
+    if (!memory_.MapAnywhere(
+            key_storage_size,
+            A64GuestMemory::kRead | A64GuestMemory::kWrite,
+            &key_storage_address, &key_storage_error)) {
+      return fail("failed to allocate guest AMediaFormat key strings: " +
+                  key_storage_error);
+    }
+    auto key_address = key_storage_address;
+    for (const auto& key : kMediaFormatKeys) {
+      const auto key_size = std::strlen(key.value) + 1;
+      if (!memory_.Write(key_address, key.value, key_size)) {
+        return fail("failed to write guest AMediaFormat key string");
+      }
+      if (!host_calls_.RegisterDataSymbol(
+              key.symbol, "libmediandk.so", "", key_address, error)) {
+        return false;
+      }
+      key_address += key_size;
+    }
+
     // These setters are void in the NDK ABI. Getters return false because the
     // prototype does not yet maintain a typed AMediaFormat key/value store.
     const char* const void_apis[] = {
