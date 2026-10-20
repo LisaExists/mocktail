@@ -162,6 +162,43 @@ class ApkProbeInputTests(unittest.TestCase):
                 command[i:i + 2] for i in range(len(command) - 1)
             ])
 
+    def test_eight_native_arguments_are_forwarded_to_guest_stack_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apk_path = self.make_apk(
+                root / "client.apk",
+                {"lib/arm64-v8a/libroot.so": elf_header(183)},
+            )
+            probe = root / "probe"
+            probe.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            probe.chmod(probe.stat().st_mode | 0o111)
+            arguments = [
+                "--probe", str(probe),
+                "--root", "libroot.so",
+                "--call-native", "com/mocktail/Smoke", "nativeSum8", "(IIIIIIII)I",
+            ]
+            for index, value in enumerate(range(1, 9)):
+                arguments.extend([f"--arg{index}", str(value)])
+            arguments.append(str(apk_path))
+
+            with patch.object(
+                MODULE.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run:
+                result = MODULE.main(arguments)
+
+            self.assertEqual(result, 0)
+            command = run.call_args.args[0]
+            self.assertIn(
+                ["--call-native", "com/mocktail/Smoke", "nativeSum8", "(IIIIIIII)I"],
+                [command[i:i + 4] for i in range(len(command) - 3)],
+            )
+            for index, value in enumerate(range(1, 9)):
+                self.assertIn([f"--arg{index}", str(value)], [
+                    command[i:i + 2] for i in range(len(command) - 1)
+                ])
+
     def test_external_dependency_option_is_forwarded_to_native_probe(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

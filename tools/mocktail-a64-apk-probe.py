@@ -503,10 +503,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-initializers", action="store_true", help="run guest constructors before the requested entrypoint")
     parser.add_argument("--budget", type=int, help="instruction budget for guest entrypoint execution")
     parser.add_argument("--memory-mib", type=int, default=1024, help="guest memory limit (16-16384 MiB)")
-    for index in range(8):
+    for index in range(262):
         parser.add_argument(
             f"--arg{index}",
-            help=f"integer value for guest register X{index} (decimal or 0x-prefixed hex)",
+            help=(
+                f"integer/raw value for guest argument {index} "
+                "(--call: X0-X7 only; --call-native: Java arguments 0-261)"
+            ),
         )
     return parser.parse_args(argv)
 
@@ -568,16 +571,16 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-    arg_is_set = [getattr(args, f"arg{i}") is not None for i in range(8)]
+    arg_is_set = [getattr(args, f"arg{i}") is not None for i in range(262)]
     if any(arg_is_set) and not (args.call or args.call_native):
-        print("error: --arg0 through --arg7 require --call or --call-native", file=sys.stderr)
+        print("error: --argN requires --call or --call-native", file=sys.stderr)
+        return 2
+    if args.call and not args.call_native and any(arg_is_set[8:]):
+        print("error: --call supports only --arg0 through --arg7", file=sys.stderr)
         return 2
     if args.call_native:
         gap_seen = False
-        for index, is_set in enumerate(arg_is_set):
-            if index >= 6 and is_set:
-                print("error: --call-native accepts at most six Java arguments (--arg0 through --arg5)", file=sys.stderr)
-                return 2
+        for is_set in arg_is_set:
             if not is_set:
                 gap_seen = True
             elif gap_seen:
@@ -625,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--run-initializers")
         if args.budget is not None:
             command.extend(["--budget", str(args.budget)])
-        for index in range(8):
+        for index in range(262):
             value = getattr(args, f"arg{index}")
             if value is not None:
                 command.extend([f"--arg{index}", value])

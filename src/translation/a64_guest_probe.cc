@@ -87,7 +87,8 @@ void PrintUsage(const char* program) {
       << "                           Run JNI_OnLoad, then invoke a registered static native\n"
       << "  --java-class NAME        Add a class name available to FindClass (repeatable)\n"
       << "  --java-classes-file PATH Read JNI slash-form class names, one per line\n"
-      << "  --arg0 VALUE ...        For --call: set X0-X7; for --call-native: Java args 0-5\n"
+      << "  --argN VALUE            Integer/raw argument N; --call supports N=0..7,\n"
+      << "                           --call-native supports N=0..261 (contiguous)\n"
       << "  --budget COUNT          Guest instruction budget for --call/--jni-onload\n"
       << "  --memory-mib COUNT      Guest memory limit (16 through 16384 MiB)\n"
       << "  --run-initializers      Execute module initializers before the requested entrypoint\n"
@@ -120,7 +121,9 @@ int main(int argc, char** argv) {
   bool run_initializers = false;
   bool jni_onload = false;
   bool has_call_arguments = false;
-  std::array<bool, 8> argument_was_set{};
+  constexpr std::size_t kMaximumJniArguments = 262;
+  std::vector<bool> argument_was_set(kMaximumJniArguments, false);
+  std::vector<std::uint64_t> supplied_arguments(kMaximumJniArguments, 0);
   std::uint64_t instruction_budget = 0;
   std::uint64_t memory_mib = 1024;
   A64GuestRuntime::Arguments arguments{};
@@ -209,8 +212,25 @@ int main(int argc, char** argv) {
       }
       continue;
     }
-    if (option.size() == 6 && option.compare(0, 5, "--arg") == 0 &&
-        option[5] >= '0' && option[5] <= '7') {
+    if (option.rfind("--arg", 0) == 0 && option.size() > 5) {
+      const std::string index_text = option.substr(5);
+      std::size_t argument_index = 0;
+      bool valid_index = true;
+      for (const char digit : index_text) {
+        if (digit < '0' || digit > '9') {
+          valid_index = false;
+          break;
+        }
+        const auto digit_value = static_cast<std::size_t>(digit - '0');
+        if (argument_index > (kMaximumJniArguments - 1U - digit_value) / 10U) {
+          valid_index = false;
+          break;
+        }
+        argument_index = argument_index * 10U + digit_value;
+      }
+      if (!valid_index || argument_index >= kMaximumJniArguments) {
+        return Fail("--arg index must be between 0 and 261");
+      }
       std::string value_text;
       if (!take_value(option.c_str(), &value_text)) return 2;
       std::uint64_t value = 0;
@@ -218,10 +238,11 @@ int main(int argc, char** argv) {
         return Fail("invalid unsigned integer for " + option + ": " +
                     value_text);
       }
-      const auto argument_index =
-          static_cast<std::size_t>(option[5] - '0');
-      arguments[argument_index] = value;
+      supplied_arguments[argument_index] = value;
       argument_was_set[argument_index] = true;
+      if (argument_index < arguments.size()) {
+        arguments[argument_index] = value;
+      }
       has_call_arguments = true;
       continue;
     }
@@ -267,18 +288,22 @@ int main(int argc, char** argv) {
     return Fail("--java-class is only valid with --jni-onload or --call-native");
   }
   if (has_call_arguments && call_symbol.empty() && !call_native) {
-    return Fail("--arg0 through --arg7 require --call or --call-native");
+    return Fail("--argN requires --call or --call-native");
   }
   if (jni_onload && has_call_arguments) {
-    return Fail("--arg0 through --arg7 cannot be combined with --jni-onload");
+    return Fail("--argN cannot be combined with --jni-onload");
   }
-  if (call_native) {
-    bool gap_seen = false;
-    for (std::size_t index = 0; index < argument_was_set.size(); ++index) {
-      if (index >= 6 && argument_was_set[index]) {
-        return Fail("--call-native supports at most six Java arguments (--arg0 through --arg5)");
+  if (!call_native) {
+    for (std::size_t index = arguments.size();
+         index < argument_was_set.size(); ++index) {
+      if (argument_was_set[index]) {
+        return Fail("--call supports only --arg0 through --arg7");
       }
-      if (!argument_was_set[index]) {
+    }
+  } else {
+    bool gap_seen = false;
+    for (const bool was_set : argument_was_set) {
+      if (!was_set) {
         gap_seen = true;
       } else if (gap_seen) {
         return Fail("--call-native arguments must be contiguous starting with --arg0");
@@ -475,8 +500,9 @@ int main(int argc, char** argv) {
     std::cout << "Registered native methods: " << natives.size() << '\n';
 
     std::vector<std::uint64_t> java_arguments;
-    for (std::size_t index = 0; index < 6 && argument_was_set[index]; ++index) {
-      java_arguments.push_back(arguments[index]);
+    for (std::size_t index = 0;
+         index < argument_was_set.size() && argument_was_set[index]; ++index) {
+      java_arguments.push_back(supplied_arguments[index]);
     }
     const auto result = runtime.CallRegisteredJniNative(
         native_class, native_name, native_signature, java_arguments,
