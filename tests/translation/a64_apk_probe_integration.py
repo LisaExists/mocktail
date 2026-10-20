@@ -192,7 +192,7 @@ def main() -> int:
                     "Prepared 1 ARM64 library/libraries",
                     "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
-                    "Registered native methods: 1",
+                    "Registered native methods: 2",
                     "com/mocktail/Smoke.nativeSum(II)I",
                 ),
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",

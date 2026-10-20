@@ -121,6 +121,13 @@ int main(int argc, char** argv) {
   Check(stacked_native_result.success && stacked_native_result.value == 36,
         "passes JNI integer arguments beyond X2-X7 through a 16-byte-aligned guest stack",
         &failures);
+  if (!stacked_native_result.success) {
+    std::cerr << "[DEBUG] stacked JNI native call error: "
+              << stacked_native_result.error << '\\n';
+  } else if (stacked_native_result.value != 36) {
+    std::cerr << "[DEBUG] stacked JNI native returned "
+              << stacked_native_result.value << ", expected 36\\n";
+  }
 
   const auto missing_native = runtime.CallRegisteredJniNative(
       "com/mocktail/Smoke", "missingNative", "()I",
