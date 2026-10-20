@@ -88,7 +88,8 @@ jobs:
             build-translation-ci/mocktail-a64-guest-tls-get-addr.so \
             build-translation-ci/libmocktail-android-style-smoke.so \
             build-translation-ci/libmocktail-android-dl-smoke.so \
-            build-translation-ci/libmocktail-android-jni-smoke.so
+            build-translation-ci/libmocktail-android-jni-smoke.so \
+            build-translation-ci/liblog.so
 
       - name: Run translation and preflight tests
         run: |

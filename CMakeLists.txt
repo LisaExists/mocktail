@@ -375,6 +375,21 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     add_dependencies(mocktail_a64_guest_probe
       mocktail_a64_android_style_elf_fixture)
 
+    set(MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/liblog.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE}"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -Wl,--hash-style=both
+              -Wl,-soname,liblog.so
+              -o "${MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      VERBATIM
+    )
+
     set(MOCKTAIL_A64_ANDROID_JNI_FIXTURE
       "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-android-jni-smoke.so")
     add_custom_command(
@@ -387,7 +402,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,-soname,libmocktail-android-jni-smoke.so
               -o "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
-      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
+              "-L${CMAKE_CURRENT_BINARY_DIR}"
+              -Wl,--no-as-needed -l:liblog.so
+      DEPENDS
+        "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
+        "${MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
     add_custom_target(mocktail_a64_android_jni_fixture
