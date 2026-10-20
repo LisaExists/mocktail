@@ -41,6 +41,12 @@ on:
       - 'third_party/**'
       - '.gitmodules'
   workflow_dispatch:
+    inputs:
+      run_real_roblox_apk_smoke:
+        description: "Download the pinned Roblox 2.743.1136 ARM64 split and attempt a guest JNI_OnLoad probe"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -94,3 +100,68 @@ jobs:
       - name: Run translation and preflight tests
         run: |
           ctest --test-dir build-translation-ci -R 'RobloxArmTranslation' --output-on-failure --timeout 60
+
+      # This is deliberately manual-only: it downloads a pinned, real Roblox
+      # split APK and runs its ARM64 library only inside the Dynarmic guest.
+      # SHA-256 pins prevent a mutable external release URL changing the input.
+      - name: Download pinned real Roblox APK splits
+        if: github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-translation-ci/real-roblox-apk
+          base="build-translation-ci/real-roblox-apk/com.roblox.client-18934.apk"
+          arm64="build-translation-ci/real-roblox-apk/com.roblox.client-config.arm64_v8a-18934.apk"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/Roblox-DeployHistory-Updates/android-runner/releases/download/18934/com.roblox.client-18934.apk" \
+            --output "$base"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/Roblox-DeployHistory-Updates/android-runner/releases/download/18934/com.roblox.client-config.arm64_v8a-18934.apk" \
+            --output "$arm64"
+          echo "70045d3ec8dbdb818014b64a6460205322c0291bd9f3da1ac6c34aab06835f2d  $base" | sha256sum --check
+          echo "3ff701fc7e8a91301bc122fb4cfd7c248f0a14fd4a074cf98f667a8dac6a08c9  $arm64" | sha256sum --check
+          printf 'Pinned Roblox Android version: 2.743.1136 (versionCode 18934)\\n'
+          printf 'Base APK: %s\\nARM64 split: %s\\n' "$base" "$arm64"
+
+      - name: Audit real Roblox APK package
+        if: github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke
+        shell: bash
+        run: |
+          set -uo pipefail
+          base="build-translation-ci/real-roblox-apk/com.roblox.client-18934.apk"
+          arm64="build-translation-ci/real-roblox-apk/com.roblox.client-config.arm64_v8a-18934.apk"
+          echo '--- ABI preflight (ARM64-on-x86 mismatch is expected for this prototype) ---'
+          python3 tools/roblox-arm-preflight.py "$base" "$arm64" || true
+          echo '--- Native ELF / dependency audit ---'
+          python3 tools/a64-elf-audit.py "$base" "$arm64"
+
+      - name: Attempt real Roblox native initialization in guest
+        if: github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke
+        shell: bash
+        run: |
+          set -uo pipefail
+          base="build-translation-ci/real-roblox-apk/com.roblox.client-18934.apk"
+          arm64="build-translation-ci/real-roblox-apk/com.roblox.client-config.arm64_v8a-18934.apk"
+          log="build-translation-ci/real-roblox-apk/guest-probe.log"
+          echo 'Attempting libroblox.so constructors and JNI_OnLoad under the guest runtime.'
+          echo 'A nonzero result is an actionable compatibility finding, not a passing launch.'
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s \
+            python3 tools/mocktail-a64-apk-probe.py \
+              --probe build-translation-ci/mocktail_a64_guest_probe \
+              --root libroblox.so \
+              --run-initializers --jni-onload \
+              --budget 10000000 --memory-mib 4096 \
+              "$base" "$arm64" >"$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          echo "Real Roblox guest-probe exit status: $status"
+          if [ "$status" -eq 0 ]; then
+            echo '::notice::The real Roblox libroblox.so initializer/JNI_OnLoad probe completed.'
+          else
+            echo "::warning::Real Roblox guest initialization stopped at a compatibility blocker (exit $status). See the probe log above."
+          fi
+          # This exploratory probe is non-gating until the compatibility
+          # surface is sufficiently complete for a real client launch.
+          exit 0
