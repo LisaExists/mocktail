@@ -217,6 +217,25 @@ def main() -> int:
                 "registered JNI native invoked from an APK with AArch64 ABI arguments",
             )
 
+            stacked_native_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeSum8", "(IIIIIIII)I",
+                "--arg0", "1", "--arg1", "2", "--arg2", "3", "--arg3", "4",
+                "--arg4", "5", "--arg5", "6", "--arg6", "7", "--arg7", "8",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                stacked_native_command,
+                (
+                    "JNI_OnLoad returned X0=0x10006",
+                    "Guest JNI native com/mocktail/Smoke.nativeSum8(IIIIIIII)I returned X0=0x24 (36)",
+                ),
+                "eight-argument JNI native invoked from an APK with stack-passed AArch64 arguments",
+            )
+
         if android_dl_elf is not None:
             dl_apk = temp_dir / "synthetic-android-dl.apk"
             with zipfile.ZipFile(
