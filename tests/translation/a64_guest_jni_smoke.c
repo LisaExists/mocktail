@@ -128,6 +128,16 @@ int guest_native_float_sum9(struct JNIEnv_ *env, void *clazz,
 }
 
 __attribute__((visibility("default")))
+int guest_native_mixed_stack(struct JNIEnv_ *env, void *clazz,
+    int i1, float f1, int i2, float f2, int i3, float f3,
+    int i4, float f4, int i5, float f5, int i6, float f6,
+    int i7, float f7, int i8, float f8, int i9, float f9) {
+  if (env == 0 || clazz == 0) return -1007;
+  return i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8 + i9 +
+      (int)((f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9) * 10.0f);
+}
+
+__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (guest_constructor_ran != 0x4D4F434B) return -25;
   (void)reserved;
@@ -341,7 +351,8 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       {"nativeFloatReturn", "(F)F", (void *)guest_native_float_return},
       {"nativeDoubleReturn", "(D)D", (void *)guest_native_double_return},
       {"nativeFloatSum9", "(FFFFFFFFF)I", (void *)guest_native_float_sum9},
+      {"nativeMixedStack", "(IFIFIFIFIFIFIFIFIF)I", (void *)guest_native_mixed_stack},
   };
-  if (register_natives(env, clazz, methods, 7) != 0) return -7;
+  if (register_natives(env, clazz, methods, 8) != 0) return -7;
   return 0x00010006;
 }

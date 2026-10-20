@@ -102,13 +102,14 @@ int main(int argc, char** argv) {
                  native.guest_address != 0;
         }) != natives.end();
   };
-  Check(natives.size() == 7 && has_native("nativeSum", "(II)I") &&
+  Check(natives.size() == 8 && has_native("nativeSum", "(II)I") &&
             has_native("nativeSum8", "(IIIIIIII)I") &&
             has_native("nativeFloatScaled", "(F)I") &&
             has_native("nativeMixed", "(IFDII)I") &&
             has_native("nativeFloatReturn", "(F)F") &&
             has_native("nativeDoubleReturn", "(D)D") &&
-            has_native("nativeFloatSum9", "(FFFFFFFFF)I"),
+            has_native("nativeFloatSum9", "(FFFFFFFFF)I") &&
+            has_native("nativeMixedStack", "(IFIFIFIFIFIFIFIFIF)I"),
         "RegisterNatives records validated executable guest functions", &failures);
 
   const auto native_result = runtime.CallRegisteredJniNative(
@@ -170,6 +171,13 @@ int main(int argc, char** argv) {
           0x3F800000ULL, 0x3F800000ULL, 0x3F800000ULL}, 100000);
   Check(float_stack_result.success && float_stack_result.value == 90,
         "passes the ninth floating-point JNI argument through the guest stack after V0-V7",
+        &failures);
+
+  const auto mixed_stack_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeMixedStack", "(IFIFIFIFIFIFIFIFIF)I",
+      std::vector<std::uint64_t>{1, 0x3F800000ULL, 2, 0x3F800000ULL, 3, 0x3F800000ULL, 4, 0x3F800000ULL, 5, 0x3F800000ULL, 6, 0x3F800000ULL, 7, 0x3F800000ULL, 8, 0x3F800000ULL, 9, 0x3F800000ULL}, 100000);
+  Check(mixed_stack_result.success && mixed_stack_result.value == 135,
+        "preserves source order when integer and floating-point arguments spill to the shared guest stack",
         &failures);
 
   const auto missing_native = runtime.CallRegisteredJniNative(

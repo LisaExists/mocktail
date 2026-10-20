@@ -192,7 +192,7 @@ def main() -> int:
                     "Prepared 1 ARM64 library/libraries",
                     "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
-                    "Registered native methods: 7",
+                    "Registered native methods: 8",
                     "com/mocktail/Smoke.nativeSum(II)I",
                 ),
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",
@@ -318,6 +318,38 @@ def main() -> int:
                 float_stack_command,
                 ("Guest JNI native com/mocktail/Smoke.nativeFloatSum9(FFFFFFFFF)I returned X0=0x5a (90)",),
                 "ninth floating-point JNI argument is passed on the guest stack",
+            )
+
+            mixed_stack_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeMixedStack", "(IFIFIFIFIFIFIFIFIF)I",
+                "--arg0", "1",
+                "--arg1", "0x3F800000",
+                "--arg2", "2",
+                "--arg3", "0x3F800000",
+                "--arg4", "3",
+                "--arg5", "0x3F800000",
+                "--arg6", "4",
+                "--arg7", "0x3F800000",
+                "--arg8", "5",
+                "--arg9", "0x3F800000",
+                "--arg10", "6",
+                "--arg11", "0x3F800000",
+                "--arg12", "7",
+                "--arg13", "0x3F800000",
+                "--arg14", "8",
+                "--arg15", "0x3F800000",
+                "--arg16", "9",
+                "--arg17", "0x3F800000",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                mixed_stack_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeMixedStack(IFIFIFIFIFIFIFIFIF)I returned X0=0x87 (135)",),
+                "mixed integer and floating-point stack spills preserve AAPCS64 argument order",
             )
 
         if android_dl_elf is not None:
