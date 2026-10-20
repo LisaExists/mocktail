@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
                  native.guest_address != 0;
         }) != natives.end();
   };
-  Check(natives.size() == 6 && has_native("nativeSum", "(II)I") &&
+  Check(natives.size() == 7 && has_native("nativeSum", "(II)I") &&
             has_native("nativeSum8", "(IIIIIIII)I") &&
             has_native("nativeFloatScaled", "(F)I") &&
             has_native("nativeMixed", "(IFDII)I") &&
