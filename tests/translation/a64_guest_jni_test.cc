@@ -107,7 +107,8 @@ int main(int argc, char** argv) {
             has_native("nativeFloatScaled", "(F)I") &&
             has_native("nativeMixed", "(IFDII)I") &&
             has_native("nativeFloatReturn", "(F)F") &&
-            has_native("nativeDoubleReturn", "(D)D"),
+            has_native("nativeDoubleReturn", "(D)D") &&
+            has_native("nativeFloatSum9", "(FFFFFFFFF)I"),
         "RegisterNatives records validated executable guest functions", &failures);
 
   const auto native_result = runtime.CallRegisteredJniNative(
@@ -160,6 +161,16 @@ int main(int argc, char** argv) {
             double_return_result.value_is_floating_point &&
             double_return_result.value == 0x4008000000000000ULL,
         "captures a double return value from V0 as raw IEEE-754 bits", &failures);
+
+  const auto float_stack_result = runtime.CallRegisteredJniNative(
+      "com/mocktail/Smoke", "nativeFloatSum9", "(FFFFFFFFF)I",
+      std::vector<std::uint64_t>{
+          0x3F800000ULL, 0x3F800000ULL, 0x3F800000ULL,
+          0x3F800000ULL, 0x3F800000ULL, 0x3F800000ULL,
+          0x3F800000ULL, 0x3F800000ULL, 0x3F800000ULL}, 100000);
+  Check(float_stack_result.success && float_stack_result.value == 90,
+        "passes the ninth floating-point JNI argument through the guest stack after V0-V7",
+        &failures);
 
   const auto missing_native = runtime.CallRegisteredJniNative(
       "com/mocktail/Smoke", "missingNative", "()I",

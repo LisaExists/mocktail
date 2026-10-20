@@ -192,7 +192,7 @@ def main() -> int:
                     "Prepared 1 ARM64 library/libraries",
                     "Seeded JNI FindClass with 1 class name(s) from APK DEX metadata.",
                     "JNI_OnLoad returned X0=0x10006",
-                    "Registered native methods: 6",
+                    "Registered native methods: 7",
                     "com/mocktail/Smoke.nativeSum(II)I",
                 ),
                 "Android JNI_OnLoad executed from an APK and registered a guest native method",
@@ -295,6 +295,29 @@ def main() -> int:
                 double_return_command,
                 ("Guest JNI native com/mocktail/Smoke.nativeDoubleReturn(D)D returned V0=0x4008000000000000 (raw IEEE-754 bits)",),
                 "double JNI return value is read from V0 through the APK probe",
+            )
+
+            float_stack_command = [
+                sys.executable, str(wrapper),
+                "--probe", str(probe),
+                "--root", android_jni_elf.name,
+                "--call-native", "com/mocktail/Smoke", "nativeFloatSum9", "(FFFFFFFFF)I",
+                "--arg0", "0x3F800000",
+                "--arg1", "0x3F800000",
+                "--arg2", "0x3F800000",
+                "--arg3", "0x3F800000",
+                "--arg4", "0x3F800000",
+                "--arg5", "0x3F800000",
+                "--arg6", "0x3F800000",
+                "--arg7", "0x3F800000",
+                "--arg8", "0x3F800000",
+                "--budget", "10000",
+                str(jni_apk),
+            ]
+            ok &= run_probe(
+                float_stack_command,
+                ("Guest JNI native com/mocktail/Smoke.nativeFloatSum9(FFFFFFFFF)I returned X0=0x5a (90)",),
+                "ninth floating-point JNI argument is passed on the guest stack",
             )
 
         if android_dl_elf is not None:

@@ -120,6 +120,14 @@ double guest_native_double_return(struct JNIEnv_ *env, void *clazz,
 }
 
 __attribute__((visibility("default")))
+int guest_native_float_sum9(struct JNIEnv_ *env, void *clazz,
+                            float a, float b, float c, float d, float e,
+                            float f, float g, float h, float i) {
+  if (env == 0 || clazz == 0) return -1006;
+  return (int)((a + b + c + d + e + f + g + h + i) * 10.0f);
+}
+
+__attribute__((visibility("default")))
 int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
   if (guest_constructor_ran != 0x4D4F434B) return -25;
   (void)reserved;
@@ -332,7 +340,8 @@ int32_t JNI_OnLoad(struct JavaVM_ *vm, void *reserved) {
       {"nativeMixed", "(IFDII)I", (void *)guest_native_mixed},
       {"nativeFloatReturn", "(F)F", (void *)guest_native_float_return},
       {"nativeDoubleReturn", "(D)D", (void *)guest_native_double_return},
+      {"nativeFloatSum9", "(FFFFFFFFF)I", (void *)guest_native_float_sum9},
   };
-  if (register_natives(env, clazz, methods, 6) != 0) return -7;
+  if (register_natives(env, clazz, methods, 7) != 0) return -7;
   return 0x00010006;
 }
