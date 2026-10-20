@@ -443,7 +443,7 @@ class ELFReportTests(unittest.TestCase):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
             "needed": ["libc.so"],
-            "imports": [{"name": "memcpy", "version": "LIBC",
+            "imports": [{"name": "memcpy", "version": "LIBC_PRIVATE",
                          "provider": "libc.so", "binding": "GLOBAL", "tls": False}],
             "exports": [],
         }
@@ -451,6 +451,20 @@ class ELFReportTests(unittest.TestCase):
         self.assertTrue(any(
             item["symbol"] == "memcpy" and
             item["versioned_host_call_needs_registration"]
+            for item in catalog["platform_symbol_requirements"]
+        ))
+
+    def test_known_bionic_versioned_hostcall_uses_prototype_fallback(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libc.so"],
+            "imports": [{"name": "memcpy", "version": "LIBC",
+                         "provider": "libc.so", "binding": "GLOBAL", "tls": False}],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        self.assertFalse(any(
+            item["symbol"] == "memcpy"
             for item in catalog["platform_symbol_requirements"]
         ))
 

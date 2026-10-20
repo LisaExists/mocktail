@@ -979,9 +979,9 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
             if matched:
                 continue
 
-            # Only unversioned imports can use the prototype's current generic
-            # host-call table. A named export in an arbitrary dependency must
-            # not mask that known thunk coverage, nor satisfy a versioned import.
+            # Unversioned imports and known public Bionic version namespaces can
+            # use provider-matched prototype shims. Unknown/private versions stay
+            # strict; a named export in another dependency cannot mask coverage.
             if name in PROTOTYPE_HOST_CALLS and (
                     not version or
                     (provider in ANDROID_PLATFORM_LIBRARIES and
