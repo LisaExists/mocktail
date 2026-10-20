@@ -52,6 +52,10 @@ class A64GuestHostCalls final {
 
   bool Register(std::string name, std::string provider, std::string version,
                 Handler handler, std::string* error = nullptr);
+  // Registers an already-mapped guest data object (not an SVC thunk).
+  bool RegisterDataSymbol(std::string name, std::string provider,
+                          std::string version, std::uint64_t guest_address,
+                          std::string* error = nullptr);
 
   // Registers a small explicit libc subset with guest-memory-aware wrappers.
   // This deliberately does not expose arbitrary host function pointers.
@@ -88,6 +92,7 @@ class A64GuestHostCalls final {
     Handler handler;
     std::uint64_t guest_address = 0;
     std::uint32_t svc_immediate = 0;
+    bool data_symbol = false;
   };
 
   A64GuestMemory& memory_;

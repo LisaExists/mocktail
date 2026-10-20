@@ -376,7 +376,10 @@ PROTOTYPE_HOST_CALLS = {
     "dlopen", "dlsym", "dlclose", "dlerror", "dladdr",
     "__android_log_write", "__android_log_buf_write",
     "__android_log_is_loggable",
-    "__cxa_guard_acquire", "__cxa_guard_release", "__cxa_guard_abort",
+    "__cxa_atexit", "__cxa_finalize", "__cxa_guard_acquire",
+    "__cxa_guard_release", "__cxa_guard_abort", "__stack_chk_fail",
+    "__sF", "stdin", "stdout", "stderr", "fputs", "fflush",
+    "__android_log_print",
     "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock",
     "pthread_mutex_trylock", "pthread_mutex_timedlock", "pthread_mutex_unlock",
     "pthread_mutex_consistent", "pthread_rwlock_init", "pthread_rwlock_destroy",
@@ -853,6 +856,17 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
 
 
 
+def is_supported_android_symbol_version(version: str) -> bool:
+    if version in {"LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"}:
+        return True
+    for base in ("LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"):
+        if (len(version) == len(base) + 2 and
+                version.startswith(base + "_") and
+                "A" <= version[-1] <= "Z"):
+            return True
+    return False
+
+
 def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Resolve package dependency closures and expose remaining platform API gaps."""
     aliases: dict[str, list[dict[str, Any]]] = {}
@@ -968,7 +982,10 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
             # Only unversioned imports can use the prototype's current generic
             # host-call table. A named export in an arbitrary dependency must
             # not mask that known thunk coverage, nor satisfy a versioned import.
-            if name in PROTOTYPE_HOST_CALLS and not version:
+            if name in PROTOTYPE_HOST_CALLS and (
+                    not version or
+                    (provider in ANDROID_PLATFORM_LIBRARIES and
+                     is_supported_android_symbol_version(version))):
                 continue
 
             provider_description: Any = provider or provider_names

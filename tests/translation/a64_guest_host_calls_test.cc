@@ -432,6 +432,29 @@ int main() {
   Check(!versioned,
         "refuses to satisfy unknown versioned imports with an unversioned thunk");
 
+  const auto versioned_strlen =
+      calls.ResolveVersionedSymbol({"strlen", "LIBC", "libc.so"});
+  Check(strlen_stub && versioned_strlen &&
+            *versioned_strlen == *strlen_stub,
+        "resolves public Bionic LIBC imports through provider-matched prototype shims");
+  const auto newer_versioned_strlen =
+      calls.ResolveVersionedSymbol({"strlen", "LIBC_N", "libc.so"});
+  Check(strlen_stub && newer_versioned_strlen &&
+            *newer_versioned_strlen == *strlen_stub,
+        "accepts known newer Bionic symbol-version namespaces");
+  Check(!calls.ResolveVersionedSymbol({"strlen", "LIBC", "libm.so"}),
+        "does not resolve a versioned import from the wrong provider");
+
+  const auto stderr_data = calls.ResolveSymbol("stderr");
+  const auto versioned_stderr =
+      calls.ResolveVersionedSymbol({"stderr", "LIBC", "libc.so"});
+  std::uint64_t stderr_stream = 0;
+  Check(stderr_data && versioned_stderr &&
+            *stderr_data == *versioned_stderr &&
+            memory.Read(*stderr_data, &stderr_stream, sizeof(stderr_stream)) &&
+            stderr_stream != 0 && memory.IsMapped(stderr_stream, 1),
+        "resolves versioned stderr data imports to a mapped guest FILE placeholder");
+
   arguments = {};
   arguments[0] = duplicated_string.value;
   const auto freed_string = calls.DispatchSvc(

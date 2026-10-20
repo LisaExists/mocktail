@@ -65,6 +65,13 @@ def make_elf(dynamic, *, machine=183, extra_tls=False):
 
 
 class ELFReportTests(unittest.TestCase):
+    def test_supported_android_symbol_versions_are_bounded(self):
+        self.assertTrue(MODULE.is_supported_android_symbol_version("LIBC"))
+        self.assertTrue(MODULE.is_supported_android_symbol_version("LIBC_N"))
+        self.assertTrue(MODULE.is_supported_android_symbol_version("LIBM"))
+        self.assertFalse(MODULE.is_supported_android_symbol_version("LIBC_PRIVATE"))
+        self.assertFalse(MODULE.is_supported_android_symbol_version("GLIBC_2.17"))
+
     def test_simple_aarch64_shared_object_is_a_loader_candidate(self):
         data = make_elf([(MODULE.DT_NULL, 0)])
         report = MODULE.audit_elf(bytes(data), "libtiny.so")

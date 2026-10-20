@@ -17,6 +17,25 @@
 namespace mocktail::translation {
 namespace {
 
+bool IsKnownAndroidSymbolVersion(const std::string& version) noexcept {
+  if (version == "LIBC" || version == "LIBM" || version == "LIBDL" ||
+      version == "LIBLOG" || version == "LIBANDROID") {
+    return true;
+  }
+  constexpr const char* kVersionBases[] = {
+      "LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"};
+  for (const auto* base : kVersionBases) {
+    const auto length = std::strlen(base);
+    if (version.size() == length + 2 &&
+        version.compare(0, length, base) == 0 &&
+        version[length] == '_' &&
+        version[length + 1] >= 'A' && version[length + 1] <= 'Z') {
+      return true;
+    }
+  }
+  return false;
+}
+
 constexpr std::uint32_t kA64SvcBase = 0xD4000001U;
 constexpr std::uint32_t kA64Ret = 0xD65F03C0U;
 
@@ -131,8 +150,46 @@ bool A64GuestHostCalls::Register(std::string name, std::string provider,
   item.provider = std::move(provider);
   item.version = std::move(version);
   item.handler = std::move(handler);
+  item.data_symbol = false;
   item.svc_immediate =
       kFirstSvcImmediate + static_cast<std::uint32_t>(exports_.size());
+  exports_.push_back(std::move(item));
+  if (error != nullptr) error->clear();
+  return true;
+}
+
+bool A64GuestHostCalls::RegisterDataSymbol(
+    std::string name, std::string provider, std::string version,
+    std::uint64_t guest_address, std::string* error) {
+  auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (name.empty() || guest_address == 0 ||
+      !memory_.IsMapped(guest_address, 1)) {
+    return fail("guest data export needs a name and a mapped guest address");
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (installed_) return fail("guest data exports cannot be added after stub installation");
+  for (const auto& item : exports_) {
+    if (item.name == name && item.provider == provider &&
+        item.version == version) {
+      return fail("duplicate guest host-call export name/provider/version");
+    }
+  }
+  if (exports_.size() >=
+      std::numeric_limits<std::uint16_t>::max() -
+          kFirstSvcImmediate + 1U) {
+    return fail("host-call table exceeds the available SVC immediate range");
+  }
+
+  Export item;
+  item.name = std::move(name);
+  item.provider = std::move(provider);
+  item.version = std::move(version);
+  item.guest_address = guest_address;
+  item.data_symbol = true;
   exports_.push_back(std::move(item));
   if (error != nullptr) error->clear();
   return true;
@@ -172,6 +229,50 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
   if (!register_one("__errno_location", [errno_address](const Arguments&) {
         return A64HostCallResult{true, errno_address, {}};
       })) return false;
+
+  // Minimal guest-side stdio objects let versioned Bionic data imports resolve.
+  // They are opaque placeholders: this prototype does not implement Android's
+  // FILE internals or a real stdio backend.
+  constexpr std::size_t kFakeFileSize = 128;
+  constexpr std::size_t kStreamCount = 3;
+  constexpr std::size_t kStdioStorageSize =
+      kFakeFileSize * kStreamCount +
+      sizeof(std::uint64_t) * kStreamCount;
+  std::uint64_t stdio_storage_address = 0;
+  std::string stdio_map_error;
+  if (!memory_.MapAnywhere(
+          kStdioStorageSize,
+          A64GuestMemory::kRead | A64GuestMemory::kWrite,
+          &stdio_storage_address, &stdio_map_error)) {
+    return fail("failed to allocate guest stdio placeholders: " +
+                stdio_map_error);
+  }
+  const std::array<std::uint8_t, kStdioStorageSize> zeroed_stdio{};
+  if (!memory_.Write(stdio_storage_address, zeroed_stdio.data(),
+                     zeroed_stdio.size())) {
+    return fail("failed to initialize guest stdio placeholders");
+  }
+  const std::uint64_t stream_pointers[] = {
+      stdio_storage_address,
+      stdio_storage_address + kFakeFileSize,
+      stdio_storage_address + 2 * kFakeFileSize};
+  const std::uint64_t pointer_cells[] = {
+      stdio_storage_address + kFakeFileSize * kStreamCount,
+      stdio_storage_address + kFakeFileSize * kStreamCount + sizeof(std::uint64_t),
+      stdio_storage_address + kFakeFileSize * kStreamCount + 2 * sizeof(std::uint64_t)};
+  for (std::size_t index = 0; index < kStreamCount; ++index) {
+    if (!memory_.Write(pointer_cells[index], &stream_pointers[index],
+                       sizeof(stream_pointers[index]))) {
+      return fail("failed to initialize guest stdio pointer cells");
+    }
+  }
+  if (!RegisterDataSymbol("__sF", "libc.so", "", stdio_storage_address,
+                          error) ||
+      !RegisterDataSymbol("stdin", "libc.so", "", pointer_cells[0], error) ||
+      !RegisterDataSymbol("stdout", "libc.so", "", pointer_cells[1], error) ||
+      !RegisterDataSymbol("stderr", "libc.so", "", pointer_cells[2], error)) {
+    return false;
+  }
 
   auto read_bytes = [this](std::uint64_t address, std::size_t size,
                            std::vector<std::uint8_t>* bytes,
@@ -761,6 +862,21 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
         return Failure("guest stack-protector check failed");
       })) return false;
 
+  // The probe does not unload DSOs. Accept these lifecycle calls without
+  // re-entering the JIT from an active guest invocation.
+  if (!register_one("__cxa_atexit", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+  if (!register_one("__cxa_finalize", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+  if (!register_one("fputs", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+  if (!register_one("fflush", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+
   if (error != nullptr) error->clear();
   return true;
 }
@@ -826,6 +942,7 @@ bool A64GuestHostCalls::Install(std::string* error) {
 
   for (std::size_t index = 0; index < exports_.size(); ++index) {
     auto& item = exports_[index];
+    if (item.data_symbol) continue;
     item.guest_address = stub_base_ + index * 8U;
     const std::uint32_t svc =
         kA64SvcBase | ((item.svc_immediate & 0xffffU) << 5U);
@@ -874,6 +991,23 @@ std::optional<std::uint64_t> A64GuestHostCalls::ResolveVersionedSymbol(
     }
     return item.guest_address;
   }
+  if (!IsKnownAndroidSymbolVersion(request.version)) {
+    return std::nullopt;
+  }
+  // Android Bionic's public version namespaces can use a provider-matched
+  // unversioned prototype shim when no exact versioned alias is registered.
+  for (const auto& item : exports_) {
+    if (item.name != request.name || !item.version.empty() ||
+        item.guest_address == 0) {
+      continue;
+    }
+    if (request.provider.empty()) {
+      if (!item.provider.empty()) continue;
+    } else if (!item.provider.empty() && item.provider != request.provider) {
+      continue;
+    }
+    return item.guest_address;
+  }
   return std::nullopt;
 }
 
@@ -881,7 +1015,8 @@ bool A64GuestHostCalls::HandlesSvc(std::uint32_t immediate) const noexcept {
   std::lock_guard<std::mutex> lock(mutex_);
   return std::any_of(exports_.begin(), exports_.end(),
                      [&](const Export& item) {
-    return item.svc_immediate == immediate && item.guest_address != 0;
+    return !item.data_symbol && item.svc_immediate == immediate &&
+           item.guest_address != 0;
   });
 }
 
@@ -892,7 +1027,8 @@ A64HostCallResult A64GuestHostCalls::DispatchSvc(
     std::lock_guard<std::mutex> lock(mutex_);
     const auto found = std::find_if(exports_.begin(), exports_.end(),
                                     [&](const Export& item) {
-      return item.svc_immediate == immediate && item.guest_address != 0;
+      return !item.data_symbol && item.svc_immediate == immediate &&
+           item.guest_address != 0;
     });
     if (found == exports_.end()) {
       return Failure("unknown AArch64 host-call SVC immediate");

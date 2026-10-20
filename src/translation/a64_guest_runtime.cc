@@ -1101,6 +1101,23 @@ class A64GuestRuntime::Impl final {
           return A64HostCallResult{true, 1, {}};
         })) return false;
 
+    if (!register_one("__android_log_print",
+        [read_log_fields, emit_log](
+            const A64GuestHostCalls::Arguments& arguments) {
+          const auto priority = static_cast<std::int32_t>(arguments[0]);
+          if (priority < 0 || priority > 8) return A64HostCallResult{true, 0, {}};
+          std::string tag, format, diagnostic;
+          if (!read_log_fields(arguments[1], arguments[2], &tag, &format,
+                               &diagnostic)) {
+            return A64HostCallResult{
+                false, 0, "invalid guest pointers passed to __android_log_print: " +
+                              diagnostic};
+          }
+          // Varargs are not formatted yet; retain the bounded format string.
+          emit_log(priority, tag, format, -1);
+          return A64HostCallResult{true, format.size(), {}};
+        })) return false;
+
     if (!register_one("__android_log_is_loggable",
         [this](const A64GuestHostCalls::Arguments& arguments) {
           const auto priority = static_cast<std::int32_t>(arguments[0]);
