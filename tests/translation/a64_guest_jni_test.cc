@@ -123,10 +123,10 @@ int main(int argc, char** argv) {
         &failures);
   if (!stacked_native_result.success) {
     std::cerr << "[DEBUG] stacked JNI native call error: "
-              << stacked_native_result.error << '\\n';
+              << stacked_native_result.error << '\n';
   } else if (stacked_native_result.value != 36) {
     std::cerr << "[DEBUG] stacked JNI native returned "
-              << stacked_native_result.value << ", expected 36\\n";
+              << stacked_native_result.value << ", expected 36\n";
   }
 
   const auto missing_native = runtime.CallRegisteredJniNative(
