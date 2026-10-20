@@ -138,8 +138,12 @@ bool CountJniParameterTypes(const std::string& signature,
       return fail("invalid JNI parameter type descriptor");
     }
     ++count;
-    if (count > 6) {
-      return fail("JNI methods with more than six register-passed arguments are unsupported");
+    // JNI's two implicit parameters consume X0/X1, leaving six Java
+    // arguments in X2-X7. Additional arguments are valid AAPCS64 parameters
+    // and are passed on the guest stack by CallRegisteredJniNative.
+    constexpr std::size_t kMaximumJniArguments = 262;
+    if (count > kMaximumJniArguments) {
+      return fail("JNI method descriptor exceeds the 262-argument limit");
     }
   }
   if (cursor >= signature.size() || signature[cursor] != ')') {
