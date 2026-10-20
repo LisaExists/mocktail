@@ -1013,6 +1013,65 @@ class A64GuestRuntime::Impl final {
         error);
   }
 
+  bool RegisterAndroidMediaNdkApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libmediandk.so", "",
+                                  std::move(handler), error);
+    };
+
+    if (!register_one("AMediaFormat_new",
+        [this](const A64GuestHostCalls::Arguments&) -> A64HostCallResult {
+          std::uint64_t address = 0;
+          std::string diagnostic;
+          if (!memory_.MapAnywhere(
+                  128, A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                  &address, &diagnostic)) {
+            return {false, 0, "failed to allocate AMediaFormat placeholder: " +
+                                  diagnostic};
+          }
+          const std::array<std::uint8_t, 128> zeroed{};
+          if (!memory_.Write(address, zeroed.data(), zeroed.size())) {
+            return {false, 0, "failed to initialize AMediaFormat placeholder"};
+          }
+          return {true, address, {}};
+        })) return false;
+    if (!register_one("AMediaFormat_delete",
+        [](const A64GuestHostCalls::Arguments&) {
+          // Placeholder objects are kept for the one-shot probe lifetime.
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("AMediaFormat_toString",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    // These setters are void in the NDK ABI. Getters return false because the
+    // prototype does not yet maintain a typed AMediaFormat key/value store.
+    const char* const void_apis[] = {
+        "AMediaFormat_setInt32", "AMediaFormat_setInt64",
+        "AMediaFormat_setFloat", "AMediaFormat_setDouble",
+        "AMediaFormat_setSize", "AMediaFormat_setString",
+        "AMediaFormat_setBuffer", "AMediaFormat_setRect"};
+    for (const auto* name : void_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    const char* const getter_apis[] = {
+        "AMediaFormat_getInt32", "AMediaFormat_getInt64",
+        "AMediaFormat_getFloat", "AMediaFormat_getDouble",
+        "AMediaFormat_getSize", "AMediaFormat_getString",
+        "AMediaFormat_getBuffer", "AMediaFormat_getRect"};
+    for (const auto* name : getter_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidLoggingApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -1370,6 +1429,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidMediaNdkApi(&diagnostic)) {
+      return fail("failed to register Android NDK media API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidLoggingApi(&diagnostic)) {
