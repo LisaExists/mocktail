@@ -1422,7 +1422,8 @@ class A64GuestRuntime::Impl final {
           "liblog.so", "libm.so", "libz.so", "libEGL.so",
           "libGLESv1_CM.so", "libGLESv2.so", "libGLESv3.so",
           "libvulkan.so", "libjnigraphics.so", "libnativewindow.so",
-          "libsync.so", "libmediandk.so", "libOpenSLES.so", "libaaudio.so",
+          "libsync.so", "libmediandk.so", "libOpenSLES.so",
+          "libOpenMAXAL.so", "libaaudio.so",
           "libcamera2ndk.so", "libamidi.so", "libbinder_ndk.so",
           "libneuralnetworks.so", "libsensor.so", "libusbhost.so"};
       for (const auto* dependency : android_system_dependencies) {

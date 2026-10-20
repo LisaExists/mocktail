@@ -223,6 +223,48 @@ inline std::vector<std::uint8_t> BuildA64ElfWithAndroidPackedRela() {
   return file;
 }
 
+inline std::vector<std::uint8_t>
+BuildA64ElfWithAndroidPackedRelaNegativeOffsetDelta() {
+  auto file = BuildA64ElfWithAndroidPackedRela();
+  constexpr std::size_t kPackedRelaOffset = 0x1100;
+  // APS2: start at 0x1508, then apply one relocation at 0x1500 via -8.
+  const std::uint8_t packed[] = {
+      'A', 'P', 'S', '2',
+      0x01,             // relocation count = 1
+      0x88, 0x2A,       // initial offset = 0x1508
+      0x01,             // group size = 1
+      0x00,             // no grouped fields
+      0x78,             // offset delta = -8 (valid SLEB128)
+      0x83, 0x08,       // R_AARCH64_RELATIVE
+  };
+  std::memcpy(file.data() + kPackedRelaOffset, packed, sizeof(packed));
+  auto packed_size = ReadDynamicEntry(file, 11);
+  packed_size.d_un.d_val = sizeof(packed);
+  WriteDynamicEntry(file, 11, packed_size);
+  return file;
+}
+
+inline std::vector<std::uint8_t>
+BuildA64ElfWithAndroidPackedRelaNegativeGroupedOffsetDelta() {
+  auto file = BuildA64ElfWithAndroidPackedRela();
+  constexpr std::size_t kPackedRelaOffset = 0x1100;
+  // APS2: start at 0x1580; a grouped delta of -0x80 targets 0x1500.
+  const std::uint8_t packed[] = {
+      'A', 'P', 'S', '2',
+      0x01,             // relocation count = 1
+      0x80, 0x2B,       // initial offset = 0x1580
+      0x01,             // group size = 1
+      0x02,             // grouped offset delta
+      0x80, 0x7F,       // grouped offset delta = -0x80
+      0x83, 0x08,       // R_AARCH64_RELATIVE
+  };
+  std::memcpy(file.data() + kPackedRelaOffset, packed, sizeof(packed));
+  auto packed_size = ReadDynamicEntry(file, 11);
+  packed_size.d_un.d_val = sizeof(packed);
+  WriteDynamicEntry(file, 11, packed_size);
+  return file;
+}
+
 // Android-targeted linkers can retain DT_RELAENT even when they emit no
 // ordinary DT_RELA/DT_RELASZ entries because all dynamic relocations are packed.
 inline std::vector<std::uint8_t>

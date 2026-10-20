@@ -36,6 +36,12 @@ def android_packed_relative(offset: int = 0x700) -> bytes:
     return stream
 
 
+def android_packed_relative_negative_group_delta() -> bytes:
+    # One APS2 relocation: 0x180 + (-0x80) = 0x100.
+    return (b"APS2" + sleb128(1) + sleb128(0x180) +
+            sleb128(1) + sleb128(2) + sleb128(-0x80) + sleb128(1027))
+
+
 def make_elf(dynamic, *, machine=183, extra_tls=False):
     data = bytearray(0x800)
     ident = bytearray(16)
@@ -127,6 +133,32 @@ class ELFReportTests(unittest.TestCase):
         )
         self.assertFalse(any("cannot classify" in blocker
                              for blocker in report["prototype_loader_blockers"]))
+
+    def test_android_aps2_accepts_negative_offset_deltas(self):
+        streams = [
+            ("libnegative-aps2.so", android_packed_relative(offset=0x80)),
+            ("libnegative-grouped-aps2.so",
+             android_packed_relative_negative_group_delta()),
+        ]
+        for name, packed in streams:
+            with self.subTest(name=name):
+                data = make_elf([
+                    (MODULE.DT_ANDROID_RELA, 0x300),
+                    (MODULE.DT_ANDROID_RELASZ, len(packed)),
+                    (MODULE.DT_SYMTAB, 0x500),
+                    (MODULE.DT_SYMENT, 24),
+                    (MODULE.DT_HASH, 0x540),
+                    (MODULE.DT_STRTAB, 0x600),
+                    (MODULE.DT_STRSZ, 1),
+                    (MODULE.DT_NULL, 0),
+                ])
+                data[0x300:0x300 + len(packed)] = packed
+                struct.pack_into("<IIII", data, 0x540, 1, 1, 0, 0)
+                data[0x600] = 0
+                report = MODULE.audit_elf(bytes(data), name)
+                self.assertTrue(report["prototype_loader_compatible"],
+                                report["prototype_loader_blockers"])
+                self.assertEqual(report["relocation_counts"]["R_AARCH64_RELATIVE"], 1)
 
     def test_android_aps2_allows_empty_conventional_rela_placeholder(self):
         packed = android_packed_relative()

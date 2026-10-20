@@ -335,6 +335,40 @@ int main() {
           "applies a decoded APS2 R_AARCH64_RELATIVE relocation");
   }
 
+  auto android_packed_negative_delta =
+      mocktail::translation::test::
+          BuildA64ElfWithAndroidPackedRelaNegativeOffsetDelta();
+  auto loaded_android_packed_negative_delta =
+      LoadA64Elf(android_packed_negative_delta);
+  Check(static_cast<bool>(loaded_android_packed_negative_delta),
+        "accepts a negative per-relocation APS2 offset delta");
+  if (loaded_android_packed_negative_delta) {
+    std::uint64_t actual = 0;
+    const auto target =
+        loaded_android_packed_negative_delta.image->load_bias + 0x1500;
+    Check(loaded_android_packed_negative_delta.image->Read(
+              target, &actual, sizeof(actual)) &&
+              actual == loaded_android_packed_negative_delta.image->load_bias,
+          "applies an APS2 relocation after a negative per-entry offset delta");
+  }
+
+  auto android_packed_negative_group_delta =
+      mocktail::translation::test::
+          BuildA64ElfWithAndroidPackedRelaNegativeGroupedOffsetDelta();
+  auto loaded_android_packed_negative_group_delta =
+      LoadA64Elf(android_packed_negative_group_delta);
+  Check(static_cast<bool>(loaded_android_packed_negative_group_delta),
+        "accepts a negative grouped APS2 offset delta");
+  if (loaded_android_packed_negative_group_delta) {
+    std::uint64_t actual = 0;
+    const auto target =
+        loaded_android_packed_negative_group_delta.image->load_bias + 0x1500;
+    Check(loaded_android_packed_negative_group_delta.image->Read(
+              target, &actual, sizeof(actual)) &&
+              actual == loaded_android_packed_negative_group_delta.image->load_bias,
+          "applies an APS2 relocation after a negative grouped offset delta");
+  }
+
   auto android_relaent_only =
       mocktail::translation::test::
           BuildA64ElfWithAndroidPackedRelaEntrySizeOnly();

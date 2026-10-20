@@ -235,9 +235,7 @@ def decode_android_packed_rela(
         group_info = 0
         if grouped_by_offset_delta:
             group_offset_delta, position = read_sleb128(data, position)
-            if group_offset_delta < 0:
-                raise AuditError("DT_ANDROID_RELA has a negative grouped offset delta")
-        if grouped_by_info:
+            if grouped_by_info:
             group_info, position = read_sleb128(data, position)
             if group_info < 0:
                 raise AuditError("DT_ANDROID_RELA has negative relocation info")
@@ -255,11 +253,9 @@ def decode_android_packed_rela(
                 delta = group_offset_delta
             else:
                 delta, position = read_sleb128(data, position)
-                if delta < 0:
-                    raise AuditError("DT_ANDROID_RELA has a negative relocation offset delta")
             running_offset += delta
-            if running_offset > (1 << 64) - 1:
-                raise AuditError("DT_ANDROID_RELA relocation offset overflows")
+            if running_offset < 0 or running_offset > (1 << 64) - 1:
+                raise AuditError("DT_ANDROID_RELA relocation offset underflows or overflows")
 
             if grouped_by_info:
                 info = group_info

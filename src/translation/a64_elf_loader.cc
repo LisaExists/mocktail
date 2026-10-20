@@ -25,6 +25,23 @@ bool AddOverflows(std::uint64_t left, std::uint64_t right) noexcept {
   return right > std::numeric_limits<std::uint64_t>::max() - left;
 }
 
+bool ApplySignedDelta(std::uint64_t base, std::int64_t delta,
+                      std::uint64_t* result) noexcept {
+  if (result == nullptr) return false;
+  if (delta >= 0) {
+    const auto magnitude = static_cast<std::uint64_t>(delta);
+    if (AddOverflows(base, magnitude)) return false;
+    *result = base + magnitude;
+    return true;
+  }
+  // Avoid negating INT64_MIN directly, which would overflow signed arithmetic.
+  const auto magnitude =
+      static_cast<std::uint64_t>(-(delta + 1)) + std::uint64_t{1};
+  if (base < magnitude) return false;
+  *result = base - magnitude;
+  return true;
+}
+
 bool IsPowerOfTwo(std::uint64_t value) noexcept {
   return value != 0 && (value & (value - 1)) == 0;
 }
@@ -1037,15 +1054,13 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
       return false;
     }
 
-    std::uint64_t group_offset_delta = 0;
+    std::int64_t group_offset_delta = 0;
     std::uint64_t group_info = 0;
     if ((flags & kGroupedByOffsetDelta) != 0) {
-      std::int64_t delta = 0;
-      if (!decoder.Read(&delta) || delta < 0) {
-        *error = "DT_ANDROID_RELA has an invalid grouped offset delta";
+      if (!decoder.Read(&group_offset_delta)) {
+        *error = "DT_ANDROID_RELA has a truncated grouped offset delta";
         return false;
       }
-      group_offset_delta = static_cast<std::uint64_t>(delta);
     }
     if ((flags & kGroupedByInfo) != 0) {
       std::int64_t info = 0;
@@ -1072,24 +1087,23 @@ bool DecodeAndroidPackedRela(const A64LoadedImage& image,
     }
 
     for (std::uint64_t index = 0; index < group_size; ++index) {
+      std::uint64_t next_offset = 0;
       if ((flags & kGroupedByOffsetDelta) == 0) {
         std::int64_t delta = 0;
-        if (!decoder.Read(&delta) || delta < 0) {
-          *error = "DT_ANDROID_RELA has an invalid relocation offset delta";
+        if (!decoder.Read(&delta)) {
+          *error = "DT_ANDROID_RELA has a truncated relocation offset delta";
           return false;
         }
-        if (AddOverflows(running_offset, static_cast<std::uint64_t>(delta))) {
-          *error = "DT_ANDROID_RELA relocation offset overflows";
+        if (!ApplySignedDelta(running_offset, delta, &next_offset)) {
+          *error = "DT_ANDROID_RELA relocation offset underflows or overflows";
           return false;
         }
-        running_offset += static_cast<std::uint64_t>(delta);
-      } else {
-        if (AddOverflows(running_offset, group_offset_delta)) {
-          *error = "DT_ANDROID_RELA relocation offset overflows";
-          return false;
-        }
-        running_offset += group_offset_delta;
+      } else if (!ApplySignedDelta(running_offset, group_offset_delta,
+                                   &next_offset)) {
+        *error = "DT_ANDROID_RELA grouped relocation offset underflows or overflows";
+        return false;
       }
+      running_offset = next_offset;
 
       std::uint64_t info = group_info;
       if ((flags & kGroupedByInfo) == 0) {
