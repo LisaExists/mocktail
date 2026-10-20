@@ -37,8 +37,8 @@ def android_packed_relative(offset: int = 0x700) -> bytes:
 
 
 def android_packed_relative_negative_group_delta() -> bytes:
-    # One APS2 relocation: 0x180 + (-0x80) = 0x100.
-    return (b"APS2" + sleb128(1) + sleb128(0x180) +
+    # One APS2 relocation: 0x780 + (-0x80) = 0x700.
+    return (b"APS2" + sleb128(1) + sleb128(0x780) +
             sleb128(1) + sleb128(2) + sleb128(-0x80) + sleb128(1027))
 
 
