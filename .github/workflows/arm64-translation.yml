@@ -89,7 +89,7 @@ jobs:
             build-translation-ci/libmocktail-android-style-smoke.so \
             build-translation-ci/libmocktail-android-dl-smoke.so \
             build-translation-ci/libmocktail-android-jni-smoke.so \
-            build-translation-ci/liblog.so
+            build-translation-ci/android-system-stubs/liblog.so
 
       - name: Run translation and preflight tests
         run: |
