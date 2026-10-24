@@ -19,11 +19,12 @@ namespace {
 
 bool IsKnownAndroidSymbolVersion(const std::string& version) noexcept {
   if (version == "LIBC" || version == "LIBM" || version == "LIBDL" ||
-      version == "LIBLOG" || version == "LIBANDROID") {
+      version == "LIBLOG" || version == "LIBANDROID" ||
+      version == "LIBMEDIANDK") {
     return true;
   }
   constexpr const char* kVersionBases[] = {
-      "LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"};
+      "LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID", "LIBMEDIANDK"};
   for (const auto* base : kVersionBases) {
     const auto length = std::strlen(base);
     if (version.size() == length + 2 &&

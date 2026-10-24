@@ -80,6 +80,28 @@ int main() {
   Check(calls.RegisterTlsGetAddr(tls_runtime, tls_thread, "libc.so", "",
                                  &error),
         "registers a guest-safe preloaded-module __tls_get_addr thunk");
+  constexpr std::uint64_t kMediaFormatKeyAddress = kTestBase + 0x800;
+  constexpr char kMediaFormatKey[] = "i-frame-interval";
+  Check(memory.Write(kMediaFormatKeyAddress, kMediaFormatKey,
+                     sizeof(kMediaFormatKey)) &&
+            calls.RegisterDataSymbol("AMEDIAFORMAT_KEY_I_FRAME_INTERVAL",
+                                     "libmediandk.so", "",
+                                     kMediaFormatKeyAddress, &error),
+        "registers an NDK media-format data export");
+  const A64SymbolRequest media_format_key_request{
+      "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "LIBMEDIANDK", "libmediandk.so"};
+  const auto media_format_key =
+      calls.ResolveVersionedSymbol(media_format_key_request);
+  const A64SymbolRequest wrong_media_provider{
+      "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "LIBMEDIANDK", "libc.so"};
+  const A64SymbolRequest private_media_version{
+      "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "LIBMEDIANDK_PRIVATE",
+      "libmediandk.so"};
+  Check(media_format_key && *media_format_key == kMediaFormatKeyAddress,
+        "resolves public LIBMEDIANDK imports to provider-matched data exports");
+  Check(!calls.ResolveVersionedSymbol(wrong_media_provider) &&
+            !calls.ResolveVersionedSymbol(private_media_version),
+        "keeps media-NDK version fallback provider-scoped and rejects private versions");
   Check(calls.Install(&error), "installs RX AArch64 SVC/RET thunks");
 
   const auto errno_stub = calls.ResolveSymbol("__errno");
