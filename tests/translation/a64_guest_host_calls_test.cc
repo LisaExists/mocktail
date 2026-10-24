@@ -103,6 +103,11 @@ int main() {
   Check(!calls.ResolveVersionedSymbol(wrong_media_provider) &&
             !calls.ResolveVersionedSymbol(private_media_version),
         "keeps media-NDK version fallback provider-scoped and rejects private versions");
+  const A64SymbolRequest media_version_alias{
+      "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "LIBMEDIANDK_A", "libmediandk.so"};
+  Check(calls.ResolveVersionedSymbol(media_version_alias) ==
+            media_format_key,
+        "supports public Android media-NDK symbol-version suffixes");
   Check(calls.Install(&error), "installs RX AArch64 SVC/RET thunks");
 
   const auto errno_stub = calls.ResolveSymbol("__errno");
