@@ -47,6 +47,7 @@ std::uint32_t ReadSvcImmediate(
 
 int main() {
   using mocktail::translation::A64GuestHostCalls;
+  using mocktail::translation::A64SymbolRequest;
   using mocktail::translation::A64GuestMemory;
   using mocktail::translation::A64GuestModule;
   using mocktail::translation::A64GuestModuleSet;
