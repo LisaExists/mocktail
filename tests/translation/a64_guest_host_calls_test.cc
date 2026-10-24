@@ -100,6 +100,9 @@ int main() {
       "libmediandk.so"};
   Check(media_format_key && *media_format_key == kMediaFormatKeyAddress,
         "resolves public LIBMEDIANDK imports to provider-matched data exports");
+  Check(calls.ResolveSymbol("AMEDIAFORMAT_KEY_I_FRAME_INTERVAL") ==
+            media_format_key,
+        "resolves unversioned NDK media data imports to the same guest object");
   Check(!calls.ResolveVersionedSymbol(wrong_media_provider) &&
             !calls.ResolveVersionedSymbol(private_media_version),
         "keeps media-NDK version fallback provider-scoped and rejects private versions");
