@@ -1014,6 +1014,10 @@ class A64GuestRuntime::Impl final {
   }
 
   bool RegisterAndroidMediaNdkApi(std::string* error) {
+    auto fail = [error](const std::string& message) {
+      if (error != nullptr) *error = message;
+      return false;
+    };
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
       return host_calls_.Register(name, "libmediandk.so", "",
