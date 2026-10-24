@@ -17,6 +17,8 @@
 namespace mocktail::translation {
 namespace {
 
+// Public Android NDK DSOs use their own symbol-version namespace too;
+// allow the same provider-scoped fallback used for Bionic's core libraries.
 bool IsKnownAndroidSymbolVersion(const std::string& version) noexcept {
   if (version == "LIBC" || version == "LIBM" || version == "LIBDL" ||
       version == "LIBLOG" || version == "LIBANDROID" ||
