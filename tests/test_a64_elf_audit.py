@@ -599,6 +599,9 @@ class ELFReportTests(unittest.TestCase):
         self.assertIn("__tls_get_addr", MODULE.PROTOTYPE_HOST_CALLS)
         self.assertIn("__mocktail_tlsdesc_static", MODULE.PROTOTYPE_HOST_CALLS)
 
+    def test_glesv3_is_recognized_as_an_android_platform_dependency(self):
+        self.assertIn("libGLESv3.so", MODULE.ANDROID_PLATFORM_LIBRARIES)
+
 
 if __name__ == "__main__":
     unittest.main()
