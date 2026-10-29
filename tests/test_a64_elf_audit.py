@@ -586,6 +586,19 @@ class ELFReportTests(unittest.TestCase):
         self.assertNotIn("AMediaFormat_new", MODULE.PROTOTYPE_HOST_CALLS)
         self.assertNotIn("AMEDIAFORMAT_KEY_MIME", MODULE.PROTOTYPE_HOST_CALLS)
 
+    def test_prototype_host_call_catalogue_matches_current_runtime_scope(self):
+        # The audit must not claim APIs that the guest host-call runtime does
+        # not register. Android services and pthread support are not present.
+        for symbol in (
+            "AMediaCodec_delete", "AMediaFormat_new",
+            "ALooper_pollOnce", "AAssetManager_fromJava",
+            "ANativeWindow_fromSurface", "pthread_create",
+            "pthread_mutex_lock", "dlopen", "__android_log_write",
+        ):
+            self.assertNotIn(symbol, MODULE.PROTOTYPE_HOST_CALLS)
+        self.assertIn("__tls_get_addr", MODULE.PROTOTYPE_HOST_CALLS)
+        self.assertIn("__mocktail_tlsdesc_static", MODULE.PROTOTYPE_HOST_CALLS)
+
 
 if __name__ == "__main__":
     unittest.main()
