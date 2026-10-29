@@ -363,6 +363,34 @@ ANDROID_PLATFORM_LIBRARIES = {
 }
 # Kept in sync with guest host-call registrations in
 # A64GuestHostCalls and A64GuestRuntime::Impl.
+# Infer providers only for well-known Android NDK symbol families. Unversioned
+# ELF imports do not encode a DT_VERNEED provider, so dependency order is not proof.
+ANDROID_SYMBOL_PROVIDER_PREFIXES = {
+    "AMediaCodec_": "libmediandk.so",
+    "AMediaFormat_": "libmediandk.so",
+    "AMediaExtractor_": "libmediandk.so",
+    "AMediaMuxer_": "libmediandk.so",
+    "AMediaDrm_": "libmediandk.so",
+    "AMediaCrypto_": "libmediandk.so",
+    "AMediaDataSource_": "libmediandk.so",
+    "AAsset": "libandroid.so",
+    "ALooper_": "libandroid.so",
+    "ANativeWindow_": "libandroid.so",
+    "AConfiguration_": "libandroid.so",
+    "AChoreographer_": "libandroid.so",
+    "AInputQueue_": "libandroid.so",
+    "AKeyEvent_": "libandroid.so",
+    "AMotionEvent_": "libandroid.so",
+    "ASensor": "libandroid.so",
+    "__android_log_": "liblog.so",
+}
+
+def infer_android_symbol_provider(name: str) -> str:
+    for prefix, provider in ANDROID_SYMBOL_PROVIDER_PREFIXES.items():
+        if name.startswith(prefix):
+            return provider
+    return ""
+
 PROTOTYPE_HOST_CALLS = {
     "memcpy", "memmove", "memset", "memcmp", "memchr",
     "strlen", "strnlen", "strcmp", "strncmp", "strcasecmp", "strncasecmp",
@@ -380,68 +408,6 @@ PROTOTYPE_HOST_CALLS = {
     "__cxa_guard_release", "__cxa_guard_abort", "__stack_chk_fail",
     "__sF", "stdin", "stdout", "stderr", "fputs", "fflush",
     "__android_log_print",
-    "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
-    "AMediaFormat_setInt32", "AMediaFormat_setInt64",
-    "AMediaFormat_setFloat", "AMediaFormat_setDouble",
-    "AMediaFormat_setSize", "AMediaFormat_setString",
-    "AMediaFormat_setBuffer", "AMediaFormat_setRect",
-    "AMediaFormat_getInt32", "AMediaFormat_getInt64",
-    "AMediaFormat_getFloat", "AMediaFormat_getDouble",
-    "AMediaFormat_getSize", "AMediaFormat_getString",
-    "AMediaFormat_getBuffer", "AMediaFormat_getRect",
-    "AMEDIAFORMAT_KEY_AAC_PROFILE",
-    "AMEDIAFORMAT_KEY_BIT_RATE",
-    "AMEDIAFORMAT_KEY_BITRATE_MODE",
-    "AMEDIAFORMAT_KEY_CHANNEL_COUNT",
-    "AMEDIAFORMAT_KEY_COLOR_FORMAT",
-    "AMEDIAFORMAT_KEY_COLOR_RANGE",
-    "AMEDIAFORMAT_KEY_COLOR_STANDARD",
-    "AMEDIAFORMAT_KEY_COLOR_TRANSFER",
-    "AMEDIAFORMAT_KEY_COMPLEXITY",
-    "AMEDIAFORMAT_KEY_CROP_BOTTOM",
-    "AMEDIAFORMAT_KEY_CROP_LEFT",
-    "AMEDIAFORMAT_KEY_CROP_RIGHT",
-    "AMEDIAFORMAT_KEY_CROP_TOP",
-    "AMEDIAFORMAT_KEY_CSD_0",
-    "AMEDIAFORMAT_KEY_CSD_1",
-    "AMEDIAFORMAT_KEY_CSD_2",
-    "AMEDIAFORMAT_KEY_DISPLAY_HEIGHT",
-    "AMEDIAFORMAT_KEY_DISPLAY_WIDTH",
-    "AMEDIAFORMAT_KEY_DURATION",
-    "AMEDIAFORMAT_KEY_ENCODER_DELAY",
-    "AMEDIAFORMAT_KEY_ENCODER_PADDING",
-    "AMEDIAFORMAT_KEY_FLAC_COMPRESSION_LEVEL",
-    "AMEDIAFORMAT_KEY_FRAME_RATE",
-    "AMEDIAFORMAT_KEY_HDR_STATIC_INFO",
-    "AMEDIAFORMAT_KEY_HEIGHT",
-    "AMEDIAFORMAT_KEY_INTRA_REFRESH_PERIOD",
-    "AMEDIAFORMAT_KEY_IS_ADTS",
-    "AMEDIAFORMAT_KEY_IS_AUTOSELECT",
-    "AMEDIAFORMAT_KEY_IS_DEFAULT",
-    "AMEDIAFORMAT_KEY_IS_FORCED_SUBTITLE",
-    "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL",
-    "AMEDIAFORMAT_KEY_LANGUAGE",
-    "AMEDIAFORMAT_KEY_LEVEL",
-    "AMEDIAFORMAT_KEY_MAX_B_FRAMES",
-    "AMEDIAFORMAT_KEY_MAX_FPS_TO_ENCODER",
-    "AMEDIAFORMAT_KEY_MAX_HEIGHT",
-    "AMEDIAFORMAT_KEY_MAX_INPUT_SIZE",
-    "AMEDIAFORMAT_KEY_MAX_PTS_GAP_TO_ENCODER",
-    "AMEDIAFORMAT_KEY_MAX_WIDTH",
-    "AMEDIAFORMAT_KEY_MIME",
-    "AMEDIAFORMAT_KEY_OPERATING_RATE",
-    "AMEDIAFORMAT_KEY_PCM_ENCODING",
-    "AMEDIAFORMAT_KEY_PROFILE",
-    "AMEDIAFORMAT_KEY_PRIORITY",
-    "AMEDIAFORMAT_KEY_PUSH_BLANK_BUFFERS_ON_STOP",
-    "AMEDIAFORMAT_KEY_QUALITY",
-    "AMEDIAFORMAT_KEY_REPEAT_PREVIOUS_FRAME_AFTER",
-    "AMEDIAFORMAT_KEY_ROTATION",
-    "AMEDIAFORMAT_KEY_SAMPLE_RATE",
-    "AMEDIAFORMAT_KEY_SLICE_HEIGHT",
-    "AMEDIAFORMAT_KEY_STRIDE",
-    "AMEDIAFORMAT_KEY_TEMPORAL_LAYERING",
-    "AMEDIAFORMAT_KEY_WIDTH",
     "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock",
     "pthread_mutex_trylock", "pthread_mutex_timedlock", "pthread_mutex_unlock",
     "pthread_mutex_consistent", "pthread_rwlock_init", "pthread_rwlock_destroy",
@@ -1069,9 +1035,15 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 continue
 
             if external_providers:
+                inferred_provider = infer_android_symbol_provider(name)
                 platform_symbol_requirements.append({
                     "source": source, "symbol": name, "version": version,
-                    "provider": provider or external_providers[0],
+                    "provider": provider or inferred_provider,
+                    "provider_candidates": (
+                        [inferred_provider]
+                        if inferred_provider in external_providers
+                        else external_providers
+                    ),
                     "prototype_host_call": False,
                     "host_call_name_known": name in PROTOTYPE_HOST_CALLS,
                     "versioned_host_call_needs_registration":
