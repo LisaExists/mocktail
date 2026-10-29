@@ -557,6 +557,35 @@ class ELFReportTests(unittest.TestCase):
             self.assertEqual(len(inputs), 1)
             self.assertIn("splits/base.apk!lib/arm64-v8a/libnested.so", inputs[0][0])
 
+    def test_unversioned_android_import_provider_inference_is_conservative(self):
+        report = {
+            "source": "libroblox.so",
+            "needed": ["libandroid.so", "liblog.so", "libmediandk.so", "libEGL.so"],
+            "imports": [
+                {"name": "AMediaCodec_delete", "version": "", "provider": ""},
+                {"name": "AMediaFormat_new", "version": "", "provider": ""},
+                {"name": "ALooper_pollOnce", "version": "", "provider": ""},
+                {"name": "unclassified_platform_symbol", "version": "", "provider": ""},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([report])
+        requirements = {item["symbol"]: item
+                        for item in catalog["platform_symbol_requirements"]}
+        self.assertEqual(requirements["AMediaCodec_delete"]["provider"], "libmediandk.so")
+        self.assertEqual(requirements["AMediaFormat_new"]["provider"], "libmediandk.so")
+        self.assertEqual(requirements["ALooper_pollOnce"]["provider"], "libandroid.so")
+        self.assertEqual(requirements["unclassified_platform_symbol"]["provider"], "")
+        self.assertEqual(
+            requirements["unclassified_platform_symbol"]["provider_candidates"],
+            ["libandroid.so", "liblog.so", "libmediandk.so", "libEGL.so"],
+        )
+
+    def test_media_ndk_symbols_are_not_claimed_as_prototype_host_calls(self):
+        self.assertNotIn("AMediaCodec_delete", MODULE.PROTOTYPE_HOST_CALLS)
+        self.assertNotIn("AMediaFormat_new", MODULE.PROTOTYPE_HOST_CALLS)
+        self.assertNotIn("AMEDIAFORMAT_KEY_MIME", MODULE.PROTOTYPE_HOST_CALLS)
+
 
 if __name__ == "__main__":
     unittest.main()
