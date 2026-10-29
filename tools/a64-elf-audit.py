@@ -353,7 +353,7 @@ def dynsym_count(image: ELF64Image, tags: dict[int, list[int]],
 
 ANDROID_PLATFORM_LIBRARIES = {
     "libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so",
-    "libEGL.so", "libGLESv1_CM.so", "libGLESv2.so", "libvulkan.so",
+    "libEGL.so", "libGLESv1_CM.so", "libGLESv2.so", "libGLESv3.so", "libvulkan.so",
     "libOpenSLES.so", "libOpenMAXAL.so", "libmediandk.so",
     "libjnigraphics.so", "libz.so",
     "libc++_shared.so", "libstdc++.so", "libaaudio.so", "libcamera2ndk.so",
