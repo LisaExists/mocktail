@@ -69,7 +69,10 @@ class ELFReportTests(unittest.TestCase):
         self.assertTrue(MODULE.is_supported_android_symbol_version("LIBC"))
         self.assertTrue(MODULE.is_supported_android_symbol_version("LIBC_N"))
         self.assertTrue(MODULE.is_supported_android_symbol_version("LIBM"))
+        self.assertTrue(MODULE.is_supported_android_symbol_version("LIBMEDIANDK"))
+        self.assertTrue(MODULE.is_supported_android_symbol_version("LIBMEDIANDK_A"))
         self.assertFalse(MODULE.is_supported_android_symbol_version("LIBC_PRIVATE"))
+        self.assertFalse(MODULE.is_supported_android_symbol_version("LIBMEDIANDK_PRIVATE"))
         self.assertFalse(MODULE.is_supported_android_symbol_version("GLIBC_2.17"))
 
     def test_simple_aarch64_shared_object_is_a_loader_candidate(self):
