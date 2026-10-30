@@ -328,6 +328,30 @@ class ELFReportTests(unittest.TestCase):
         self.assertEqual(catalog["platform_symbol_requirements"][0]["symbol"], "open")
         self.assertFalse(catalog["ready_to_launch"])
 
+    def test_catalogue_distinguishes_registered_android_stubs_from_missing_apis(self):
+        consumer = {
+            "source": "libconsumer.so", "soname": "libconsumer.so",
+            "needed": ["libmediandk.so", "liblog.so", "libandroid.so"],
+            "imports": [
+                {"name": "AMediaFormat_new", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "__android_log_write", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "android_get_device_api_level", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AMediaCodec_createDecoderByType", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer])
+        requirements = catalog["platform_symbol_requirements"]
+        self.assertEqual(
+            [item["symbol"] for item in requirements],
+            ["AMediaCodec_createDecoderByType"],
+        )
+        self.assertFalse(catalog["ready_to_launch"])
+
     def test_platform_import_is_not_mislabeled_when_other_package_dependency_exists(self):
         provider = {
             "source": "libprovider.so", "soname": "libprovider.so",
