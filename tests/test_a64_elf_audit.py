@@ -339,6 +339,8 @@ class ELFReportTests(unittest.TestCase):
                  "binding": "GLOBAL", "tls": False},
                 {"name": "android_get_device_api_level", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__system_property_get", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AMediaCodec_createDecoderByType", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
             ],
@@ -351,6 +353,14 @@ class ELFReportTests(unittest.TestCase):
             ["AMediaCodec_createDecoderByType"],
         )
         self.assertFalse(catalog["ready_to_launch"])
+        self.assertIn(
+            "AMediaFormat_new",
+            catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
+        )
+        self.assertIn(
+            "__system_property_get",
+            catalog["prototype_registered_android_host_calls"]["libc.so"],
+        )
 
     def test_platform_import_is_not_mislabeled_when_other_package_dependency_exists(self):
         provider = {
