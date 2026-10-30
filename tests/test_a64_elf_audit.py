@@ -387,11 +387,15 @@ class ELFReportTests(unittest.TestCase):
         }
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
-        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
         self.assertTrue({
             "pthread_mutex_init", "pthread_mutex_lock", "pthread_self",
             "__cxa_guard_acquire", "__cxa_guard_release",
-        }.issubset(set(catalog["prototype_host_call_symbols"])))
+        }.issubset(required))
+        self.assertTrue({
+            "pthread_mutex_init", "pthread_mutex_lock", "pthread_self",
+            "__cxa_guard_acquire", "__cxa_guard_release",
+        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
 
     def test_android_prop_info_thunks_are_in_the_known_runtime_set(self):
         consumer = {
@@ -411,11 +415,15 @@ class ELFReportTests(unittest.TestCase):
         }
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
-        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
         self.assertTrue({
             "__system_property_find", "__system_property_read",
             "__system_property_serial", "__system_property_area_serial",
-        }.issubset(set(catalog["prototype_host_call_symbols"])))
+        }.issubset(required))
+        self.assertTrue({
+            "__system_property_find", "__system_property_read",
+            "__system_property_serial", "__system_property_area_serial",
+        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
 
     def test_android_liblog_thunks_are_in_the_known_runtime_set(self):
         consumer = {
@@ -433,11 +441,19 @@ class ELFReportTests(unittest.TestCase):
         }
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
-        self.assertEqual(catalog["platform_symbol_requirements"], [])
+        required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
         self.assertTrue({
             "__android_log_write", "__android_log_buf_write",
             "__android_log_is_loggable",
-        }.issubset(set(catalog["prototype_host_call_symbols"])))
+        }.issubset(required))
+        self.assertTrue({
+            "__android_log_write", "__android_log_buf_write",
+            "__android_log_is_loggable",
+        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
+        self.assertTrue(all(
+            item["provider"] == "liblog.so"
+            for item in catalog["platform_symbol_requirements"]
+        ))
 
     def test_versioned_hostcall_is_not_satisfied_by_name_only(self):
         consumer = {
