@@ -172,3 +172,10 @@ Keep the existing payload acquisition, compatibility and integrity behavior unch
 
 
 The experimental native probe accepts a single APK, an `.apks` file directly, or multiple individual split APKs. It extracts only entries under `lib/arm64-v8a/`, checks that they are little-endian ELF64 AArch64 images, and rejects conflicting files with the same basename. Use `--library-dir` to add a directory of matching ARM64 Android runtime libraries (including when no APK positional argument is supplied). Explicit `--external-dependency SONAME` entries only allow a missing `DT_NEEDED` edge; they do not synthesize symbols or implement that library. The end-to-end APK test uses genuine cross-compiled test libraries in a synthetic APK and is not a Roblox compatibility claim.
+
+
+## Real Roblox probe checkpoint
+
+The pinned 2.743.1136 (versionCode 18934) base and ARM64 split APK pair is the current real-package compatibility target. The manual CI probe downloads and SHA-256 verifies both splits, audits the ARM64 ELF package, then attempts bounded constructor execution and `JNI_OnLoad` in the guest runtime. This checkpoint is diagnostic only: the workflow deliberately does not treat a nonzero probe result as a passing launch, and even a successful constructor/JNI probe would not establish that ART, Android framework services, graphics, input, or the Roblox application can run end-to-end.
+
+Do not mark the runtime ready for a real application launch until the pinned probe has completed successfully and the unresolved imports and runtime requirements for the full package closure have been addressed. In particular, do not replace Android platform APIs with success-shaped no-op stubs merely to move the probe forward.
