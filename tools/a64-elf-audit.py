@@ -1148,6 +1148,12 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "platform_symbol_requirements": platform_symbol_requirements,
         "unclassified_unresolved_symbols": unresolved_symbols,
         "prototype_host_call_symbols": sorted(PROTOTYPE_HOST_CALLS),
+        "prototype_registered_android_host_calls": {
+            provider: sorted(names)
+            for provider, names in sorted(
+                PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS.items()
+            )
+        },
         "ready_to_launch": False,
         "runtime_gaps": [
             "static audit does not prove Android/Bionic startup or JNI compatibility",
