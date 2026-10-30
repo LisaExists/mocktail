@@ -403,6 +403,78 @@ PROTOTYPE_HOST_CALLS = {
     "strstr",
 }
 
+# Names registered by the current guest runtime. Registration means the loader
+# can resolve the import; it does not imply full Android API semantics. In
+# particular, AMediaFormat is currently a placeholder implementation.
+PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
+    "libc.so": {
+        "__system_property_area_serial", "__system_property_find",
+        "__system_property_get", "__system_property_read",
+        "__system_property_serial",
+    },
+    "libandroid.so": {"android_get_device_api_level"},
+    "liblog.so": {
+        "__android_log_buf_write", "__android_log_is_loggable",
+        "__android_log_print", "__android_log_write",
+    },
+    "libmediandk.so": {
+        "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
+        "AMediaFormat_setInt32", "AMediaFormat_setInt64",
+        "AMediaFormat_setFloat", "AMediaFormat_setDouble",
+        "AMediaFormat_setSize", "AMediaFormat_setString",
+        "AMediaFormat_setBuffer", "AMediaFormat_setRect",
+        "AMediaFormat_getInt32", "AMediaFormat_getInt64",
+        "AMediaFormat_getFloat", "AMediaFormat_getDouble",
+        "AMediaFormat_getSize", "AMediaFormat_getString",
+        "AMediaFormat_getBuffer", "AMediaFormat_getRect",
+        "AMEDIAFORMAT_KEY_AAC_PROFILE", "AMEDIAFORMAT_KEY_BIT_RATE",
+        "AMEDIAFORMAT_KEY_BITRATE_MODE", "AMEDIAFORMAT_KEY_CHANNEL_COUNT",
+        "AMEDIAFORMAT_KEY_COLOR_FORMAT", "AMEDIAFORMAT_KEY_COLOR_RANGE",
+        "AMEDIAFORMAT_KEY_COLOR_STANDARD", "AMEDIAFORMAT_KEY_COLOR_TRANSFER",
+        "AMEDIAFORMAT_KEY_COMPLEXITY", "AMEDIAFORMAT_KEY_CROP_BOTTOM",
+        "AMEDIAFORMAT_KEY_CROP_LEFT", "AMEDIAFORMAT_KEY_CROP_RIGHT",
+        "AMEDIAFORMAT_KEY_CROP_TOP", "AMEDIAFORMAT_KEY_CSD_0",
+        "AMEDIAFORMAT_KEY_CSD_1", "AMEDIAFORMAT_KEY_CSD_2",
+        "AMEDIAFORMAT_KEY_DISPLAY_HEIGHT", "AMEDIAFORMAT_KEY_DISPLAY_WIDTH",
+        "AMEDIAFORMAT_KEY_DURATION", "AMEDIAFORMAT_KEY_ENCODER_DELAY",
+        "AMEDIAFORMAT_KEY_ENCODER_PADDING",
+        "AMEDIAFORMAT_KEY_FLAC_COMPRESSION_LEVEL",
+        "AMEDIAFORMAT_KEY_FRAME_RATE", "AMEDIAFORMAT_KEY_HDR_STATIC_INFO",
+        "AMEDIAFORMAT_KEY_HEIGHT", "AMEDIAFORMAT_KEY_INTRA_REFRESH_PERIOD",
+        "AMEDIAFORMAT_KEY_IS_ADTS", "AMEDIAFORMAT_KEY_IS_AUTOSELECT",
+        "AMEDIAFORMAT_KEY_IS_DEFAULT", "AMEDIAFORMAT_KEY_IS_FORCED_SUBTITLE",
+        "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "AMEDIAFORMAT_KEY_LANGUAGE",
+        "AMEDIAFORMAT_KEY_LEVEL", "AMEDIAFORMAT_KEY_MAX_B_FRAMES",
+        "AMEDIAFORMAT_KEY_MAX_FPS_TO_ENCODER", "AMEDIAFORMAT_KEY_MAX_HEIGHT",
+        "AMEDIAFORMAT_KEY_MAX_INPUT_SIZE",
+        "AMEDIAFORMAT_KEY_MAX_PTS_GAP_TO_ENCODER",
+        "AMEDIAFORMAT_KEY_MAX_WIDTH", "AMEDIAFORMAT_KEY_MIME",
+        "AMEDIAFORMAT_KEY_OPERATING_RATE", "AMEDIAFORMAT_KEY_PCM_ENCODING",
+        "AMEDIAFORMAT_KEY_PROFILE", "AMEDIAFORMAT_KEY_PRIORITY",
+        "AMEDIAFORMAT_KEY_PUSH_BLANK_BUFFERS_ON_STOP",
+        "AMEDIAFORMAT_KEY_QUALITY",
+        "AMEDIAFORMAT_KEY_REPEAT_PREVIOUS_FRAME_AFTER",
+        "AMEDIAFORMAT_KEY_ROTATION", "AMEDIAFORMAT_KEY_SAMPLE_RATE",
+        "AMEDIAFORMAT_KEY_SLICE_HEIGHT", "AMEDIAFORMAT_KEY_STRIDE",
+        "AMEDIAFORMAT_KEY_TEMPORAL_LAYERING", "AMEDIAFORMAT_KEY_WIDTH",
+    },
+}
+
+
+def is_registered_prototype_host_call(
+        name: str, provider: str, version: str) -> bool:
+    if name in PROTOTYPE_HOST_CALLS:
+        if not version:
+            return True
+        return (provider in ANDROID_PLATFORM_LIBRARIES and
+                is_supported_android_symbol_version(version))
+    if name not in PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS.get(provider, set()):
+        return False
+    if not version:
+        return True
+    return is_supported_android_symbol_version(version)
+
+
 
 def version_requirements(image: ELF64Image, tags: dict[int, list[int]],
                          blockers: list[str]) -> dict[int, dict[str, str]]:
@@ -998,10 +1070,9 @@ def audit_catalog(reports: list[dict[str, Any]]) -> dict[str, Any]:
             # Unversioned imports and known public Bionic version namespaces can
             # use provider-matched prototype shims. Unknown/private versions stay
             # strict; a named export in another dependency cannot mask coverage.
-            if name in PROTOTYPE_HOST_CALLS and (
-                    not version or
-                    (provider in ANDROID_PLATFORM_LIBRARIES and
-                     is_supported_android_symbol_version(version))):
+            inferred_provider = provider or infer_android_symbol_provider(name)
+            if is_registered_prototype_host_call(
+                    name, inferred_provider, version):
                 continue
 
             provider_description: Any = provider or provider_names
