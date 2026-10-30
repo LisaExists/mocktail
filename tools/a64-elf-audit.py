@@ -385,7 +385,15 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__android_log_": "liblog.so",
 }
 
+ANDROID_SYMBOL_PROVIDER_EXACT = {
+    "android_get_device_api_level": "libandroid.so",
+}
+
+
 def infer_android_symbol_provider(name: str) -> str:
+    exact = ANDROID_SYMBOL_PROVIDER_EXACT.get(name)
+    if exact:
+        return exact
     for prefix, provider in ANDROID_SYMBOL_PROVIDER_PREFIXES.items():
         if name.startswith(prefix):
             return provider
