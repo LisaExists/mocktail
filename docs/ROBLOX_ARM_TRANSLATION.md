@@ -85,6 +85,19 @@ python3 tools/a64-elf-audit.py --json ~/Downloads/Roblox.apk > roblox-arm64-audi
 
 The ELF audit reads native libraries without extracting or executing them. Its package summary resolves bundled `DT_NEEDED` edges, reports duplicate SONAMEs, checks imports against the bundle's visible exports, and lists Android platform symbols that the current explicit host-call table does not implement. A green ELF-loader candidate flag only covers this prototype's supported ELF subset; `ready_to_launch` intentionally remains false until Android/Bionic startup, the required platform APIs, JNI and graphics have been validated.
 
+## Delta 2.743.1136 ARM64 audit findings
+
+A supplied audit of the Delta 2.743.1136-02 package found eight ARM64 native libraries. All eight were ELF64/AArch64 `ET_DYN` images with no unsupported relocation types in that audit. `libroblox.so` uses Android APS2 packed RELA and contains a much larger relocation set than the helper libraries. These findings establish that the current ELF parser can understand the observed relocation formats; they do not establish that the package can be initialized.
+
+The sample also exposes platform requirements beyond the currently registered shims:
+
+- `libroblox.so` imports Android asset-manager, looper, configuration and native-window APIs, including `AAssetManager_fromJava`, `AAssetManager_open`, `ALooper_prepare`, `AConfiguration_fromAssetManager` and `ANativeWindow_fromSurface`. The runtime does not yet implement those APIs or the Java/Surface objects they depend on.
+- `libsurface_util_jni.so` and `libimage_processing_util_jni.so` require native-window and bitmap operations. These need a real guest-to-host surface/bitmap boundary, not success-shaped placeholder pointers.
+- `libtrampoline.so` imports the private Bionic `__libc_init` entry point. It is not in `libroblox.so`'s listed `DT_NEEDED` closure, and it must not be treated as an ordinary public libc function or satisfied with a blind no-op.
+- `libdatastore_shared_counter.so` imports `__system_property_get`, which has a synthetic-profile shim in the current runtime. The audit now records registered Android shims separately from platform imports that remain unresolved.
+
+Prioritize the asset-manager/Java bridge and looper lifecycle after the existing JNI bridge, then native-window/surface integration. Keep `__libc_init` explicitly unsupported until its call site and Bionic startup contract are understood. The audit's `prototype_loader_compatible` flag is strictly an ELF-format result; `ready_for_roblox` remains false.
+
 ## Architecture options to evaluate
 
 1. **In-process guest execution:** Dynarmic JIT + guest address-space management + an AArch64 ELF loader + explicit ABI thunks for callbacks into native x86-64 code. Guest pointers and host pointers must never be treated as interchangeable.
