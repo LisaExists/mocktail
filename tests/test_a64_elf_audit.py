@@ -362,6 +362,57 @@ class ELFReportTests(unittest.TestCase):
             catalog["prototype_registered_android_host_calls"]["libc.so"],
         )
 
+    def test_delta_android_platform_gaps_remain_explicit_requirements(self):
+        consumer = {
+            "source": "libroblox.so", "soname": "libroblox.so",
+            "needed": ["libandroid.so", "liblog.so"],
+            "imports": [
+                {"name": "ALooper_acquire", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "ALooper_prepare", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "AAssetManager_fromJava", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "AAssetManager_open", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+                {"name": "ANativeWindow_fromSurface", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AConfiguration_getScreenSize", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__android_log_print", "version": "", "provider": "",
+                 "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        trampoline = {
+            "source": "libtrampoline.so", "soname": "libtrampoline.so",
+            "needed": ["libc.so"],
+            "imports": [
+                {"name": "__libc_init", "version": "LIBC",
+                 "provider": "libc.so", "binding": "GLOBAL", "tls": False},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([consumer, trampoline])
+        required = {
+            (item["symbol"], item["provider"])
+            for item in catalog["platform_symbol_requirements"]
+        }
+        self.assertTrue({
+            ("ALooper_acquire", "libandroid.so"),
+            ("ALooper_prepare", "libandroid.so"),
+            ("AAssetManager_fromJava", "libandroid.so"),
+            ("AAssetManager_open", "libandroid.so"),
+            ("ANativeWindow_fromSurface", "libandroid.so"),
+            ("AConfiguration_getScreenSize", "libandroid.so"),
+            ("__libc_init", "libc.so"),
+        }.issubset(required))
+        self.assertFalse(any(
+            item["symbol"] == "__libc_init" and item["prototype_host_call"]
+            for item in catalog["platform_symbol_requirements"]
+        ))
+        self.assertFalse(catalog["ready_to_launch"])
+
     def test_platform_import_is_not_mislabeled_when_other_package_dependency_exists(self):
         provider = {
             "source": "libprovider.so", "soname": "libprovider.so",
