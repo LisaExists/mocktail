@@ -366,6 +366,7 @@ ANDROID_PLATFORM_LIBRARIES = {
 # Infer providers only for well-known Android NDK symbol families. Unversioned
 # ELF imports do not encode a DT_VERNEED provider, so dependency order is not proof.
 ANDROID_SYMBOL_PROVIDER_PREFIXES = {
+    "__system_property_": "libc.so",
     "AMediaCodec_": "libmediandk.so",
     "AMediaFormat_": "libmediandk.so",
     "AMediaExtractor_": "libmediandk.so",
