@@ -870,9 +870,12 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
 
 
 def is_supported_android_symbol_version(version: str) -> bool:
-    if version in {"LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"}:
+    # Keep this namespace list aligned with A64GuestHostCalls' provider-scoped
+    # Android version fallback. Media NDK exports use LIBMEDIANDK.
+    bases = ("LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID", "LIBMEDIANDK")
+    if version in bases:
         return True
-    for base in ("LIBC", "LIBM", "LIBDL", "LIBLOG", "LIBANDROID"):
+    for base in bases:
         if (len(version) == len(base) + 2 and
                 version.startswith(base + "_") and
                 "A" <= version[-1] <= "Z"):
