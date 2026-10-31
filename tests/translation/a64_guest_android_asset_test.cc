@@ -83,16 +83,16 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] guest ALooper fd poll failed: "
               << (looper_result ? std::to_string(looper_result.value)
                                 : looper_result.error)
-              << '\\n';
+              << '\n';
     return 1;
   }
   const auto window_result =
       runtime.CallSymbol("guest_android_headless_window_smoke");
   if (!window_result || window_result.value != 42) {
-    std::cerr << "[FAIL] headless ANativeWindow behavior was not preserved\\n";
+    std::cerr << "[FAIL] headless ANativeWindow behavior was not preserved\n";
     return 1;
   }
   std::cout << "[PASS] guest AAssetManager read APK assets, ALooper delivered "
-               "a ready host fd, and headless ANativeWindow returned null\\n";
+               "a ready host fd, and headless ANativeWindow returned null\n";
   return 0;
 }
