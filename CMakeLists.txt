@@ -417,27 +417,27 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       mocktail_a64_android_jni_fixture)
 
     set(MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE
-      "\${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libandroid.so")
+      "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libandroid.so")
     add_custom_command(
-      OUTPUT "\${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
-      COMMAND "\${CMAKE_COMMAND}" -E make_directory
-              "\${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
-      COMMAND "\${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+      OUTPUT "${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
               --target=aarch64-linux-android24
               -fuse-ld=lld -fPIC -shared -nostdlib
               -fvisibility=hidden -Wl,--hash-style=both
               -Wl,-soname,libandroid.so
-              -o "\${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
-              "\${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
-      DEPENDS "\${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+              -o "${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
       VERBATIM
     )
 
     set(MOCKTAIL_A64_ANDROID_ASSET_FIXTURE
-      "\${CMAKE_CURRENT_BINARY_DIR}/libmocktail-android-asset-smoke.so")
+      "${CMAKE_CURRENT_BINARY_DIR}/libmocktail-android-asset-smoke.so")
     add_custom_command(
-      OUTPUT "\${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
-      COMMAND "\${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+      OUTPUT "${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
               --target=aarch64-linux-android24
               -fuse-ld=lld -fPIC -shared -nostdlib
               -fvisibility=hidden -fno-stack-protector -fno-builtin -O2
@@ -445,13 +445,13 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,--pack-dyn-relocs=android+relr
               -Wl,-soname,libmocktail-android-asset-smoke.so
               -Wl,--no-as-needed
-              "-L\${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
-              -o "\${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
-              "\${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
+              "-L${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+              -o "${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
               -l:libandroid.so
       DEPENDS
-        "\${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
-        "\${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
+        "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
+        "${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
     add_executable(mocktail_a64_android_asset_test
@@ -462,7 +462,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
     )
     mocktail_apply_compile_options(mocktail_a64_android_asset_test)
     add_custom_target(mocktail_a64_android_asset_fixture
-      DEPENDS "\${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}")
+      DEPENDS "${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}")
     add_dependencies(mocktail_a64_android_asset_test
       mocktail_a64_android_asset_fixture)
 
@@ -766,8 +766,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         PROPERTIES TIMEOUT 15)
       add_test(NAME RobloxArmTranslation.AndroidAssetSmoke
         COMMAND $<TARGET_FILE:mocktail_a64_android_asset_test>
-                "\${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
-                "\${CMAKE_SOURCE_DIR}/tests/translation/android-assets")
+                "${MOCKTAIL_A64_ANDROID_ASSET_FIXTURE}"
+                "${CMAKE_SOURCE_DIR}/tests/translation/android-assets")
       set_tests_properties(RobloxArmTranslation.AndroidAssetSmoke
         PROPERTIES TIMEOUT 15)
       add_test(NAME RobloxArmTranslation.AndroidJniOnLoadSmoke
@@ -1377,9 +1377,9 @@ install(CODE "
     find_program(MOCKTAIL_GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
     if(MOCKTAIL_GTK_UPDATE_ICON_CACHE)
       execute_process(
-        COMMAND \"\${MOCKTAIL_GTK_UPDATE_ICON_CACHE}\" --force
+        COMMAND \"${MOCKTAIL_GTK_UPDATE_ICON_CACHE}\" --force
                 --ignore-theme-index
-                \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/icons/hicolor\"
+                \"${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/icons/hicolor\"
         RESULT_VARIABLE MOCKTAIL_ICON_CACHE_RESULT
       )
       if(NOT MOCKTAIL_ICON_CACHE_RESULT EQUAL 0)
@@ -1389,8 +1389,8 @@ install(CODE "
     find_program(MOCKTAIL_UPDATE_DESKTOP_DATABASE update-desktop-database)
     if(MOCKTAIL_UPDATE_DESKTOP_DATABASE)
       execute_process(
-        COMMAND \"\${MOCKTAIL_UPDATE_DESKTOP_DATABASE}\" -q
-                \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/applications\"
+        COMMAND \"${MOCKTAIL_UPDATE_DESKTOP_DATABASE}\" -q
+                \"${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/applications\"
         RESULT_VARIABLE MOCKTAIL_DESKTOP_DATABASE_RESULT
       )
       if(NOT MOCKTAIL_DESKTOP_DATABASE_RESULT EQUAL 0)
