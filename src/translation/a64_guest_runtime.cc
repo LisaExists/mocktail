@@ -1131,8 +1131,7 @@ class A64GuestRuntime::Impl final {
         [this](const A64GuestHostCalls::Arguments& args) {
           switch (static_cast<int>(args[0])) {
             case _SC_PAGESIZE:
-            case _SC_PAGE_SIZE:
-              return A64HostCallResult{true, A64GuestMemory::kPageSize, {}};
+              return A64HostCallResult{true, A64GuestMemory::kPageSize, {} };
             case _SC_NPROCESSORS_ONLN:
               return A64HostCallResult{true, 1, {}};
             case _SC_CLK_TCK:
