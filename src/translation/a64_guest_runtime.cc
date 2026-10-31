@@ -7,9 +7,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -19,6 +23,7 @@
 #include <new>
 #include <mutex>
 #include <utility>
+#include <unordered_map>
 #include <unordered_map>
 
 #include "dynarmic/interface/A64/a64.h"
@@ -1018,6 +1023,253 @@ class A64GuestRuntime::Impl final {
   }
 
 
+
+  bool RegisterAndroidLooperApi(std::string* error) {
+    constexpr std::uint64_t kLooperHandle = 0x414C4F4F50455231ULL;
+    constexpr int kAllowNonCallbacks = 1;
+    constexpr int kPollWake = -1;
+    constexpr int kPollTimeout = -3;
+    constexpr int kPollError = -4;
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libandroid.so", "",
+                                  std::move(handler), error);
+    };
+
+    if (!register_one("ALooper_prepare",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          if (guest_looper_) return {true, kLooperHandle, {}};
+          auto looper = std::make_unique<GuestLooper>();
+          looper->allow_non_callbacks =
+              (static_cast<int>(args[0]) & kAllowNonCallbacks) != 0;
+          looper->epoll_fd = ::epoll_create1(EPOLL_CLOEXEC);
+          if (looper->epoll_fd < 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return {true, 0, {}};
+          }
+          looper->wake_fd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+          if (looper->wake_fd < 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return {true, 0, {}};
+          }
+          epoll_event wake_event{};
+          wake_event.events = EPOLLIN;
+          wake_event.data.u64 = 0;
+          if (::epoll_ctl(looper->epoll_fd, EPOLL_CTL_ADD, looper->wake_fd,
+                          &wake_event) != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return {true, 0, {}};
+          }
+          guest_looper_ = std::move(looper);
+          return {true, kLooperHandle, {}};
+        })) return false;
+
+    if (!register_one("ALooper_forThread",
+        [this](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{
+              true, guest_looper_ ? kLooperHandle : 0, {}};
+        })) return false;
+
+    if (!register_one("ALooper_acquire",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (args[0] == kLooperHandle && guest_looper_) {
+            std::scoped_lock lock(guest_looper_->mutex);
+            if (guest_looper_->references <
+                std::numeric_limits<std::uint32_t>::max()) {
+              ++guest_looper_->references;
+            }
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    if (!register_one("ALooper_release",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (args[0] == kLooperHandle && guest_looper_) {
+            bool destroy = false;
+            {
+              std::scoped_lock lock(guest_looper_->mutex);
+              if (guest_looper_->references > 0) {
+                destroy = --guest_looper_->references == 0;
+              }
+            }
+            if (destroy) guest_looper_.reset();
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    if (!register_one("ALooper_wake",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (args[0] == kLooperHandle && guest_looper_) {
+            const std::uint64_t one = 1;
+            const auto result =
+                ::write(guest_looper_->wake_fd, &one, sizeof(one));
+            if (result < 0 && errno != EAGAIN) {
+              static_cast<void>(host_calls_.SetGuestErrno(errno));
+            }
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    if (!register_one("ALooper_isPolling",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          return A64HostCallResult{
+              true, args[0] == kLooperHandle && guest_looper_ &&
+                            guest_looper_->polling.load(
+                                std::memory_order_acquire)
+                        ? 1U : 0U,
+              {}};
+        })) return false;
+
+    if (!register_one("ALooper_addFd",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          if (args[0] != kLooperHandle || !guest_looper_ ||
+              args[1] > static_cast<std::uint64_t>(
+                           std::numeric_limits<int>::max()) ||
+              args[3] > static_cast<std::uint64_t>(
+                           std::numeric_limits<int>::max()) ||
+              args[4] != 0 || !guest_looper_->allow_non_callbacks ||
+              static_cast<std::int32_t>(args[2]) < 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          const int fd = static_cast<int>(args[1]);
+          const int ident = static_cast<int>(args[2]);
+          const int requested_events = static_cast<int>(args[3]);
+          std::uint32_t epoll_events = 0;
+          if ((requested_events & 1) != 0) epoll_events |= EPOLLIN;
+          if ((requested_events & 2) != 0) epoll_events |= EPOLLOUT;
+          epoll_event event{};
+          event.events = epoll_events;
+          event.data.u64 = static_cast<std::uint64_t>(fd) + 1U;
+          std::scoped_lock lock(guest_looper_->mutex);
+          const bool exists =
+              guest_looper_->registrations.find(fd) !=
+              guest_looper_->registrations.end();
+          if (::epoll_ctl(guest_looper_->epoll_fd,
+                          exists ? EPOLL_CTL_MOD : EPOLL_CTL_ADD,
+                          fd, &event) != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          guest_looper_->registrations.insert_or_assign(
+              fd, GuestLooper::Registration{
+                      ident, requested_events, args[5]});
+          return {true, 1, {}};
+        })) return false;
+
+    if (!register_one("ALooper_removeFd",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          if (args[0] != kLooperHandle || !guest_looper_ ||
+              args[1] > static_cast<std::uint64_t>(
+                           std::numeric_limits<int>::max())) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          const int fd = static_cast<int>(args[1]);
+          std::scoped_lock lock(guest_looper_->mutex);
+          const auto found = guest_looper_->registrations.find(fd);
+          if (found == guest_looper_->registrations.end()) {
+            return {true, 0, {}};
+          }
+          if (::epoll_ctl(guest_looper_->epoll_fd, EPOLL_CTL_DEL, fd,
+                          nullptr) != 0 && errno != ENOENT && errno != EBADF) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          guest_looper_->registrations.erase(found);
+          return {true, 1, {}};
+        })) return false;
+
+    auto poll_once = [this, kLooperHandle, kPollWake, kPollTimeout, kPollError](
+        const A64GuestHostCalls::Arguments& args) -> A64HostCallResult {
+      if (args[0] == 0 || args[0] != kLooperHandle || !guest_looper_) {
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(kPollError)), {}};
+      }
+      const auto timeout = static_cast<std::int32_t>(args[1]);
+      if (timeout < -1) {
+        static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(kPollError)), {}};
+      }
+      auto clear_output = [this](std::uint64_t address, const void* value,
+                                 std::size_t size) {
+        return address == 0 || memory_.Write(address, value, size);
+      };
+      const std::int32_t zero = 0;
+      const std::uint64_t null_data = 0;
+      if (!clear_output(args[2], &zero, sizeof(zero)) ||
+          !clear_output(args[3], &zero, sizeof(zero)) ||
+          !clear_output(args[4], &null_data, sizeof(null_data))) {
+        static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(kPollError)), {}};
+      }
+
+      std::array<epoll_event, 32> events{};
+      guest_looper_->polling.store(true, std::memory_order_release);
+      const int ready = ::epoll_wait(guest_looper_->epoll_fd, events.data(),
+                                     static_cast<int>(events.size()), timeout);
+      const int wait_error = errno;
+      guest_looper_->polling.store(false, std::memory_order_release);
+      if (ready == 0) {
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(kPollTimeout)), {}};
+      }
+      if (ready < 0) {
+        static_cast<void>(host_calls_.SetGuestErrno(wait_error));
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(kPollError)), {}};
+      }
+      for (int index = 0; index < ready; ++index) {
+        if (events[index].data.u64 == 0) {
+          std::uint64_t drained = 0;
+          while (::read(guest_looper_->wake_fd, &drained,
+                        sizeof(drained)) > 0) {}
+          return {true, static_cast<std::uint64_t>(
+                            static_cast<std::int64_t>(kPollWake)), {}};
+        }
+        const auto fd_value = events[index].data.u64 - 1U;
+        if (fd_value > static_cast<std::uint64_t>(
+                           std::numeric_limits<int>::max())) continue;
+        const int fd = static_cast<int>(fd_value);
+        GuestLooper::Registration registration{};
+        {
+          std::scoped_lock lock(guest_looper_->mutex);
+          const auto found = guest_looper_->registrations.find(fd);
+          if (found == guest_looper_->registrations.end()) continue;
+          registration = found->second;
+        }
+        std::int32_t guest_fd = fd;
+        std::int32_t guest_events = 0;
+        if ((events[index].events & (EPOLLIN | EPOLLPRI)) != 0) guest_events |= 1;
+        if ((events[index].events & EPOLLOUT) != 0) guest_events |= 2;
+        if ((events[index].events & EPOLLERR) != 0) guest_events |= 4;
+        if ((events[index].events & (EPOLLHUP | EPOLLRDHUP)) != 0) guest_events |= 8;
+        if (!clear_output(args[2], &guest_fd, sizeof(guest_fd)) ||
+            !clear_output(args[3], &guest_events, sizeof(guest_events)) ||
+            !clear_output(args[4], &registration.data,
+                          sizeof(registration.data))) {
+          static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+          return {true, static_cast<std::uint64_t>(
+                            static_cast<std::int64_t>(kPollError)), {}};
+        }
+        return {true, static_cast<std::uint64_t>(
+                          static_cast<std::int64_t>(registration.ident)), {}};
+      }
+      return {true, static_cast<std::uint64_t>(
+                        static_cast<std::int64_t>(kPollTimeout)), {}};
+    };
+    if (!register_one("ALooper_pollOnce", poll_once)) return false;
+    if (!register_one("ALooper_pollAll", poll_once)) return false;
+
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidAssetApi(std::string* error) {
     constexpr std::uint64_t kAssetManagerHandle = 0x41535345544D4752ULL;
     constexpr std::size_t kMaximumAssetBytes = 64U * 1024U * 1024U;
@@ -1830,6 +2082,10 @@ class A64GuestRuntime::Impl final {
       return fail("failed to register Android NDK platform API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
+        !RegisterAndroidLooperApi(&diagnostic)) {
+      return fail("failed to register Android looper API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
         !RegisterAndroidAssetApi(&diagnostic)) {
       return fail("failed to register Android asset/configuration API: " + diagnostic);
     }
@@ -2356,6 +2612,25 @@ class A64GuestRuntime::Impl final {
   std::mutex android_property_mutex_;
   std::map<std::string, std::uint64_t> android_property_handles_;
   std::map<std::uint64_t, std::string> android_property_names_;
+  struct GuestLooper final {
+    struct Registration final {
+      int ident = 0;
+      int events = 0;
+      std::uint64_t data = 0;
+    };
+    ~GuestLooper() {
+      if (wake_fd >= 0) ::close(wake_fd);
+      if (epoll_fd >= 0) ::close(epoll_fd);
+    }
+    int epoll_fd = -1;
+    int wake_fd = -1;
+    std::uint32_t references = 1;
+    bool allow_non_callbacks = false;
+    std::atomic<bool> polling{false};
+    std::mutex mutex;
+    std::unordered_map<int, Registration> registrations;
+  };
+  std::unique_ptr<GuestLooper> guest_looper_;
   struct GuestAsset final {
     std::vector<std::uint8_t> bytes;
     std::size_t offset = 0;
