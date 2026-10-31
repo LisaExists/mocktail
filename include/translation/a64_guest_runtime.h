@@ -34,6 +34,10 @@ struct A64GuestRuntimeOptions final {
   std::uint64_t return_trap_address = 0x7FFF000000ULL;
   std::uint64_t instruction_budget = 50U * 1000U * 1000U;
   std::size_t max_tls_bytes = 64U * 1024U * 1024U;
+  // Optional extracted APK assets root used by the guest AAssetManager bridge.
+  // Paths are resolved beneath this directory; archive entries are never
+  // exposed as host pointers to guest code.
+  std::string android_asset_root;
   bool register_builtin_libc = true;
   bool run_initializers_on_load = false;
   bool enable_jni_bridge = true;
