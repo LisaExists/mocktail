@@ -430,6 +430,8 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "ANativeWindow_fromSurface", "ANativeWindow_acquire",
         "ANativeWindow_release", "ANativeWindow_getWidth",
         "ANativeWindow_getHeight", "ANativeWindow_getFormat",
+        "ANativeWindow_setBuffersGeometry", "ANativeWindow_lock",
+        "ANativeWindow_unlockAndPost",
         "AAssetManager_fromJava", "AAssetManager_open", "AAsset_close",
         "AAsset_getLength", "AAsset_getLength64",
         "AAsset_getRemainingLength", "AAsset_getRemainingLength64",
@@ -443,6 +445,10 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
     "liblog.so": {
         "__android_log_buf_write", "__android_log_is_loggable",
         "__android_log_print", "__android_log_write",
+    },
+    "libjnigraphics.so": {
+        "AndroidBitmap_getInfo", "AndroidBitmap_lockPixels",
+        "AndroidBitmap_unlockPixels",
     },
     "libmediandk.so": {
         "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
