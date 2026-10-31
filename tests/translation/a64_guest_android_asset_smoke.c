@@ -25,7 +25,7 @@ extern ALooper* ALooper_prepare(int options);
 extern ALooper* ALooper_forThread(void);
 extern void ALooper_release(ALooper* looper);
 extern void ALooper_wake(ALooper* looper);
-extern bool ALooper_isPolling(ALooper* looper);
+extern int ALooper_isPolling(ALooper* looper);
 extern int ALooper_pollOnce(int timeout_ms, int* out_fd, int* out_events,
                             void** out_data);
 
