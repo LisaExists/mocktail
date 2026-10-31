@@ -10,6 +10,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 namespace {
 std::string Basename(const std::string& path) {
@@ -61,7 +63,30 @@ int main(int argc, char** argv) {
               << ", expected 42\n";
     return 1;
   }
-  std::cout << "[PASS] guest AAssetManager opened an extracted APK asset and "
-               "read its guest-mapped buffer\n";
+  const int event_fd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (event_fd < 0) {
+    std::cerr << "[FAIL] cannot create host eventfd for looper test\n";
+    return 1;
+  }
+  const std::uint64_t one = 1;
+  if (::write(event_fd, &one, sizeof(one)) != sizeof(one)) {
+    ::close(event_fd);
+    std::cerr << "[FAIL] cannot signal host eventfd for looper test\n";
+    return 1;
+  }
+  A64GuestRuntime::Arguments looper_arguments{};
+  looper_arguments[0] = static_cast<std::uint64_t>(event_fd);
+  const auto looper_result =
+      runtime.CallSymbol("guest_android_looper_fd_smoke", looper_arguments);
+  ::close(event_fd);
+  if (!looper_result || looper_result.value != 42) {
+    std::cerr << "[FAIL] guest ALooper fd poll failed: "
+              << (looper_result ? std::to_string(looper_result.value)
+                                : looper_result.error)
+              << '\\n';
+    return 1;
+  }
+  std::cout << "[PASS] guest AAssetManager read APK assets and ALooper "
+               "delivered a ready host fd through the guest ABI\\n";
   return 0;
 }
