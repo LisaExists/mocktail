@@ -1322,7 +1322,7 @@ class A64GuestRuntime::Impl final {
         if ((events[index].events & (EPOLLIN | EPOLLPRI)) != 0) guest_events |= 1;
         if ((events[index].events & EPOLLOUT) != 0) guest_events |= 2;
         if ((events[index].events & EPOLLERR) != 0) guest_events |= 4;
-        if ((events[index].events & (EPOLLHUP | EPOLLRDHUP)) != 0) guest_events |= 8;
+        if ((events[index].events & EPOLLHUP) != 0) guest_events |= 8;
         if (!clear_output(args[1], &guest_fd, sizeof(guest_fd)) ||
             !clear_output(args[2], &guest_events, sizeof(guest_events)) ||
             !clear_output(args[3], &registration.data,
