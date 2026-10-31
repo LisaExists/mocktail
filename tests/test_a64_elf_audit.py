@@ -358,9 +358,10 @@ class ELFReportTests(unittest.TestCase):
         }
         catalog = MODULE.audit_catalog([consumer])
         requirements = catalog["platform_symbol_requirements"]
-        self.assertEqual(
-            [item["symbol"] for item in requirements],
-            ["AMediaCodec_createDecoderByType"],
+        self.assertEqual(requirements, [])
+        self.assertIn(
+            "AMediaCodec_createDecoderByType",
+            catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
         )
         self.assertFalse(catalog["ready_to_launch"])
         self.assertIn(
