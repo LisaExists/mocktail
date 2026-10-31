@@ -419,7 +419,6 @@ class ELFReportTests(unittest.TestCase):
         self.assertEqual(
             required,
             {
-                ("ANativeWindow_fromSurface", "libandroid.so"),
                 ("__libc_init", "libc.so"),
             },
         )
@@ -427,7 +426,9 @@ class ELFReportTests(unittest.TestCase):
         self.assertTrue({
             "ALooper_acquire", "ALooper_prepare", "ALooper_pollOnce",
             "AAssetManager_fromJava", "AAssetManager_open",
-            "AConfiguration_getScreenSize",
+            "AConfiguration_getScreenSize", "ANativeWindow_fromSurface",
+            "ANativeWindow_getWidth", "ANativeWindow_getHeight",
+            "ANativeWindow_getFormat", "ANativeWindow_release",
         }.issubset(registered))
         self.assertFalse(any(
             item["symbol"] == "__libc_init" and item["prototype_host_call"]
