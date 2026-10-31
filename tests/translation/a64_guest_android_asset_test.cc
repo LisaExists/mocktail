@@ -86,7 +86,13 @@ int main(int argc, char** argv) {
               << '\\n';
     return 1;
   }
-  std::cout << "[PASS] guest AAssetManager read APK assets and ALooper "
-               "delivered a ready host fd through the guest ABI\\n";
+  const auto window_result =
+      runtime.CallSymbol("guest_android_headless_window_smoke");
+  if (!window_result || window_result.value != 42) {
+    std::cerr << "[FAIL] headless ANativeWindow behavior was not preserved\\n";
+    return 1;
+  }
+  std::cout << "[PASS] guest AAssetManager read APK assets, ALooper delivered "
+               "a ready host fd, and headless ANativeWindow returned null\\n";
   return 0;
 }
