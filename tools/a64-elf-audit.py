@@ -751,7 +751,9 @@ def audit_elf(data: bytes, source: str = "<memory>") -> dict[str, Any]:
         "has_android_packed_rela": False, "has_relr": False,
         "has_text_relocations": False, "has_initializers": False,
         "prototype_loader_blockers": [], "runtime_gaps": [
-            "Android/Bionic startup, JNI integration, guest threads and graphics are not implemented"
+            "Android/Bionic coverage is partial; JNI method dispatch and ART objects are incomplete",
+            "Guest thread scheduling and callback-based ALooper dispatch are incomplete",
+            "Real EGL/GLES rendering, Android surfaces/bitmaps, and audio/video codecs are unavailable",
         ], "prototype_loader_compatible": False, "ready_for_roblox": False,
     }
     blockers: list[str] = report["prototype_loader_blockers"]
