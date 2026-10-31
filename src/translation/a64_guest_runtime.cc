@@ -1020,13 +1020,8 @@ class A64GuestRuntime::Impl final {
 
   bool RegisterAndroidAssetApi(std::string* error) {
     constexpr std::uint64_t kAssetManagerHandle = 0x41535345544D4752ULL;
-    constexpr std::uint64_t kFirstAssetHandle = 0x4153534554000010ULL;
     constexpr std::size_t kMaximumAssetBytes = 64U * 1024U * 1024U;
     constexpr std::size_t kMaximumOpenAssets = 4096U;
-    auto fail = [error](const std::string& message) {
-      if (error != nullptr) *error = message;
-      return false;
-    };
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
       return host_calls_.Register(name, "libandroid.so", "",
@@ -1249,9 +1244,10 @@ class A64GuestRuntime::Impl final {
           return A64HostCallResult{true, 0, {}};
         })) return false;
     if (!register_one("AConfiguration_fromAssetManager",
-        [this](const A64GuestHostCalls::Arguments& args) {
-          return A64HostCallResult{
-              true, configurations_.count(args[0]) != 0 ? 0U : 0U, {}};
+        [](const A64GuestHostCalls::Arguments&) {
+          // The synthetic configuration profile is already selected by the
+          // runtime options; the manager token carries no additional state.
+          return A64HostCallResult{true, 0, {}};
         })) return false;
     if (!register_one("AConfiguration_getLanguage",
         [this](const A64GuestHostCalls::Arguments& args) {
