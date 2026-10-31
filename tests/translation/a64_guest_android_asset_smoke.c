@@ -25,6 +25,9 @@ extern ALooper* ALooper_prepare(int options);
 extern ALooper* ALooper_forThread(void);
 extern void ALooper_release(ALooper* looper);
 extern void ALooper_wake(ALooper* looper);
+extern int ALooper_addFd(ALooper* looper, int fd, int ident, int events,
+                         void* callback, void* data);
+extern int ALooper_removeFd(ALooper* looper, int fd);
 extern int ALooper_isPolling(ALooper* looper);
 extern int ALooper_pollOnce(int timeout_ms, int* out_fd, int* out_events,
                             void** out_data);
@@ -79,4 +82,22 @@ int guest_android_asset_smoke(void) {
       readback[0] == '4' && readback[1] == '2' ? 42 : 7;
   AAsset_close(asset);
   return result;
+}
+
+__attribute__((visibility("default")))
+int guest_android_looper_fd_smoke(int fd) {
+  ALooper* looper = ALooper_prepare(1);
+  if (looper == (ALooper*)0) return 1;
+  if (ALooper_addFd(looper, fd, 17, 1, (void*)0, (void*)0x1234) != 1) {
+    ALooper_release(looper);
+    return 2;
+  }
+  int out_fd = -1;
+  int out_events = 0;
+  void* out_data = (void*)0;
+  const int result = ALooper_pollOnce(0, &out_fd, &out_events, &out_data);
+  const int removed = ALooper_removeFd(looper, fd);
+  ALooper_release(looper);
+  return result == 17 && out_fd == fd && (out_events & 1) != 0 &&
+         out_data == (void*)0x1234 && removed == 1 ? 42 : 3;
 }
