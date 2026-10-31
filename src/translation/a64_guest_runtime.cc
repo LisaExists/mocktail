@@ -9,13 +9,17 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <new>
 #include <mutex>
 #include <utility>
+#include <unordered_map>
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
@@ -1013,6 +1017,279 @@ class A64GuestRuntime::Impl final {
         error);
   }
 
+
+  bool RegisterAndroidAssetApi(std::string* error) {
+    constexpr std::uint64_t kAssetManagerHandle = 0x41535345544D4752ULL;
+    constexpr std::uint64_t kFirstAssetHandle = 0x4153534554000010ULL;
+    constexpr std::size_t kMaximumAssetBytes = 64U * 1024U * 1024U;
+    constexpr std::size_t kMaximumOpenAssets = 4096U;
+    auto fail = [error](const std::string& message) {
+      if (error != nullptr) *error = message;
+      return false;
+    };
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libandroid.so", "",
+                                  std::move(handler), error);
+    };
+
+    if (!register_one("AAssetManager_fromJava",
+        [](const A64GuestHostCalls::Arguments&) {
+          // Java AssetManager is represented by a runtime-owned opaque token.
+          // It is never dereferenced as a host pointer.
+          return A64HostCallResult{true, kAssetManagerHandle, {}};
+        })) return false;
+
+    if (!register_one("AAssetManager_open",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          if (args[0] != kAssetManagerHandle ||
+              options_.android_asset_root.empty()) {
+            return {true, 0, {}};
+          }
+          std::string requested;
+          std::string diagnostic;
+          if (!ReadBoundedGuestCString(memory_, args[1], 4096,
+                                       &requested, &diagnostic)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, 0, {}};
+          }
+          auto strip_prefix = [&requested](const char* prefix) {
+            const std::string value(prefix);
+            if (requested.compare(0, value.size(), value) == 0) {
+              requested.erase(0, value.size());
+              return true;
+            }
+            return false;
+          };
+          if (!strip_prefix("file:///android_asset/") &&
+              !strip_prefix("rbxasset://")) {
+            // Plain NDK asset paths are relative to the assets directory.
+          }
+          if (requested.compare(0, 7, "assets/") == 0) {
+            requested.erase(0, 7);
+          }
+          const std::filesystem::path relative(requested);
+          if (requested.empty() || relative.is_absolute()) {
+            return {true, 0, {}};
+          }
+          for (const auto& component : relative) {
+            if (component == ".." || component == "." || component.empty()) {
+              return {true, 0, {}};
+            }
+          }
+          std::error_code ec;
+          const auto root = std::filesystem::canonical(
+              options_.android_asset_root, ec);
+          if (ec || !std::filesystem::is_directory(root, ec) || ec) {
+            return {true, 0, {}};
+          }
+          const auto path = std::filesystem::canonical(root / relative, ec);
+          if (ec || !std::filesystem::is_regular_file(path, ec) || ec) {
+            return {true, 0, {}};
+          }
+          auto root_it = root.begin();
+          auto path_it = path.begin();
+          for (; root_it != root.end() && path_it != path.end();
+               ++root_it, ++path_it) {
+            if (*root_it != *path_it) return {true, 0, {}};
+          }
+          if (root_it != root.end()) return {true, 0, {}};
+
+          std::ifstream input(path, std::ios::binary | std::ios::ate);
+          if (!input) return {true, 0, {}};
+          const auto end = input.tellg();
+          if (end < 0 || static_cast<std::uint64_t>(end) >
+                             kMaximumAssetBytes) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFBIG));
+            return {true, 0, {}};
+          }
+          GuestAsset asset;
+          asset.bytes.resize(static_cast<std::size_t>(end));
+          input.seekg(0, std::ios::beg);
+          if (!asset.bytes.empty()) {
+            input.read(reinterpret_cast<char*>(asset.bytes.data()),
+                       static_cast<std::streamsize>(asset.bytes.size()));
+            if (!input || static_cast<std::size_t>(input.gcount()) !=
+                              asset.bytes.size()) {
+              return {true, 0, {}};
+            }
+          }
+          if (guest_assets_.size() >= kMaximumOpenAssets) {
+            static_cast<void>(host_calls_.SetGuestErrno(EMFILE));
+            return {true, 0, {}};
+          }
+          const std::uint64_t handle = next_guest_asset_handle_++;
+          guest_assets_.emplace(handle, std::move(asset));
+          return {true, handle, {}};
+        })) return false;
+
+    if (!register_one("AAsset_close",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          guest_assets_.erase(args[0]);
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    if (!register_one("AAsset_getLength",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto found = guest_assets_.find(args[0]);
+          return A64HostCallResult{
+              true, found == guest_assets_.end()
+                        ? 0 : static_cast<std::uint64_t>(found->second.bytes.size()),
+              {}};
+        })) return false;
+    if (!register_one("AAsset_getLength64",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto found = guest_assets_.find(args[0]);
+          return A64HostCallResult{
+              true, found == guest_assets_.end()
+                        ? 0 : static_cast<std::uint64_t>(found->second.bytes.size()),
+              {}};
+        })) return false;
+    if (!register_one("AAsset_getRemainingLength",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return A64HostCallResult{true, 0, {}};
+          const auto& asset = found->second;
+          return A64HostCallResult{
+              true, static_cast<std::uint64_t>(
+                        asset.bytes.size() - asset.offset), {}};
+        })) return false;
+    if (!register_one("AAsset_getRemainingLength64",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return A64HostCallResult{true, 0, {}};
+          const auto& asset = found->second;
+          return A64HostCallResult{
+              true, static_cast<std::uint64_t>(
+                        asset.bytes.size() - asset.offset), {}};
+        })) return false;
+
+    if (!register_one("AAsset_getBuffer",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return {true, 0, {}};
+          auto& asset = found->second;
+          if (asset.guest_buffer == 0) {
+            const auto allocation_size =
+                std::max<std::size_t>(asset.bytes.size(), 1U);
+            std::string diagnostic;
+            if (!memory_.MapAnywhere(
+                    allocation_size,
+                    A64GuestMemory::kRead | A64GuestMemory::kWrite,
+                    &asset.guest_buffer, &diagnostic)) {
+              return {false, 0, "cannot map guest AAsset buffer: " + diagnostic};
+            }
+            if (!asset.bytes.empty() &&
+                !memory_.Write(asset.guest_buffer, asset.bytes.data(),
+                               asset.bytes.size())) {
+              return {false, 0, "cannot copy AAsset bytes into guest memory"};
+            }
+          }
+          return {true, asset.guest_buffer, {}};
+        })) return false;
+
+    if (!register_one("AAsset_read",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end() || args[1] == 0) return {true, static_cast<std::uint64_t>(-1LL), {}};
+          auto& asset = found->second;
+          const auto remaining = asset.bytes.size() - asset.offset;
+          const auto count = std::min<std::uint64_t>(
+              args[2], std::min<std::size_t>(
+                           remaining, A64GuestHostCalls::kMaximumTransferBytes));
+          if (count != 0 &&
+              !memory_.Write(args[1], asset.bytes.data() + asset.offset,
+                             static_cast<std::size_t>(count))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          asset.offset += static_cast<std::size_t>(count);
+          return {true, count, {}};
+        })) return false;
+
+    if (!register_one("AAsset_seek",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return {true, static_cast<std::uint64_t>(-1LL), {}};
+          auto& asset = found->second;
+          const auto offset = static_cast<std::int64_t>(args[1]);
+          std::int64_t base = 0;
+          if (args[2] == 1) {
+            base = static_cast<std::int64_t>(asset.offset);
+          } else if (args[2] == 2) {
+            base = static_cast<std::int64_t>(asset.bytes.size());
+          } else if (args[2] != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          if ((offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset) ||
+              (offset < 0 && base < std::numeric_limits<std::int64_t>::min() - offset) ||
+              base + offset < 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          asset.offset = std::min<std::size_t>(
+              static_cast<std::size_t>(base + offset), asset.bytes.size());
+          return {true, static_cast<std::uint64_t>(asset.offset), {}};
+        })) return false;
+
+    if (!register_one("AConfiguration_new",
+        [this](const A64GuestHostCalls::Arguments&) {
+          const auto handle = next_configuration_handle_++;
+          configurations_.insert(handle);
+          return A64HostCallResult{true, handle, {}};
+        })) return false;
+    if (!register_one("AConfiguration_delete",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          configurations_.erase(args[0]);
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("AConfiguration_fromAssetManager",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          return A64HostCallResult{
+              true, configurations_.count(args[0]) != 0 ? 0U : 0U, {}};
+        })) return false;
+    if (!register_one("AConfiguration_getLanguage",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (configurations_.count(args[0]) != 0 && args[1] != 0) {
+            const char language[] = {'e', 'n', '\0'};
+            if (!memory_.Write(args[1], language, sizeof(language))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            }
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("AConfiguration_getCountry",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (configurations_.count(args[0]) != 0 && args[1] != 0) {
+            const char country[] = {'U', 'S', '\0'};
+            if (!memory_.Write(args[1], country, sizeof(country))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            }
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    const std::pair<const char*, std::uint64_t> configuration_values[] = {
+        {"AConfiguration_getScreenSize", 2},
+        {"AConfiguration_getScreenWidthDp", 360},
+        {"AConfiguration_getScreenHeightDp", 640},
+        {"AConfiguration_getNavHidden", 1},
+    };
+    for (const auto& item : configuration_values) {
+      if (!register_one(item.first,
+          [this, value = item.second](const A64GuestHostCalls::Arguments& args) {
+            return A64HostCallResult{
+                true, configurations_.count(args[0]) != 0 ? value : 0U, {}};
+          })) return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidMediaNdkApi(std::string* error) {
     auto fail = [error](const std::string& message) {
       if (error != nullptr) *error = message;
@@ -1522,7 +1799,11 @@ class A64GuestRuntime::Impl final {
       return fail("failed to register Android NDK platform API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
-        !RegisterAndroidMediaNdkApi(&diagnostic)) {
+        !RegisterAndroidAssetApi(&diagnostic)) {
+      return fail("failed to register Android asset/configuration API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidMediaNdkApi(&diagnostic))
       return fail("failed to register Android NDK media API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
@@ -2044,6 +2325,15 @@ class A64GuestRuntime::Impl final {
   std::mutex android_property_mutex_;
   std::map<std::string, std::uint64_t> android_property_handles_;
   std::map<std::uint64_t, std::string> android_property_names_;
+  struct GuestAsset final {
+    std::vector<std::uint8_t> bytes;
+    std::size_t offset = 0;
+    std::uint64_t guest_buffer = 0;
+  };
+  std::map<std::uint64_t, GuestAsset> guest_assets_;
+  std::set<std::uint64_t> configurations_;
+  std::uint64_t next_guest_asset_handle_ = 0x4153534554000010ULL;
+  std::uint64_t next_configuration_handle_ = 0x434F4E4649470010ULL;
   std::uint64_t next_android_property_handle_ = 0x50524F5000000010ULL;
   bool dl_error_pending_ = false;
   std::unique_ptr<Callbacks> callbacks_;
