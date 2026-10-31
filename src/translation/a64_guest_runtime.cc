@@ -1820,6 +1820,57 @@ class A64GuestRuntime::Impl final {
             return A64HostCallResult{true, 0, {}};
           })) return false;
     }
+
+    const char* const null_codec_apis[] = {
+        "AMediaCodec_createDecoderByType",
+        "AMediaCodec_createEncoderByType",
+        "AMediaCodec_getOutputFormat",
+    };
+    for (const auto* name : null_codec_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            // No Android codec service is attached to this headless runtime.
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (!register_one("AMediaCodec_delete",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    const char* const unavailable_codec_apis[] = {
+        "AMediaCodec_configure", "AMediaCodec_start",
+        "AMediaCodec_queueInputBuffer",
+        "AMediaCodec_dequeueInputBuffer",
+        "AMediaCodec_dequeueOutputBuffer",
+    };
+    for (const auto* name : unavailable_codec_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          })) return false;
+    }
+    const char* const successful_cleanup_apis[] = {
+        "AMediaCodec_stop", "AMediaCodec_flush",
+        "AMediaCodec_releaseOutputBuffer",
+    };
+    for (const auto* name : successful_cleanup_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    const char* const null_buffer_apis[] = {
+        "AMediaCodec_getInputBuffer", "AMediaCodec_getOutputBuffer",
+    };
+    for (const auto* name : null_buffer_apis) {
+      if (!register_one(name, [this](const A64GuestHostCalls::Arguments& args) {
+            const std::uint64_t zero = 0;
+            if (args[2] != 0 &&
+                !memory_.Write(args[2], &zero, sizeof(zero))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            }
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+
     if (error != nullptr) error->clear();
     return true;
   }
