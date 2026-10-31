@@ -387,6 +387,7 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "getgid": "libc.so",
     "getegid": "libc.so",
     "sysconf": "libc.so",
+    "prctl": "libc.so",
     "SL_IID_": "libOpenSLES.so",
     "slCreateEngine": "libOpenSLES.so",
     "alCreateEngine": "libOpenMAXAL.so",
@@ -474,7 +475,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "__system_property_serial",
         "mmap", "mmap64", "munmap", "mprotect", "madvise",
         "getpid", "gettid", "getuid", "geteuid", "getgid", "getegid",
-        "sysconf",
+        "sysconf", "prctl",
     },
     "libandroid.so": {
         "android_get_device_api_level",
