@@ -38,6 +38,14 @@ extern void ANativeWindow_release(ANativeWindow* window);
 extern int ANativeWindow_getWidth(ANativeWindow* window);
 extern int ANativeWindow_getHeight(ANativeWindow* window);
 extern int ANativeWindow_getFormat(ANativeWindow* window);
+extern int ANativeWindow_setBuffersGeometry(ANativeWindow* window,
+                                             int width, int height, int format);
+extern int ANativeWindow_lock(ANativeWindow* window, void* out_buffer,
+                              void* out_dirty);
+extern int ANativeWindow_unlockAndPost(ANativeWindow* window);
+extern int AndroidBitmap_getInfo(void* env, void* bitmap, void* info);
+extern int AndroidBitmap_lockPixels(void* env, void* bitmap, void** pixels);
+extern int AndroidBitmap_unlockPixels(void* env, void* bitmap);
 
 static const char kAssetPath[] = "content/asset-smoke.txt";
 
@@ -118,6 +126,19 @@ int guest_android_headless_window_smoke(void) {
   const int width = ANativeWindow_getWidth(window);
   const int height = ANativeWindow_getHeight(window);
   const int format = ANativeWindow_getFormat(window);
+  const int geometry = ANativeWindow_setBuffersGeometry(window, 320, 240, 1);
+  const int lock_result = ANativeWindow_lock(window, (void*)0, (void*)0);
+  const int unlock_result = ANativeWindow_unlockAndPost(window);
   ANativeWindow_release(window);
-  return width == 0 && height == 0 && format == 0 ? 42 : 2;
+  void* pixels = (void*)0;
+  const int bitmap_info =
+      AndroidBitmap_getInfo((void*)1, (void*)2, (void*)3);
+  const int bitmap_lock =
+      AndroidBitmap_lockPixels((void*)1, (void*)2, &pixels);
+  const int bitmap_unlock =
+      AndroidBitmap_unlockPixels((void*)1, (void*)2);
+  return width == 0 && height == 0 && format == 0 &&
+         geometry == -1 && lock_result == -1 && unlock_result == -1 &&
+         bitmap_info == -1 && bitmap_lock == -1 && bitmap_unlock == -1
+             ? 42 : 2;
 }
