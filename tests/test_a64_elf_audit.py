@@ -334,6 +334,7 @@ class ELFReportTests(unittest.TestCase):
             "needed": [
                 "libmediandk.so", "liblog.so", "libandroid.so",
                 "libEGL.so", "libGLESv2.so",
+                "libOpenSLES.so", "libOpenMAXAL.so",
             ],
             "imports": [
                 {"name": "AMediaFormat_new", "version": "", "provider": "",
@@ -366,6 +367,12 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "glGetIntegerv", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "slCreateEngine", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "alCreateEngine", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "SL_IID_ENGINE", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -386,6 +393,18 @@ class ELFReportTests(unittest.TestCase):
         }.issubset(
             catalog["prototype_registered_android_host_calls"]["libGLESv2.so"]
         ))
+        self.assertIn(
+            "slCreateEngine",
+            catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
+        )
+        self.assertIn(
+            "alCreateEngine",
+            catalog["prototype_registered_android_host_calls"]["libOpenMAXAL.so"],
+        )
+        self.assertIn(
+            "SL_IID_ENGINE",
+            catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
+        )
         self.assertFalse(catalog["ready_to_launch"])
         self.assertIn(
             "AMediaFormat_new",
