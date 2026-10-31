@@ -291,3 +291,25 @@ int guest_libc_process_smoke(void) {
       monotonic_time.tv_sec < 0 || wall_time.tv_sec <= 0) return 3;
   return 42;
 }
+
+extern void* __memcpy_chk(void* destination, const void* source,
+                          unsigned long length, unsigned long destination_size);
+extern void* __memmove_chk(void* destination, const void* source,
+                           unsigned long length, unsigned long destination_size);
+extern void* __memset_chk(void* destination, int value, unsigned long length,
+                          unsigned long destination_size);
+extern unsigned long __strlen_chk(const char* value, unsigned long maximum);
+
+__attribute__((visibility("default")))
+int guest_libc_fortify_smoke(void) {
+  char destination[8] = {0};
+  const char source[] = "abc";
+  if (__memcpy_chk(destination, source, sizeof(source), sizeof(destination)) !=
+      destination || destination[0] != 'a' || destination[2] != 'c' ||
+      destination[3] != 0) return 1;
+  if (__memmove_chk(destination + 1, destination, 3, 7) != destination + 1 ||
+      destination[1] != 'a' || destination[3] != 'c') return 2;
+  if (__memset_chk(destination, 'z', 2, sizeof(destination)) != destination ||
+      destination[0] != 'z' || destination[1] != 'z') return 3;
+  return __strlen_chk("hello", 6) == 5 ? 42 : 4;
+}
