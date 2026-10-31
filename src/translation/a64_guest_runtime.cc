@@ -1120,9 +1120,22 @@ class A64GuestRuntime::Impl final {
         })) return false;
 
     if (!register_one("AAsset_close",
-        [this](const A64GuestHostCalls::Arguments& args) {
-          guest_assets_.erase(args[0]);
-          return A64HostCallResult{true, 0, {}};
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          const auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return {true, 0, {}};
+          if (found->second.guest_buffer != 0) {
+            std::string diagnostic;
+            const auto allocation_size =
+                std::max<std::size_t>(found->second.bytes.size(), 1U);
+            if (!memory_.Unmap(found->second.guest_buffer, allocation_size,
+                               &diagnostic)) {
+              return {false, 0, "cannot release guest AAsset buffer: " +
+                                    diagnostic};
+            }
+          }
+          guest_assets_.erase(found);
+          return {true, 0, {}};
         })) return false;
 
     if (!register_one("AAsset_getLength",
