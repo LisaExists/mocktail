@@ -219,3 +219,28 @@ int guest_android_headless_audio_smoke(void) {
          sl_engine == (void*)0 && al_engine == (void*)0 &&
          SL_IID_ENGINE == (void*)0x1004 ? 42 : 1;
 }
+
+extern void* eglGetDisplay(void* native_display);
+extern unsigned int eglInitialize(void* display, int* major, int* minor);
+extern int eglGetError(void);
+extern const unsigned char* glGetString(unsigned int name);
+extern unsigned int glGetError(void);
+extern int glGetUniformLocation(unsigned int program, const char* name);
+extern void glGenTextures(int count, unsigned int* textures);
+extern void glGetIntegerv(unsigned int pname, int* value);
+
+__attribute__((visibility("default")))
+int guest_android_headless_graphics_smoke(void) {
+  void* display = eglGetDisplay((void*)0);
+  int major = 1;
+  int minor = 1;
+  if (display != (void*)0 || eglInitialize(display, &major, &minor) != 0 ||
+      eglGetError() != 0x3008) return 1;
+  if (glGetString(0) != (const unsigned char*)0 || glGetError() != 0 ||
+      glGetUniformLocation(0, "missing") != -1) return 2;
+  unsigned int textures[2] = {5, 6};
+  glGenTextures(2, textures);
+  int value = 99;
+  glGetIntegerv(0, &value);
+  return textures[0] == 0 && textures[1] == 0 && value == 0 ? 42 : 3;
+}
