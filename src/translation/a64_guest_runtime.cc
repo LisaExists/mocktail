@@ -1492,10 +1492,15 @@ class A64GuestRuntime::Impl final {
                           static_cast<std::int64_t>(kPollError)), {}};
       }
 
+      constexpr std::int32_t kMaximumHeadlessPollWaitMs = 1000;
+      const int effective_timeout = timeout < 0
+          ? kMaximumHeadlessPollWaitMs
+          : std::min(timeout, kMaximumHeadlessPollWaitMs);
       std::array<epoll_event, 32> events{};
       guest_looper_->polling.store(true, std::memory_order_release);
-      const int ready = ::epoll_wait(guest_looper_->epoll_fd, events.data(),
-                                     static_cast<int>(events.size()), timeout);
+      const int ready = ::epoll_wait(
+          guest_looper_->epoll_fd, events.data(),
+          static_cast<int>(events.size()), effective_timeout);
       const int wait_error = errno;
       guest_looper_->polling.store(false, std::memory_order_release);
       if (ready == 0) {
