@@ -339,6 +339,16 @@ class ELFReportTests(unittest.TestCase):
                  "binding": "GLOBAL", "tls": False},
                 {"name": "android_get_device_api_level", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AAssetManager_fromJava", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AAssetManager_open", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AAsset_getBuffer", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AAsset_getLength", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AConfiguration_new", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "__system_property_get", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AMediaCodec_createDecoderByType", "version": "",
@@ -361,6 +371,14 @@ class ELFReportTests(unittest.TestCase):
             "__system_property_get",
             catalog["prototype_registered_android_host_calls"]["libc.so"],
         )
+        for symbol in (
+            "AAssetManager_fromJava", "AAssetManager_open",
+            "AAsset_getBuffer", "AAsset_getLength", "AConfiguration_new",
+        ):
+            self.assertIn(
+                symbol,
+                catalog["prototype_registered_android_host_calls"]["libandroid.so"],
+            )
 
     def test_delta_android_platform_gaps_remain_explicit_requirements(self):
         consumer = {
