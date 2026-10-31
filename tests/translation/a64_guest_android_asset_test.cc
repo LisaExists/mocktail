@@ -104,7 +104,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] headless OpenSL engine behavior was not preserved\n";
     return 1;
   }
-  std::cout << "[PASS] guest AAssetManager, ALooper, headless native window, "
-               "MediaCodec and OpenSL APIs exercised through guest ABI\n";
+  const auto graphics_result =
+      runtime.CallSymbol("guest_android_headless_graphics_smoke");
+  if (!graphics_result || graphics_result.value != 42) {
+    std::cerr << "[FAIL] headless EGL/GLES behavior was not preserved\n";
+    return 1;
+  }
+  std::cout << "[PASS] guest assets, ALooper, headless native window, "
+               "MediaCodec, OpenSL and EGL/GLES APIs exercised through guest ABI\n";
   return 0;
 }
