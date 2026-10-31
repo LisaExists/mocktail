@@ -133,12 +133,14 @@ jobs:
           arm64="build-translation-ci/real-roblox-apk/com.roblox.client-config.arm64_v8a-18934.apk"
           preflight_log="build-translation-ci/real-roblox-apk/preflight.log"
           audit_log="build-translation-ci/real-roblox-apk/audit.log"
+          audit_json="build-translation-ci/real-roblox-apk/audit.json"
           echo '--- ABI preflight (ARM64-on-x86 mismatch is expected for this prototype) ---'
           python3 tools/roblox-arm-preflight.py "$base" "$arm64" | tee "$preflight_log" || true
           echo '--- Native ELF / dependency audit (ARM64 split; base has no native lib directory) ---'
           set +e
           python3 tools/a64-elf-audit.py "$arm64" 2>&1 | tee "$audit_log"
           audit_status=${PIPESTATUS[0]}
+          python3 tools/a64-elf-audit.py --json "$arm64" >"$audit_json"
           set -e
           echo "Real Roblox ELF audit exit status: $audit_status"
           if [ "$audit_status" -ne 0 ]; then
@@ -186,5 +188,6 @@ jobs:
             build-translation-ci/real-roblox-apk/guest-probe.log
             build-translation-ci/real-roblox-apk/preflight.log
             build-translation-ci/real-roblox-apk/audit.log
+            build-translation-ci/real-roblox-apk/audit.json
           if-no-files-found: warn
           retention-days: 14
