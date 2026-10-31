@@ -1171,19 +1171,20 @@ class A64GuestRuntime::Impl final {
             return {true, 0, {}};
           }
           if (option == kPrSetName) {
-            std::string name;
-            std::string diagnostic;
-            if (!ReadBoundedGuestCString(memory_, args[1], 16,
-                                         &name, &diagnostic)) {
+            std::array<char, 16> name{};
+            if (args[1] == 0 ||
+                !memory_.Read(args[1], name.data(), name.size())) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
               return {true, static_cast<std::uint64_t>(-1LL), {}};
             }
             return {true, 0, {}};
           }
           if (option == kPrGetName) {
-            constexpr char kGuestName[] = "mocktail-guest";
+            constexpr std::array<char, 16> kGuestName = {
+                'm', 'o', 'c', 'k', 't', 'a', 'i', 'l',
+                '-', 'g', 'u', 'e', 's', 't', '\0', '\0'};
             if (args[1] == 0 ||
-                !memory_.Write(args[1], kGuestName, sizeof(kGuestName))) {
+                !memory_.Write(args[1], kGuestName.data(), kGuestName.size())) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
               return {true, static_cast<std::uint64_t>(-1LL), {}};
             }
