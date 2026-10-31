@@ -4,6 +4,7 @@
 typedef struct AAssetManager AAssetManager;
 typedef struct AAsset AAsset;
 typedef struct AConfiguration AConfiguration;
+typedef struct ALooper ALooper;
 
 extern AAssetManager* AAssetManager_fromJava(void* env, void* manager);
 extern AAsset* AAssetManager_open(AAssetManager* manager,
@@ -20,6 +21,13 @@ extern void AConfiguration_fromAssetManager(AConfiguration* config,
 extern void AConfiguration_getLanguage(AConfiguration* config, char* out);
 extern void AConfiguration_getCountry(AConfiguration* config, char* out);
 extern int AConfiguration_getScreenWidthDp(AConfiguration* config);
+extern ALooper* ALooper_prepare(int options);
+extern ALooper* ALooper_forThread(void);
+extern void ALooper_release(ALooper* looper);
+extern void ALooper_wake(ALooper* looper);
+extern bool ALooper_isPolling(ALooper* looper);
+extern int ALooper_pollOnce(int timeout_ms, int* out_fd, int* out_events,
+                            void** out_data);
 
 static const char kAssetPath[] = "content/asset-smoke.txt";
 
@@ -42,8 +50,21 @@ int guest_android_asset_smoke(void) {
   AConfiguration_delete(config);
   if (!config_ok) return 3;
 
+  ALooper* looper = ALooper_prepare(1);
+  if (looper == (ALooper*)0 || ALooper_forThread() != looper ||
+      ALooper_isPolling(looper)) return 4;
+  ALooper_wake(looper);
+  int poll_fd = -1;
+  int poll_events = -1;
+  void* poll_data = (void*)1;
+  const int poll_result =
+      ALooper_pollOnce(0, &poll_fd, &poll_events, &poll_data);
+  ALooper_release(looper);
+  if (poll_result != -1 || poll_fd != 0 || poll_events != 0 ||
+      poll_data != (void*)0) return 5;
+
   AAsset* asset = AAssetManager_open(manager, kAssetPath, 0);
-  if (asset == (AAsset*)0) return 4;
+  if (asset == (AAsset*)0) return 6;
 
   const long length = AAsset_getLength(asset);
   const unsigned char* buffer =
@@ -55,7 +76,7 @@ int guest_android_asset_smoke(void) {
       length == 2 && buffer != (const unsigned char*)0 &&
       buffer[0] == '4' && buffer[1] == '2' &&
       seek_result == 0 && read_result == 2 &&
-      readback[0] == '4' && readback[1] == '2' ? 42 : 5;
+      readback[0] == '4' && readback[1] == '2' ? 42 : 7;
   AAsset_close(asset);
   return result;
 }
