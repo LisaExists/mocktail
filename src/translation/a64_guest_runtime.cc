@@ -1049,7 +1049,7 @@ class A64GuestRuntime::Impl final {
       }
       return false;
     }
-    for (std::size_t index = 0; index < std::size(kSlIidValues); ++index) {
+    for (std::size_t index = 0; index < sizeof(kSlIidValues) / sizeof(kSlIidValues[0]); ++index) {
       const auto address = iid_storage + index * sizeof(std::uint64_t);
       if (!memory_.Write(address, &kSlIidValues[index],
                          sizeof(kSlIidValues[index]))) {
