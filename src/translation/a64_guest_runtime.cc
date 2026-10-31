@@ -1183,13 +1183,13 @@ class A64GuestRuntime::Impl final {
           return {true, 1, {}};
         })) return false;
 
-    auto poll_once = [this, kLooperHandle, kPollWake, kPollTimeout, kPollError](
+    auto poll_once = [this, kPollWake, kPollTimeout, kPollError](
         const A64GuestHostCalls::Arguments& args) -> A64HostCallResult {
-      if (args[0] == 0 || args[0] != kLooperHandle || !guest_looper_) {
+      if (!guest_looper_) {
         return {true, static_cast<std::uint64_t>(
                           static_cast<std::int64_t>(kPollError)), {}};
       }
-      const auto timeout = static_cast<std::int32_t>(args[1]);
+      const auto timeout = static_cast<std::int32_t>(args[0]);
       if (timeout < -1) {
         static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
         return {true, static_cast<std::uint64_t>(
@@ -1201,9 +1201,9 @@ class A64GuestRuntime::Impl final {
       };
       const std::int32_t zero = 0;
       const std::uint64_t null_data = 0;
-      if (!clear_output(args[2], &zero, sizeof(zero)) ||
-          !clear_output(args[3], &zero, sizeof(zero)) ||
-          !clear_output(args[4], &null_data, sizeof(null_data))) {
+      if (!clear_output(args[1], &zero, sizeof(zero)) ||
+          !clear_output(args[2], &zero, sizeof(zero)) ||
+          !clear_output(args[3], &null_data, sizeof(null_data))) {
         static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
         return {true, static_cast<std::uint64_t>(
                           static_cast<std::int64_t>(kPollError)), {}};
@@ -1249,9 +1249,9 @@ class A64GuestRuntime::Impl final {
         if ((events[index].events & EPOLLOUT) != 0) guest_events |= 2;
         if ((events[index].events & EPOLLERR) != 0) guest_events |= 4;
         if ((events[index].events & (EPOLLHUP | EPOLLRDHUP)) != 0) guest_events |= 8;
-        if (!clear_output(args[2], &guest_fd, sizeof(guest_fd)) ||
-            !clear_output(args[3], &guest_events, sizeof(guest_events)) ||
-            !clear_output(args[4], &registration.data,
+        if (!clear_output(args[1], &guest_fd, sizeof(guest_fd)) ||
+            !clear_output(args[2], &guest_events, sizeof(guest_events)) ||
+            !clear_output(args[3], &registration.data,
                           sizeof(registration.data))) {
           static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
           return {true, static_cast<std::uint64_t>(
