@@ -416,15 +416,19 @@ class ELFReportTests(unittest.TestCase):
             (item["symbol"], item["provider"])
             for item in catalog["platform_symbol_requirements"]
         }
+        self.assertEqual(
+            required,
+            {
+                ("ANativeWindow_fromSurface", "libandroid.so"),
+                ("__libc_init", "libc.so"),
+            },
+        )
+        registered = catalog["prototype_registered_android_host_calls"]["libandroid.so"]
         self.assertTrue({
-            ("ALooper_acquire", "libandroid.so"),
-            ("ALooper_prepare", "libandroid.so"),
-            ("AAssetManager_fromJava", "libandroid.so"),
-            ("AAssetManager_open", "libandroid.so"),
-            ("ANativeWindow_fromSurface", "libandroid.so"),
-            ("AConfiguration_getScreenSize", "libandroid.so"),
-            ("__libc_init", "libc.so"),
-        }.issubset(required))
+            "ALooper_acquire", "ALooper_prepare", "ALooper_pollOnce",
+            "AAssetManager_fromJava", "AAssetManager_open",
+            "AConfiguration_getScreenSize",
+        }.issubset(registered))
         self.assertFalse(any(
             item["symbol"] == "__libc_init" and item["prototype_host_call"]
             for item in catalog["platform_symbol_requirements"]
