@@ -376,6 +376,9 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "AMediaDataSource_": "libmediandk.so",
     "AAsset": "libandroid.so",
     "AndroidBitmap_": "libjnigraphics.so",
+    "SL_IID_": "libOpenSLES.so",
+    "slCreateEngine": "libOpenSLES.so",
+    "alCreateEngine": "libOpenMAXAL.so",
     "ALooper_": "libandroid.so",
     "ANativeWindow_": "libandroid.so",
     "AConfiguration_": "libandroid.so",
@@ -451,6 +454,13 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "AndroidBitmap_getInfo", "AndroidBitmap_lockPixels",
         "AndroidBitmap_unlockPixels",
     },
+    "libOpenSLES.so": {
+        "slCreateEngine",
+        "SL_IID_ANDROIDCONFIGURATION", "SL_IID_ANDROIDSIMPLEBUFFERQUEUE",
+        "SL_IID_BUFFERQUEUE", "SL_IID_ENGINE", "SL_IID_PLAY",
+        "SL_IID_RECORD", "SL_IID_VOLUME",
+    },
+    "libOpenMAXAL.so": {"alCreateEngine"},
     "libmediandk.so": {
         "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
         "AMediaFormat_setInt32", "AMediaFormat_setInt64",
