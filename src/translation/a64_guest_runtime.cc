@@ -1245,6 +1245,57 @@ class A64GuestRuntime::Impl final {
           static_cast<void>(::sched_yield());
           return A64HostCallResult{true, 0, {}};
         })) return false;
+
+    auto checked_copy = [this](
+        const A64GuestHostCalls::Arguments& args) -> A64HostCallResult {
+      const auto length = args[2];
+      if (length > args[3] || length > 64U * 1024U * 1024U) {
+        static_cast<void>(host_calls_.SetGuestErrno(EOVERFLOW));
+        return {true, 0, {}};
+      }
+      std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+      if (length != 0 &&
+          (!memory_.Read(args[1], bytes.data(), bytes.size()) ||
+           !memory_.Write(args[0], bytes.data(), bytes.size()))) {
+        static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+        return {true, 0, {}};
+      }
+      return {true, args[0], {}};
+    };
+    if (!register_one("__memcpy_chk", checked_copy) ||
+        !register_one("__memmove_chk", checked_copy)) return false;
+    if (!register_one("__memset_chk",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto length = args[2];
+          if (length > args[3] || length > 64U * 1024U * 1024U) {
+            static_cast<void>(host_calls_.SetGuestErrno(EOVERFLOW));
+            return A64HostCallResult{true, 0, {}};
+          }
+          std::vector<std::uint8_t> bytes(
+              static_cast<std::size_t>(length),
+              static_cast<std::uint8_t>(args[1]));
+          if (length != 0 &&
+              !memory_.Write(args[0], bytes.data(), bytes.size())) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return A64HostCallResult{true, 0, {}};
+          }
+          return A64HostCallResult{true, args[0], {}};
+        })) return false;
+    if (!register_one("__strlen_chk",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto limit = std::min<std::uint64_t>(
+              args[1], 64U * 1024U * 1024U);
+          std::string value;
+          std::string diagnostic;
+          if (!ReadBoundedGuestCString(memory_, args[0],
+                                       static_cast<std::size_t>(limit),
+                                       &value, &diagnostic)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EOVERFLOW));
+            return A64HostCallResult{true, 0, {}};
+          }
+          return A64HostCallResult{
+              true, static_cast<std::uint64_t>(value.size()), {}};
+        })) return false;
     if (error != nullptr) error->clear();
     return true;
   }
