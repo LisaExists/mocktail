@@ -1,4 +1,7 @@
 #include <unistd.h>
+#include <time.h>
+#include <sys/time.h>
+#include <sched.h>
 
 // Copyright 2026 Mocktail Project Authors
 // Licensed under the Apache License, Version 2.0.
@@ -279,5 +282,12 @@ int guest_libc_process_smoke(void) {
       getgid() != 10000 || getegid() != 10000) return 1;
   if (sysconf(_SC_PAGESIZE) != 4096 || prctl(3) != 1 ||
       prctl(4, 0) != 0) return 2;
+  struct timespec monotonic_time;
+  struct timeval wall_time;
+  time_t seconds = 0;
+  if (clock_gettime(CLOCK_MONOTONIC, &monotonic_time) != 0 ||
+      gettimeofday(&wall_time, (void*)0) != 0 ||
+      time(&seconds) <= 0 || seconds <= 0 || sched_yield() != 0 ||
+      monotonic_time.tv_sec < 0 || wall_time.tv_sec <= 0) return 3;
   return 42;
 }
