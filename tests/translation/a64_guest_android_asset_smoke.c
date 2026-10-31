@@ -244,3 +244,21 @@ int guest_android_headless_graphics_smoke(void) {
   glGetIntegerv(0, &value);
   return textures[0] == 0 && textures[1] == 0 && value == 0 ? 42 : 3;
 }
+
+extern void* mmap(void* address, unsigned long length, int protection,
+                  int flags, int fd, long offset);
+extern int mprotect(void* address, unsigned long length, int protection);
+extern int madvise(void* address, unsigned long length, int advice);
+extern int munmap(void* address, unsigned long length);
+
+__attribute__((visibility("default")))
+int guest_libc_memory_smoke(void) {
+  char* memory = (char*)mmap((void*)0, 4096, 3, 0x22, -1, 0);
+  if (memory == (char*)-1 || memory == (char*)0) return 1;
+  memory[0] = 'x';
+  if (mprotect(memory, 4096, 1) != 0 || memory[0] != 'x') return 2;
+  if (mprotect(memory, 4096, 3) != 0) return 3;
+  if (madvise(memory, 4096, 4) != 0 || memory[0] != 0) return 4;
+  if (munmap(memory, 4096) != 0) return 5;
+  return 42;
+}
