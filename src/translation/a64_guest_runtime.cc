@@ -1056,7 +1056,7 @@ class A64GuestRuntime::Impl final {
 
     const char* const gles_zero_apis[] = {
         "glGetError", "glGetIntegerv", "glGenTextures", "glGenBuffers",
-        "glGenFramebuffers", "glGenRenderbuffers", "glCreateShader",
+"glGenRenderbuffers", "glCreateShader",
         "glCreateProgram", "glGetShaderiv", "glGetProgramiv",
         "glGetShaderInfoLog", "glGetProgramInfoLog", "glGetActiveUniform",
         "glCheckFramebufferStatus", "glViewport", "glActiveTexture",
@@ -1097,7 +1097,7 @@ class A64GuestRuntime::Impl final {
         })) return false;
 
     const char* const generate_apis[] = {
-        "glGenTextures", "glGenBuffers", "glGenFramebuffers",
+"glGenBuffers", "glGenFramebuffers",
         "glGenRenderbuffers",
     };
     for (const auto* name : generate_apis) {
