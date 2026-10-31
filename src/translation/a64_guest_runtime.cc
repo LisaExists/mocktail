@@ -1056,7 +1056,6 @@ class A64GuestRuntime::Impl final {
 
     const char* const gles_zero_apis[] = {
         "glGetError", "glCreateShader", "glCreateProgram",
-        "glGetShaderInfoLog", "glGetProgramInfoLog", "glGetActiveUniform",
         "glCheckFramebufferStatus", "glViewport", "glActiveTexture",
         "glAttachShader", "glBindAttribLocation", "glBindBuffer",
         "glBindFramebuffer", "glBindRenderbuffer", "glBindTexture",
