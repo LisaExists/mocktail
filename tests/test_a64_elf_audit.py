@@ -397,6 +397,14 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "sched_yield", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__memcpy_chk", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__memmove_chk", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__memset_chk", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__strlen_chk", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -433,6 +441,7 @@ class ELFReportTests(unittest.TestCase):
             "mmap", "munmap", "mprotect", "madvise",
             "getpid", "gettid", "sysconf", "prctl", "clock_gettime",
             "clock_gettime64", "gettimeofday", "time", "sched_yield",
+            "__memcpy_chk", "__memmove_chk", "__memset_chk", "__strlen_chk",
         }.issubset(
             catalog["prototype_registered_android_host_calls"]["libc.so"]
         ))
