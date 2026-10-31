@@ -78,6 +78,7 @@ void PrintUsage(const char* program) {
       << "Options:\n"
       << "  --root NAME             Root library basename (for example "
          "libroblox.so)\n"
+      << "  --asset-root PATH       Extracted Android assets directory\n"
       << "  --list-exports          Print exports from every loaded module\n"
       << "  --external-dependency SONAME\n"
       << "                          Allow an absent dependency name; does not provide its symbols\n"
@@ -110,6 +111,7 @@ int main(int argc, char** argv) {
   using mocktail::translation::A64GuestRuntimeOptions;
 
   std::string root_name;
+  std::string asset_root;
   std::string call_symbol;
   std::string native_class;
   std::string native_name;
@@ -150,6 +152,10 @@ int main(int argc, char** argv) {
     }
     if (option == "--root") {
       if (!take_value("--root", &root_name)) return 2;
+      continue;
+    }
+    if (option == "--asset-root") {
+      if (!take_value("--asset-root", &asset_root)) return 2;
       continue;
     }
     if (option == "--call") {
@@ -397,6 +403,7 @@ int main(int argc, char** argv) {
   }
 
   A64GuestRuntimeOptions options;
+  options.android_asset_root = std::move(asset_root);
   options.module_load.external_dependencies = std::move(external_dependencies);
   if (call_native) java_classes.push_back(native_class);
   for (auto& class_name : java_classes) {
