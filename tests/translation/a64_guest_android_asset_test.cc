@@ -98,7 +98,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] headless MediaCodec behavior was not preserved\n";
     return 1;
   }
-  std::cout << "[PASS] guest AAssetManager, ALooper, headless ANativeWindow, "
-               "and unavailable MediaCodec APIs exercised through guest ABI\n";
+  const auto audio_result =
+      runtime.CallSymbol("guest_android_headless_audio_smoke");
+  if (!audio_result || audio_result.value != 42) {
+    std::cerr << "[FAIL] headless OpenSL engine behavior was not preserved\n";
+    return 1;
+  }
+  std::cout << "[PASS] guest AAssetManager, ALooper, headless native window, "
+               "MediaCodec and OpenSL APIs exercised through guest ABI\n";
   return 0;
 }
