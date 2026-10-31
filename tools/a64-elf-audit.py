@@ -375,6 +375,7 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "AMediaCrypto_": "libmediandk.so",
     "AMediaDataSource_": "libmediandk.so",
     "AAsset": "libandroid.so",
+    "AndroidBitmap_": "libjnigraphics.so",
     "ALooper_": "libandroid.so",
     "ANativeWindow_": "libandroid.so",
     "AConfiguration_": "libandroid.so",
