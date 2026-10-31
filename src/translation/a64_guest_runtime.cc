@@ -1114,6 +1114,14 @@ class A64GuestRuntime::Impl final {
             static_cast<void>(host_calls_.SetGuestErrno(EMFILE));
             return {true, 0, {}};
           }
+          constexpr std::size_t kMaximumOpenAssetBytes =
+              256U * 1024U * 1024U;
+          if (asset.bytes.size() >
+              kMaximumOpenAssetBytes - guest_asset_bytes_) {
+            static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+            return {true, 0, {}};
+          }
+          guest_asset_bytes_ += asset.bytes.size();
           const std::uint64_t handle = next_guest_asset_handle_++;
           guest_assets_.emplace(handle, std::move(asset));
           return {true, handle, {}};
@@ -1134,6 +1142,7 @@ class A64GuestRuntime::Impl final {
                                     diagnostic};
             }
           }
+          guest_asset_bytes_ -= found->second.bytes.size();
           guest_assets_.erase(found);
           return {true, 0, {}};
         })) return false;
@@ -1192,7 +1201,20 @@ class A64GuestRuntime::Impl final {
             if (!asset.bytes.empty() &&
                 !memory_.Write(asset.guest_buffer, asset.bytes.data(),
                                asset.bytes.size())) {
+              std::string ignored;
+              static_cast<void>(memory_.Unmap(asset.guest_buffer,
+                                               allocation_size, &ignored));
+              asset.guest_buffer = 0;
               return {false, 0, "cannot copy AAsset bytes into guest memory"};
+            }
+            if (!memory_.Protect(asset.guest_buffer, allocation_size,
+                                 A64GuestMemory::kRead, &diagnostic)) {
+              std::string ignored;
+              static_cast<void>(memory_.Unmap(asset.guest_buffer,
+                                               allocation_size, &ignored));
+              asset.guest_buffer = 0;
+              return {false, 0, "cannot protect guest AAsset buffer: " +
+                                    diagnostic};
             }
           }
           return {true, asset.guest_buffer, {}};
@@ -2340,6 +2362,7 @@ class A64GuestRuntime::Impl final {
     std::uint64_t guest_buffer = 0;
   };
   std::map<std::uint64_t, GuestAsset> guest_assets_;
+  std::size_t guest_asset_bytes_ = 0;
   std::set<std::uint64_t> configurations_;
   std::uint64_t next_guest_asset_handle_ = 0x4153534554000010ULL;
   std::uint64_t next_configuration_handle_ = 0x434F4E4649470010ULL;
