@@ -116,7 +116,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] guest libc mmap/mprotect/madvise behavior failed\n";
     return 1;
   }
+  const auto process_result =
+      runtime.CallSymbol("guest_libc_process_smoke");
+  if (!process_result || process_result.value != 42) {
+    std::cerr << "[FAIL] guest process identity/prctl behavior failed\n";
+    return 1;
+  }
   std::cout << "[PASS] guest assets, ALooper, headless graphics/audio/media, "
-               "and libc memory APIs exercised through guest ABI\n";
+               "and libc memory/process APIs exercised through guest ABI\n";
   return 0;
 }
