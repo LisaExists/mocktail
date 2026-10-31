@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import hashlib
 import os
 import struct
 import subprocess
@@ -25,6 +26,8 @@ MAX_TOTAL_LIBRARY_SIZE = 2 * 1024 * 1024 * 1024
 MAX_LIBRARY_COUNT = 256
 MAX_NESTED_APK_SIZE = 512 * 1024 * 1024
 MAX_APK_SET_SIZE = 2 * 1024 * 1024 * 1024
+MAX_APK_ASSET_ENTRY_SIZE = 64 * 1024 * 1024
+MAX_APK_ASSET_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
 
 MAX_DEX_BYTES = 256 * 1024 * 1024
 MAX_DEX_TYPES = 250_000
@@ -355,6 +358,78 @@ def _collect_archive_libraries(
     return bool(candidates)
 
 
+
+def extract_apk_assets(apk_paths: Iterable[Path], output_root: Path) -> int:
+    """Safely extract APK assets into a directory for the guest AAssetManager."""
+    output_root.mkdir(parents=True, exist_ok=True)
+    seen: dict[str, tuple[int, str]] = {}
+    total_bytes = 0
+
+    def extract_archive(archive: zipfile.ZipFile, label: str) -> None:
+        nonlocal total_bytes
+        for info in archive.infolist():
+            if info.is_dir() or not info.filename.startswith("assets/"):
+                continue
+            name = info.filename[len("assets/"):]
+            relative = PurePosixPath(name)
+            mode = (info.external_attr >> 16) & 0o170000
+            if (
+                not name or relative.is_absolute()
+                or "\\" in name
+                or any(part in ("", ".", "..") for part in relative.parts)
+                or mode == 0o120000
+            ):
+                raise ValueError(f"{label}:{info.filename}: unsafe APK asset path")
+            if info.file_size > MAX_APK_ASSET_ENTRY_SIZE:
+                raise ValueError(
+                    f"{label}:{info.filename}: asset exceeds the 64 MiB limit"
+                )
+            data = archive.read(info)
+            digest = hashlib.sha256(data).hexdigest()
+            previous = seen.get(name)
+            if previous is not None:
+                if previous != (len(data), digest):
+                    raise ValueError(
+                        f"conflicting APK asset with duplicate path {name!r}"
+                    )
+                continue
+            if total_bytes > MAX_APK_ASSET_TOTAL_SIZE - len(data):
+                raise ValueError("expanded APK assets exceed the 2 GiB safety limit")
+            destination = output_root.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            seen[name] = (len(data), digest)
+            total_bytes += len(data)
+
+    for apk_path in apk_paths:
+        try:
+            with zipfile.ZipFile(apk_path) as archive:
+                if apk_path.suffix.lower() != ".apks":
+                    extract_archive(archive, str(apk_path))
+                    continue
+                nested_apks = [
+                    info for info in archive.infolist()
+                    if not info.is_dir() and info.filename.lower().endswith(".apk")
+                ]
+                nested_total = sum(info.file_size for info in nested_apks)
+                if nested_total > MAX_APK_SET_SIZE:
+                    raise ValueError(
+                        f"{apk_path}: expanded APK set exceeds the 2 GiB safety limit"
+                    )
+                for info in nested_apks:
+                    if info.file_size > MAX_NESTED_APK_SIZE:
+                        raise ValueError(
+                            f"{apk_path}:{info.filename}: split exceeds 512 MiB"
+                        )
+                    nested_data = archive.read(info)
+                    with zipfile.ZipFile(io.BytesIO(nested_data)) as split:
+                        extract_archive(split, f"{apk_path}:{info.filename}")
+        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            raise ValueError(f"{apk_path}: cannot extract APK assets: {exc}") from exc
+
+    return len(seen)
+
+
 def collect_apk_libraries(
     apk_paths: Iterable[Path],
     library_dirs: Iterable[Path],
@@ -612,6 +687,15 @@ def main(argv: list[str] | None = None) -> int:
 
         command = [str(args.probe), "--root", root_name,
                    "--memory-mib", str(args.memory_mib)]
+        if args.apks:
+            asset_root = Path(directory) / "android-assets"
+            try:
+                asset_count = extract_apk_assets(args.apks, asset_root)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            command.extend(["--asset-root", str(asset_root)])
+            print(f"Extracted {asset_count} APK asset file(s) for AAssetManager.", file=sys.stderr)
         for soname in args.external_dependency:
             command.extend(["--external-dependency", soname])
         if args.list_exports:
