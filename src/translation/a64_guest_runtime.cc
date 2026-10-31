@@ -1593,6 +1593,33 @@ class A64GuestRuntime::Impl final {
           return {true, static_cast<std::uint64_t>(asset.offset), {}};
         })) return false;
 
+    if (!register_one("AAsset_seek64",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          auto found = guest_assets_.find(args[0]);
+          if (found == guest_assets_.end()) return {true, static_cast<std::uint64_t>(-1LL), {}};
+          auto& asset = found->second;
+          const auto offset = static_cast<std::int64_t>(args[1]);
+          std::int64_t base = 0;
+          if (args[2] == 1) {
+            base = static_cast<std::int64_t>(asset.offset);
+          } else if (args[2] == 2) {
+            base = static_cast<std::int64_t>(asset.bytes.size());
+          } else if (args[2] != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          if ((offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset) ||
+              (offset < 0 && base < std::numeric_limits<std::int64_t>::min() - offset) ||
+              base + offset < 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return {true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          asset.offset = std::min<std::size_t>(
+              static_cast<std::size_t>(base + offset), asset.bytes.size());
+          return {true, static_cast<std::uint64_t>(asset.offset), {}};
+        })) return false;
+
     if (!register_one("AConfiguration_new",
         [this](const A64GuestHostCalls::Arguments&) {
           const auto handle = next_configuration_handle_++;
