@@ -1415,7 +1415,7 @@ class A64GuestRuntime::Impl final {
               args[4] != 0 || !guest_looper_->allow_non_callbacks ||
               static_cast<std::int32_t>(args[2]) < 0) {
             static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
-            return {true, static_cast<std::uint64_t>(-1LL), {}};
+            return {true, 0, {}};
           }
           const int fd = static_cast<int>(args[1]);
           const int ident = static_cast<int>(args[2]);
@@ -1434,7 +1434,7 @@ class A64GuestRuntime::Impl final {
                           exists ? EPOLL_CTL_MOD : EPOLL_CTL_ADD,
                           fd, &event) != 0) {
             static_cast<void>(host_calls_.SetGuestErrno(errno));
-            return {true, static_cast<std::uint64_t>(-1LL), {}};
+            return {true, 0, {}};
           }
           guest_looper_->registrations.insert_or_assign(
               fd, GuestLooper::Registration{
@@ -1449,7 +1449,7 @@ class A64GuestRuntime::Impl final {
               args[1] > static_cast<std::uint64_t>(
                            std::numeric_limits<int>::max())) {
             static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
-            return {true, static_cast<std::uint64_t>(-1LL), {}};
+            return {true, 0, {}};
           }
           const int fd = static_cast<int>(args[1]);
           std::scoped_lock lock(guest_looper_->mutex);
@@ -1460,7 +1460,7 @@ class A64GuestRuntime::Impl final {
           if (::epoll_ctl(guest_looper_->epoll_fd, EPOLL_CTL_DEL, fd,
                           nullptr) != 0 && errno != ENOENT && errno != EBADF) {
             static_cast<void>(host_calls_.SetGuestErrno(errno));
-            return {true, static_cast<std::uint64_t>(-1LL), {}};
+            return {true, 0, {}};
           }
           guest_looper_->registrations.erase(found);
           return {true, 1, {}};
