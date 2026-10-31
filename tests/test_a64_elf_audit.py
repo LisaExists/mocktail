@@ -385,6 +385,8 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "sysconf", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "prctl", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -419,7 +421,7 @@ class ELFReportTests(unittest.TestCase):
         )
         self.assertTrue({
             "mmap", "munmap", "mprotect", "madvise",
-            "getpid", "gettid", "sysconf",
+            "getpid", "gettid", "sysconf", "prctl",
         }.issubset(
             catalog["prototype_registered_android_host_calls"]["libc.so"]
         ))
