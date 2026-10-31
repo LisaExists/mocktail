@@ -1101,7 +1101,10 @@ class A64GuestRuntime::Impl final {
     for (const auto* name : generate_apis) {
       if (!register_one(name, "libGLESv2.so",
           [this](const A64GuestHostCalls::Arguments& args) {
-            const auto count = std::min<std::uint64_t>(args[0], 4096);
+            const auto requested = static_cast<std::int32_t>(args[0]);
+            const auto count = requested > 0
+                ? static_cast<std::size_t>(std::min(requested, 4096))
+                : 0U;
             const std::vector<std::uint32_t> zeros(
                 static_cast<std::size_t>(count), 0);
             if (args[1] != 0 && !zeros.empty() &&
@@ -1132,6 +1135,40 @@ class A64GuestRuntime::Impl final {
         [this](const A64GuestHostCalls::Arguments& args) {
           const std::int32_t zero = 0;
           if (args[2] != 0 && !memory_.Write(args[2], &zero, sizeof(zero))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    auto clear_log_output = [this](
+        const A64GuestHostCalls::Arguments& args) {
+      const std::int32_t zero = 0;
+      const char empty = '\0';
+      if (args[2] != 0 &&
+          !memory_.Write(args[2], &zero, sizeof(zero))) {
+        static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+      }
+      if (args[1] > 0 && args[3] != 0 &&
+          !memory_.Write(args[3], &empty, sizeof(empty))) {
+        static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+      }
+      return A64HostCallResult{true, 0, {}};
+    };
+    if (!register_one("glGetShaderInfoLog", "libGLESv2.so",
+                      clear_log_output) ||
+        !register_one("glGetProgramInfoLog", "libGLESv2.so",
+                      clear_log_output)) return false;
+    if (!register_one("glGetActiveUniform", "libGLESv2.so",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const std::int32_t zero = 0;
+          const char empty = '\0';
+          if ((args[3] != 0 &&
+               !memory_.Write(args[3], &zero, sizeof(zero))) ||
+              (args[4] != 0 &&
+               !memory_.Write(args[4], &zero, sizeof(zero))) ||
+              (args[5] != 0 &&
+               !memory_.Write(args[5], &zero, sizeof(zero))) ||
+              (args[6] != 0 &&
+               !memory_.Write(args[6], &empty, sizeof(empty)))) {
             static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
           }
           return A64HostCallResult{true, 0, {}};
