@@ -423,6 +423,10 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
     },
     "libandroid.so": {
         "android_get_device_api_level",
+        "ALooper_prepare", "ALooper_forThread", "ALooper_acquire",
+        "ALooper_release", "ALooper_addFd", "ALooper_removeFd",
+        "ALooper_wake", "ALooper_isPolling", "ALooper_pollOnce",
+        "ALooper_pollAll",
         "AAssetManager_fromJava", "AAssetManager_open", "AAsset_close",
         "AAsset_getLength", "AAsset_getLength64",
         "AAsset_getRemainingLength", "AAsset_getRemainingLength64",
