@@ -14,6 +14,7 @@ extern void AAsset_close(AAsset* asset);
 extern const void* AAsset_getBuffer(AAsset* asset);
 extern long AAsset_getLength(AAsset* asset);
 extern long AAsset_seek(AAsset* asset, long offset, int whence);
+extern long long AAsset_seek64(AAsset* asset, long long offset, int whence);
 extern int AAsset_read(AAsset* asset, void* buffer, unsigned long count);
 extern AConfiguration* AConfiguration_new(void);
 extern void AConfiguration_delete(AConfiguration* config);
@@ -88,7 +89,7 @@ int guest_android_asset_smoke(void) {
   const unsigned char* buffer =
       (const unsigned char*)AAsset_getBuffer(asset);
   char readback[2] = {0, 0};
-  const int seek_result = (int)AAsset_seek(asset, 0, 0);
+  const int seek_result = (int)AAsset_seek64(asset, 0, 0);
   const int read_result = AAsset_read(asset, readback, sizeof(readback));
   const int result =
       length == 2 && buffer != (const unsigned char*)0 &&
