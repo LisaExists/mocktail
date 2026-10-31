@@ -5,6 +5,7 @@ typedef struct AAssetManager AAssetManager;
 typedef struct AAsset AAsset;
 typedef struct AConfiguration AConfiguration;
 typedef struct ALooper ALooper;
+typedef struct ANativeWindow ANativeWindow;
 
 extern AAssetManager* AAssetManager_fromJava(void* env, void* manager);
 extern AAsset* AAssetManager_open(AAssetManager* manager,
@@ -31,6 +32,12 @@ extern int ALooper_removeFd(ALooper* looper, int fd);
 extern int ALooper_isPolling(ALooper* looper);
 extern int ALooper_pollOnce(int timeout_ms, int* out_fd, int* out_events,
                             void** out_data);
+extern ANativeWindow* ANativeWindow_fromSurface(void* env, void* surface);
+extern void ANativeWindow_acquire(ANativeWindow* window);
+extern void ANativeWindow_release(ANativeWindow* window);
+extern int ANativeWindow_getWidth(ANativeWindow* window);
+extern int ANativeWindow_getHeight(ANativeWindow* window);
+extern int ANativeWindow_getFormat(ANativeWindow* window);
 
 static const char kAssetPath[] = "content/asset-smoke.txt";
 
@@ -100,4 +107,17 @@ int guest_android_looper_fd_smoke(int fd) {
   ALooper_release(looper);
   return result == 17 && out_fd == fd && (out_events & 1) != 0 &&
          out_data == (void*)0x1234 && removed == 1 ? 42 : 3;
+}
+
+__attribute__((visibility("default")))
+int guest_android_headless_window_smoke(void) {
+  ANativeWindow* window =
+      ANativeWindow_fromSurface((void*)1, (void*)2);
+  if (window != (ANativeWindow*)0) return 1;
+  ANativeWindow_acquire(window);
+  const int width = ANativeWindow_getWidth(window);
+  const int height = ANativeWindow_getHeight(window);
+  const int format = ANativeWindow_getFormat(window);
+  ANativeWindow_release(window);
+  return width == 0 && height == 0 && format == 0 ? 42 : 2;
 }
