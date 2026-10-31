@@ -1045,6 +1045,18 @@ class A64GuestRuntime::Impl final {
         [](const A64GuestHostCalls::Arguments&) {
           return A64HostCallResult{true, 0, {}};
         })) return false;
+    const char* const unsupported_window_apis[] = {
+        "ANativeWindow_setBuffersGeometry",
+        "ANativeWindow_lock",
+        "ANativeWindow_unlockAndPost",
+    };
+    for (const auto* name : unsupported_window_apis) {
+      if (!register_one(name, [this](const A64GuestHostCalls::Arguments&) {
+            static_cast<void>(host_calls_.SetGuestErrno(ENODEV));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          })) return false;
+    }
     const char* query_apis[] = {
         "ANativeWindow_getWidth",
         "ANativeWindow_getHeight",
@@ -1054,6 +1066,32 @@ class A64GuestRuntime::Impl final {
       if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
             // Null is the only window handle supplied by this headless probe.
             return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
+
+  bool RegisterAndroidBitmapApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libjnigraphics.so", "",
+                                  std::move(handler), error);
+    };
+    const char* bitmap_apis[] = {
+        "AndroidBitmap_getInfo",
+        "AndroidBitmap_lockPixels",
+        "AndroidBitmap_unlockPixels",
+    };
+    for (const auto* name : bitmap_apis) {
+      if (!register_one(name, [this](const A64GuestHostCalls::Arguments&) {
+            // The guest JNI bridge has no ART Bitmap object or pixel backing.
+            // Return ANDROID_BITMAP_RESULT_BAD_PARAMETER rather than exposing
+            // host memory or claiming that a Java Bitmap was locked.
+            static_cast<void>(host_calls_.SetGuestErrno(ENOTSUP));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
           })) return false;
     }
     if (error != nullptr) error->clear();
@@ -2116,6 +2154,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidBitmapApi(&diagnostic)) {
+      return fail("failed to register Android bitmap API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidNativeWindowApi(&diagnostic)) {
