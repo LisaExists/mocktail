@@ -32,6 +32,53 @@ class ApkProbeInputTests(unittest.TestCase):
                 apk.writestr(name, data)
         return path
 
+
+    def test_extracts_assets_for_guest_asset_manager(self):
+        with tempfile.TemporaryDirectory() as directory:
+            apk_path = self.make_apk(
+                Path(directory) / "client.apk",
+                {
+                    "assets/content/config.json": b'{"ok":true}',
+                    "assets/shaders/main.spv": b"shader-data",
+                    "lib/arm64-v8a/libroot.so": elf_header(183),
+                },
+            )
+            output = Path(directory) / "asset-root"
+            count = MODULE.extract_apk_assets([apk_path], output)
+            self.assertEqual(count, 2)
+            self.assertEqual(
+                (output / "content/config.json").read_bytes(),
+                b'{"ok":true}',
+            )
+            self.assertEqual(
+                (output / "shaders/main.spv").read_bytes(),
+                b"shader-data",
+            )
+
+    def test_rejects_asset_path_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            apk_path = self.make_apk(
+                Path(directory) / "bad.apk",
+                {"assets/../../escape.txt": b"no"},
+            )
+            with self.assertRaisesRegex(ValueError, "unsafe APK asset path"):
+                MODULE.extract_apk_assets([apk_path], Path(directory) / "out")
+
+    def test_rejects_conflicting_assets_across_splits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = self.make_apk(
+                Path(directory) / "base.apk",
+                {"assets/content/config.json": b"first"},
+            )
+            second = self.make_apk(
+                Path(directory) / "feature.apk",
+                {"assets/content/config.json": b"second"},
+            )
+            with self.assertRaisesRegex(ValueError, "conflicting APK asset"):
+                MODULE.extract_apk_assets(
+                    [first, second], Path(directory) / "out"
+                )
+
     def test_extracts_only_arm64_native_objects(self):
         with tempfile.TemporaryDirectory() as directory:
             apk_path = self.make_apk(
