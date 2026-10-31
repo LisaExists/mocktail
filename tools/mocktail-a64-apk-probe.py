@@ -28,6 +28,7 @@ MAX_NESTED_APK_SIZE = 512 * 1024 * 1024
 MAX_APK_SET_SIZE = 2 * 1024 * 1024 * 1024
 MAX_APK_ASSET_ENTRY_SIZE = 64 * 1024 * 1024
 MAX_APK_ASSET_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
+MAX_APK_ASSET_COUNT = 100_000
 
 MAX_DEX_BYTES = 256 * 1024 * 1024
 MAX_DEX_TYPES = 250_000
@@ -393,6 +394,8 @@ def extract_apk_assets(apk_paths: Iterable[Path], output_root: Path) -> int:
                         f"conflicting APK asset with duplicate path {name!r}"
                     )
                 continue
+            if len(seen) >= MAX_APK_ASSET_COUNT:
+                raise ValueError("APK asset count exceeds the 100000 entry safety limit")
             if total_bytes > MAX_APK_ASSET_TOTAL_SIZE - len(data):
                 raise ValueError("expanded APK assets exceed the 2 GiB safety limit")
             destination = output_root.joinpath(*relative.parts)
