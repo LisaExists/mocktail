@@ -1041,7 +1041,7 @@ class A64GuestRuntime::Impl final {
         })) return false;
 
     if (!register_one("AAssetManager_open",
-        [this](const A64GuestHostCalls::Arguments& args)
+        [this, kAssetManagerHandle](const A64GuestHostCalls::Arguments& args)
             -> A64HostCallResult {
           if (args[0] != kAssetManagerHandle ||
               options_.android_asset_root.empty()) {
@@ -1098,7 +1098,7 @@ class A64GuestRuntime::Impl final {
 
           std::ifstream input(path, std::ios::binary | std::ios::ate);
           if (!input) return {true, 0, {}};
-          const auto end = input.tellg();
+          const auto end = static_cast<std::streamoff>(input.tellg());
           if (end < 0 || static_cast<std::uint64_t>(end) >
                              kMaximumAssetBytes) {
             static_cast<void>(host_calls_.SetGuestErrno(EFBIG));
