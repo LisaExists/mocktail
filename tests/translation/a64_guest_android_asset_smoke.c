@@ -6,6 +6,8 @@ typedef struct AAsset AAsset;
 typedef struct AConfiguration AConfiguration;
 typedef struct ALooper ALooper;
 typedef struct ANativeWindow ANativeWindow;
+typedef struct AMediaCodec AMediaCodec;
+typedef struct AMediaFormat AMediaFormat;
 
 extern AAssetManager* AAssetManager_fromJava(void* env, void* manager);
 extern AAsset* AAssetManager_open(AAssetManager* manager,
@@ -142,4 +144,55 @@ int guest_android_headless_window_smoke(void) {
          geometry == -1 && lock_result == -1 && unlock_result == -1 &&
          bitmap_info == -1 && bitmap_lock == -1 && bitmap_unlock == -1
              ? 42 : 2;
+}
+
+extern AMediaCodec* AMediaCodec_createDecoderByType(const char* mime);
+extern AMediaCodec* AMediaCodec_createEncoderByType(const char* mime);
+extern int AMediaCodec_delete(AMediaCodec* codec);
+extern int AMediaCodec_configure(AMediaCodec* codec, const AMediaFormat* format,
+                                 void* surface, void* crypto, unsigned int flags);
+extern int AMediaCodec_start(AMediaCodec* codec);
+extern int AMediaCodec_stop(AMediaCodec* codec);
+extern int AMediaCodec_flush(AMediaCodec* codec);
+extern unsigned char* AMediaCodec_getInputBuffer(AMediaCodec* codec,
+                                                  unsigned long index,
+                                                  unsigned long* out_size);
+extern unsigned char* AMediaCodec_getOutputBuffer(AMediaCodec* codec,
+                                                   unsigned long index,
+                                                   unsigned long* out_size);
+extern long AMediaCodec_dequeueInputBuffer(AMediaCodec* codec,
+                                            long long timeout_us);
+extern long AMediaCodec_dequeueOutputBuffer(AMediaCodec* codec, void* info,
+                                             long long timeout_us);
+extern int AMediaCodec_queueInputBuffer(AMediaCodec* codec, unsigned long index,
+                                        unsigned long offset, unsigned long size,
+                                        unsigned long long time_us,
+                                        unsigned int flags);
+extern int AMediaCodec_releaseOutputBuffer(AMediaCodec* codec,
+                                           unsigned long index, int render);
+extern AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
+
+__attribute__((visibility("default")))
+int guest_android_headless_codec_smoke(void) {
+  AMediaCodec* decoder = AMediaCodec_createDecoderByType("video/avc");
+  AMediaCodec* encoder = AMediaCodec_createEncoderByType("video/avc");
+  unsigned long input_size = 99;
+  unsigned long output_size = 99;
+  const int result =
+      decoder == (AMediaCodec*)0 && encoder == (AMediaCodec*)0 &&
+      AMediaCodec_delete(decoder) == 0 &&
+      AMediaCodec_configure(decoder, (AMediaFormat*)0, (void*)0, (void*)0, 0) == -1 &&
+      AMediaCodec_start(decoder) == -1 &&
+      AMediaCodec_stop(decoder) == 0 &&
+      AMediaCodec_flush(decoder) == 0 &&
+      AMediaCodec_getInputBuffer(decoder, 0, &input_size) == (unsigned char*)0 &&
+      input_size == 0 &&
+      AMediaCodec_getOutputBuffer(decoder, 0, &output_size) == (unsigned char*)0 &&
+      output_size == 0 &&
+      AMediaCodec_dequeueInputBuffer(decoder, 0) == -1 &&
+      AMediaCodec_dequeueOutputBuffer(decoder, (void*)0, 0) == -1 &&
+      AMediaCodec_queueInputBuffer(decoder, 0, 0, 0, 0, 0) == -1 &&
+      AMediaCodec_releaseOutputBuffer(decoder, 0, 0) == 0 &&
+      AMediaCodec_getOutputFormat(decoder) == (AMediaFormat*)0;
+  return result ? 42 : 1;
 }
