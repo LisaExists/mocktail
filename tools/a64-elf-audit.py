@@ -491,7 +491,15 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "AMEDIAFORMAT_KEY_ROTATION", "AMEDIAFORMAT_KEY_SAMPLE_RATE",
         "AMEDIAFORMAT_KEY_SLICE_HEIGHT", "AMEDIAFORMAT_KEY_STRIDE",
         "AMEDIAFORMAT_KEY_TEMPORAL_LAYERING", "AMEDIAFORMAT_KEY_WIDTH",
-    },
+
+        "AMediaCodec_createDecoderByType",
+        "AMediaCodec_createEncoderByType", "AMediaCodec_delete",
+        "AMediaCodec_configure", "AMediaCodec_start",
+        "AMediaCodec_stop", "AMediaCodec_flush",
+        "AMediaCodec_getInputBuffer", "AMediaCodec_getOutputBuffer",
+        "AMediaCodec_dequeueInputBuffer", "AMediaCodec_dequeueOutputBuffer",
+        "AMediaCodec_queueInputBuffer", "AMediaCodec_releaseOutputBuffer",
+        "AMediaCodec_getOutputFormat",    },
 }
 
 
