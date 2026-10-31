@@ -110,7 +110,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] headless EGL/GLES behavior was not preserved\n";
     return 1;
   }
-  std::cout << "[PASS] guest assets, ALooper, headless native window, "
-               "MediaCodec, OpenSL and EGL/GLES APIs exercised through guest ABI\n";
+  const auto memory_result =
+      runtime.CallSymbol("guest_libc_memory_smoke");
+  if (!memory_result || memory_result.value != 42) {
+    std::cerr << "[FAIL] guest libc mmap/mprotect/madvise behavior failed\n";
+    return 1;
+  }
+  std::cout << "[PASS] guest assets, ALooper, headless graphics/audio/media, "
+               "and libc memory APIs exercised through guest ABI\n";
   return 0;
 }
