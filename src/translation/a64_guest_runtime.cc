@@ -1025,6 +1025,65 @@ class A64GuestRuntime::Impl final {
 
 
 
+
+  bool RegisterAndroidAudioApi(std::string* error) {
+    constexpr std::uint64_t kSlIidValues[] = {
+        0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007};
+    const char* const iid_names[] = {
+        "SL_IID_ANDROIDCONFIGURATION",
+        "SL_IID_ANDROIDSIMPLEBUFFERQUEUE",
+        "SL_IID_BUFFERQUEUE",
+        "SL_IID_ENGINE",
+        "SL_IID_PLAY",
+        "SL_IID_RECORD",
+        "SL_IID_VOLUME",
+    };
+    std::uint64_t iid_storage = 0;
+    std::string diagnostic;
+    if (!memory_.MapAnywhere(
+            sizeof(kSlIidValues),
+            A64GuestMemory::kRead | A64GuestMemory::kWrite,
+            &iid_storage, &diagnostic)) {
+      if (error != nullptr) {
+        *error = "failed to allocate OpenSL ES interface IDs: " + diagnostic;
+      }
+      return false;
+    }
+    for (std::size_t index = 0; index < std::size(kSlIidValues); ++index) {
+      const auto address = iid_storage + index * sizeof(std::uint64_t);
+      if (!memory_.Write(address, &kSlIidValues[index],
+                         sizeof(kSlIidValues[index]))) {
+        if (error != nullptr) *error = "failed to write OpenSL ES interface ID";
+        return false;
+      }
+      if (!host_calls_.RegisterDataSymbol(
+              iid_names[index], "libOpenSLES.so", "", address, error)) {
+        return false;
+      }
+    }
+    auto register_engine = [this, error](
+        const char* name, const char* provider) {
+      return host_calls_.Register(
+          name, provider, "",
+          [this](const A64GuestHostCalls::Arguments& args) {
+            // The headless runtime has no audio device/object graph. Explicitly
+            // report FEATURE_UNSUPPORTED and clear the output interface.
+            const std::uint64_t null_object = 0;
+            if (args[0] != 0 &&
+                !memory_.Write(args[0], &null_object, sizeof(null_object))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            }
+            return A64HostCallResult{true, 12, {}};
+          }, error);
+    };
+    if (!register_engine("slCreateEngine", "libOpenSLES.so") ||
+        !register_engine("alCreateEngine", "libOpenMAXAL.so")) {
+      return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidNativeWindowApi(std::string* error) {
     auto register_one = [this, error](
         const char* name, A64GuestHostCalls::Handler handler) {
@@ -2232,6 +2291,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidAudioApi(&diagnostic)) {
+      return fail("failed to register Android audio API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidBitmapApi(&diagnostic)) {
