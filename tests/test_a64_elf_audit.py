@@ -387,6 +387,16 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "prctl", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "clock_gettime", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "clock_gettime64", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "gettimeofday", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "time", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "sched_yield", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -421,7 +431,8 @@ class ELFReportTests(unittest.TestCase):
         )
         self.assertTrue({
             "mmap", "munmap", "mprotect", "madvise",
-            "getpid", "gettid", "sysconf", "prctl",
+            "getpid", "gettid", "sysconf", "prctl", "clock_gettime",
+            "clock_gettime64", "gettimeofday", "time", "sched_yield",
         }.issubset(
             catalog["prototype_registered_android_host_calls"]["libc.so"]
         ))
