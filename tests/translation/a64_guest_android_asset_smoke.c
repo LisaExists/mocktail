@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 // Copyright 2026 Mocktail Project Authors
 // Licensed under the Apache License, Version 2.0.
 
@@ -260,5 +262,22 @@ int guest_libc_memory_smoke(void) {
   if (mprotect(memory, 4096, 3) != 0) return 3;
   if (madvise(memory, 4096, 4) != 0 || memory[0] != 0) return 4;
   if (munmap(memory, 4096) != 0) return 5;
+  return 42;
+}
+
+extern int gettid(void);
+extern unsigned int getuid(void);
+extern unsigned int geteuid(void);
+extern unsigned int getgid(void);
+extern unsigned int getegid(void);
+extern int prctl(int option, ...);
+
+__attribute__((visibility("default")))
+int guest_libc_process_smoke(void) {
+  if (getpid() != 1000 || gettid() != 1000 ||
+      getuid() != 10000 || geteuid() != 10000 ||
+      getgid() != 10000 || getegid() != 10000) return 1;
+  if (sysconf(_SC_PAGESIZE) != 4096 || prctl(3) != 1 ||
+      prctl(4, 0) != 0) return 2;
   return 42;
 }
