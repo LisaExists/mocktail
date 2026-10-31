@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <fstream>
 #include <iostream>
@@ -1026,6 +1027,128 @@ class A64GuestRuntime::Impl final {
 
 
 
+
+
+  bool RegisterAndroidLibcMemoryApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libc.so", "",
+                                  std::move(handler), error);
+    };
+    auto mmap_guest = [this](const A64GuestHostCalls::Arguments& args)
+        -> A64HostCallResult {
+      const auto length = args[1];
+      const auto protection = static_cast<int>(args[2]);
+      const auto flags = static_cast<int>(args[3]);
+      if (length == 0 || length > 256U * 1024U * 1024U ||
+          (protection & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0 ||
+          (flags & MAP_ANONYMOUS) == 0 || (flags & MAP_FIXED) != 0) {
+        static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+        return {true, static_cast<std::uint64_t>(-1LL), {}};
+      }
+      std::uint8_t permissions = 0;
+      if ((protection & PROT_READ) != 0) {
+        permissions |= A64GuestMemory::kRead;
+      }
+      if ((protection & PROT_WRITE) != 0) {
+        permissions |= A64GuestMemory::kWrite;
+      }
+      if ((protection & PROT_EXEC) != 0) {
+        permissions |= A64GuestMemory::kExecute;
+      }
+      std::uint64_t address = 0;
+      std::string diagnostic;
+      if (!memory_.MapAnywhere(length, permissions, &address, &diagnostic)) {
+        static_cast<void>(host_calls_.SetGuestErrno(ENOMEM));
+        return {true, static_cast<std::uint64_t>(-1LL), {}};
+      }
+      return {true, address, {}};
+    };
+    if (!register_one("mmap", mmap_guest) ||
+        !register_one("mmap64", mmap_guest)) return false;
+
+    if (!register_one("munmap",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          std::string diagnostic;
+          if (!memory_.Unmap(args[0], args[1], &diagnostic)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("mprotect",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto protection = static_cast<int>(args[2]);
+          if ((protection & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          std::uint8_t permissions = 0;
+          if ((protection & PROT_READ) != 0) {
+            permissions |= A64GuestMemory::kRead;
+          }
+          if ((protection & PROT_WRITE) != 0) {
+            permissions |= A64GuestMemory::kWrite;
+          }
+          if ((protection & PROT_EXEC) != 0) {
+            permissions |= A64GuestMemory::kExecute;
+          }
+          std::string diagnostic;
+          if (!memory_.Protect(args[0], args[1], permissions, &diagnostic)) {
+            static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("madvise",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          if (static_cast<int>(args[2]) == MADV_DONTNEED) {
+            std::string diagnostic;
+            if (!memory_.DiscardAnonymous(args[0], args[1], &diagnostic)) {
+              static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+              return A64HostCallResult{
+                  true, static_cast<std::uint64_t>(-1LL), {}};
+            }
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+
+    const std::pair<const char*, std::uint64_t> identity_apis[] = {
+        {"getpid", 1000}, {"gettid", 1000},
+        {"getuid", 10000}, {"geteuid", 10000},
+        {"getgid", 10000}, {"getegid", 10000},
+    };
+    for (const auto& item : identity_apis) {
+      if (!register_one(item.first,
+          [value = item.second](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{true, value, {}};
+          })) return false;
+    }
+    if (!register_one("sysconf",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          switch (static_cast<int>(args[0])) {
+            case _SC_PAGESIZE:
+            case _SC_PAGE_SIZE:
+              return A64HostCallResult{true, A64GuestMemory::kPageSize, {}};
+            case _SC_NPROCESSORS_ONLN:
+              return A64HostCallResult{true, 1, {}};
+            case _SC_CLK_TCK:
+              return A64HostCallResult{true, 100, {}};
+            case _SC_OPEN_MAX:
+              return A64HostCallResult{true, 1024, {}};
+            default:
+              static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+              return A64HostCallResult{
+                  true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+        })) return false;
+
+    if (error != nullptr) error->clear();
+    return true;
+  }
 
   bool RegisterAndroidGraphicsApi(std::string* error) {
     auto register_one = [this, error](
@@ -2446,6 +2569,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidLibcMemoryApi(&diagnostic)) {
+      return fail("failed to register guest libc memory APIs: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidGraphicsApi(&diagnostic)) {
