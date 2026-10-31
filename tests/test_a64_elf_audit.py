@@ -334,7 +334,7 @@ class ELFReportTests(unittest.TestCase):
             "needed": [
                 "libmediandk.so", "liblog.so", "libandroid.so",
                 "libEGL.so", "libGLESv2.so",
-                "libOpenSLES.so", "libOpenMAXAL.so",
+                "libOpenSLES.so", "libOpenMAXAL.so", "libc.so",
             ],
             "imports": [
                 {"name": "AMediaFormat_new", "version": "", "provider": "",
@@ -373,6 +373,18 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "SL_IID_ENGINE", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "mmap", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "munmap", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "mprotect", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "madvise", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "getpid", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "sysconf", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -405,6 +417,12 @@ class ELFReportTests(unittest.TestCase):
             "SL_IID_ENGINE",
             catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
         )
+        self.assertTrue({
+            "mmap", "munmap", "mprotect", "madvise",
+            "getpid", "gettid", "sysconf",
+        }.issubset(
+            catalog["prototype_registered_android_host_calls"]["libc.so"]
+        ))
         self.assertFalse(catalog["ready_to_launch"])
         self.assertIn(
             "AMediaFormat_new",
