@@ -14,6 +14,9 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
+#include <sys/time.h>
+#include <sched.h>
+#include <time.h>
 #include <unistd.h>
 #include <fstream>
 #include <iostream>
@@ -1194,6 +1197,54 @@ class A64GuestRuntime::Impl final {
           return {true, static_cast<std::uint64_t>(-1LL), {}};
         })) return false;
 
+
+    auto clock_gettime_guest = [this](
+        const A64GuestHostCalls::Arguments& args) -> A64HostCallResult {
+      struct timespec value {};
+      if (::clock_gettime(static_cast<clockid_t>(args[0]), &value) != 0) {
+        static_cast<void>(host_calls_.SetGuestErrno(errno));
+        return {true, static_cast<std::uint64_t>(-1LL), {}};
+      }
+      if (args[1] == 0 ||
+          !memory_.Write(args[1], &value, sizeof(value))) {
+        static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+        return {true, static_cast<std::uint64_t>(-1LL), {}};
+      }
+      return {true, 0, {}};
+    };
+    if (!register_one("clock_gettime", clock_gettime_guest) ||
+        !register_one("clock_gettime64", clock_gettime_guest)) return false;
+    if (!register_one("gettimeofday",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          struct timeval value {};
+          if (::gettimeofday(&value, nullptr) != 0) {
+            static_cast<void>(host_calls_.SetGuestErrno(errno));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          if (args[0] != 0 &&
+              !memory_.Write(args[0], &value, sizeof(value))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("time",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const auto now = static_cast<std::int64_t>(::time(nullptr));
+          if (args[0] != 0 && !memory_.Write(args[0], &now, sizeof(now))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            return A64HostCallResult{
+                true, static_cast<std::uint64_t>(-1LL), {}};
+          }
+          return A64HostCallResult{true, static_cast<std::uint64_t>(now), {}};
+        })) return false;
+    if (!register_one("sched_yield",
+        [](const A64GuestHostCalls::Arguments&) {
+          static_cast<void>(::sched_yield());
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
     if (error != nullptr) error->clear();
     return true;
   }
