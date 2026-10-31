@@ -1026,6 +1026,122 @@ class A64GuestRuntime::Impl final {
 
 
 
+
+  bool RegisterAndroidGraphicsApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, const char* provider,
+        A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, provider, "", std::move(handler),
+                                  error);
+    };
+    const char* const egl_null_or_false_apis[] = {
+        "eglGetDisplay", "eglInitialize", "eglBindAPI",
+        "eglChooseConfig", "eglGetConfigAttrib", "eglCreateWindowSurface",
+        "eglCreatePbufferSurface", "eglCreateContext", "eglMakeCurrent",
+        "eglGetCurrentContext", "eglGetCurrentSurface",
+        "eglGetCurrentDisplay", "eglSwapBuffers", "eglSwapInterval",
+        "eglQuerySurface", "eglQueryString", "eglDestroyContext",
+        "eglDestroySurface", "eglTerminate", "eglGetProcAddress",
+    };
+    for (const auto* name : egl_null_or_false_apis) {
+      if (!register_one(name, "libEGL.so",
+          [](const A64GuestHostCalls::Arguments&) {
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (!register_one("eglGetError", "libEGL.so",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0x3008, {}}; // EGL_BAD_DISPLAY
+        })) return false;
+
+    const char* const gles_zero_apis[] = {
+        "glGetError", "glGetIntegerv", "glGenTextures", "glGenBuffers",
+        "glGenFramebuffers", "glGenRenderbuffers", "glCreateShader",
+        "glCreateProgram", "glGetShaderiv", "glGetProgramiv",
+        "glGetShaderInfoLog", "glGetProgramInfoLog", "glGetActiveUniform",
+        "glCheckFramebufferStatus", "glViewport", "glActiveTexture",
+        "glAttachShader", "glBindAttribLocation", "glBindBuffer",
+        "glBindFramebuffer", "glBindRenderbuffer", "glBindTexture",
+        "glBlendFunc", "glBlendFuncSeparate", "glBufferData",
+        "glBufferSubData", "glClear", "glClearColor", "glClearDepthf",
+        "glClearStencil", "glColorMask", "glCompileShader",
+        "glCompressedTexImage2D", "glCompressedTexSubImage2D",
+        "glCopyTexSubImage2D", "glCullFace", "glDeleteBuffers",
+        "glDeleteFramebuffers", "glDeleteProgram", "glDeleteRenderbuffers",
+        "glDeleteShader", "glDeleteTextures", "glDepthFunc", "glDepthMask",
+        "glDisable", "glDisableVertexAttribArray", "glDrawArrays",
+        "glDrawElements", "glEnable", "glEnableVertexAttribArray",
+        "glFramebufferRenderbuffer", "glFramebufferTexture2D",
+        "glGenerateMipmap", "glLinkProgram", "glPixelStorei",
+        "glPolygonOffset", "glReadPixels", "glReleaseShaderCompiler",
+        "glRenderbufferStorage", "glScissor", "glShaderSource",
+        "glStencilFunc", "glStencilMask", "glStencilOp", "glTexImage2D",
+        "glTexParameterf", "glTexParameterfv", "glTexParameteri",
+        "glTexSubImage2D", "glUniform1i", "glUseProgram",
+        "glVertexAttribPointer",
+    };
+    for (const auto* name : gles_zero_apis) {
+      if (!register_one(name, "libGLESv2.so",
+          [](const A64GuestHostCalls::Arguments&) {
+            // Headless GLES calls have no current context and perform no draw.
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (!register_one("glGetString", "libGLESv2.so",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("glGetUniformLocation", "libGLESv2.so",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, static_cast<std::uint64_t>(-1LL), {}};
+        })) return false;
+
+    const char* const generate_apis[] = {
+        "glGenTextures", "glGenBuffers", "glGenFramebuffers",
+        "glGenRenderbuffers",
+    };
+    for (const auto* name : generate_apis) {
+      if (!register_one(name, "libGLESv2.so",
+          [this](const A64GuestHostCalls::Arguments& args) {
+            const auto count = std::min<std::uint64_t>(args[0], 4096);
+            const std::vector<std::uint32_t> zeros(
+                static_cast<std::size_t>(count), 0);
+            if (args[1] != 0 && !zeros.empty() &&
+                !memory_.Write(args[1], zeros.data(),
+                               zeros.size() * sizeof(std::uint32_t))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+            }
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (!register_one("glGetIntegerv", "libGLESv2.so",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const std::int32_t zero = 0;
+          if (args[1] != 0 && !memory_.Write(args[1], &zero, sizeof(zero))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("glGetShaderiv", "libGLESv2.so",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const std::int32_t zero = 0;
+          if (args[2] != 0 && !memory_.Write(args[2], &zero, sizeof(zero))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("glGetProgramiv", "libGLESv2.so",
+        [this](const A64GuestHostCalls::Arguments& args) {
+          const std::int32_t zero = 0;
+          if (args[2] != 0 && !memory_.Write(args[2], &zero, sizeof(zero))) {
+            static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+          }
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidAudioApi(std::string* error) {
     constexpr std::uint64_t kSlIidValues[] = {
         0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007};
@@ -2291,6 +2407,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidGraphicsApi(&diagnostic)) {
+      return fail("failed to register Android headless graphics API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidAudioApi(&diagnostic)) {
