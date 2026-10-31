@@ -122,7 +122,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] guest process identity/prctl behavior failed\n";
     return 1;
   }
+  const auto fortify_result =
+      runtime.CallSymbol("guest_libc_fortify_smoke");
+  if (!fortify_result || fortify_result.value != 42) {
+    std::cerr << "[FAIL] fortified guest libc memory helpers failed\n";
+    return 1;
+  }
   std::cout << "[PASS] guest assets, ALooper, headless graphics/audio/media, "
-               "and libc memory/process APIs exercised through guest ABI\n";
+               "libc memory/process, and fortified memory APIs exercised\n";
   return 0;
 }
