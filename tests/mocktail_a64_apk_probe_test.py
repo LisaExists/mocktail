@@ -172,6 +172,41 @@ class ApkProbeInputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no AArch64 native libraries found"):
                 MODULE.collect_apk_libraries([apk_path], [])
 
+
+    def test_main_passes_extracted_asset_root_to_guest_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apk_path = self.make_apk(
+                root / "client.apk",
+                {
+                    "lib/arm64-v8a/libroot.so": elf_header(183),
+                    "assets/content/config.json": b'{"asset":true}',
+                },
+            )
+            probe = root / "probe"
+            probe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            probe.chmod(probe.stat().st_mode | 0o111)
+            captured = {}
+
+            def fake_run(command, check):
+                captured["command"] = command
+                asset_root = Path(command[command.index("--asset-root") + 1])
+                captured["asset"] = (
+                    asset_root / "content/config.json"
+                ).read_bytes()
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(MODULE.subprocess, "run", side_effect=fake_run):
+                result = MODULE.main([
+                    "--probe", str(probe),
+                    "--root", "libroot.so",
+                    str(apk_path),
+                ])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(captured["asset"], b'{"asset":true}')
+            self.assertIn("--asset-root", captured["command"])
+
     def test_call_native_and_java_arguments_are_forwarded_to_native_probe(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
