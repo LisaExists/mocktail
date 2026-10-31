@@ -1145,6 +1145,54 @@ class A64GuestRuntime::Impl final {
           }
         })) return false;
 
+    if (!register_one("prctl",
+        [this](const A64GuestHostCalls::Arguments& args)
+            -> A64HostCallResult {
+          constexpr int kPrSetPdeathsig = 1;
+          constexpr int kPrGetPdeathsig = 2;
+          constexpr int kPrGetDumpable = 3;
+          constexpr int kPrSetDumpable = 4;
+          constexpr int kPrSetName = 15;
+          constexpr int kPrGetName = 16;
+          constexpr int kPrSetNoNewPrivs = 38;
+          constexpr int kPrGetNoNewPrivs = 39;
+          const int option = static_cast<int>(args[0]);
+          if (option == kPrGetDumpable) return {true, 1, {}};
+          if (option == kPrSetDumpable || option == kPrSetPdeathsig ||
+              option == kPrSetNoNewPrivs) return {true, 0, {}};
+          if (option == kPrGetNoNewPrivs) return {true, 0, {}};
+          if (option == kPrGetPdeathsig) {
+            const std::int32_t zero = 0;
+            if (args[1] != 0 &&
+                !memory_.Write(args[1], &zero, sizeof(zero))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+              return {true, static_cast<std::uint64_t>(-1LL), {}};
+            }
+            return {true, 0, {}};
+          }
+          if (option == kPrSetName) {
+            std::string name;
+            std::string diagnostic;
+            if (!ReadBoundedGuestCString(memory_, args[1], 16,
+                                         &name, &diagnostic)) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+              return {true, static_cast<std::uint64_t>(-1LL), {}};
+            }
+            return {true, 0, {}};
+          }
+          if (option == kPrGetName) {
+            constexpr char kGuestName[] = "mocktail-guest";
+            if (args[1] == 0 ||
+                !memory_.Write(args[1], kGuestName, sizeof(kGuestName))) {
+              static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
+              return {true, static_cast<std::uint64_t>(-1LL), {}};
+            }
+            return {true, 0, {}};
+          }
+          static_cast<void>(host_calls_.SetGuestErrno(EINVAL));
+          return {true, static_cast<std::uint64_t>(-1LL), {}};
+        })) return false;
+
     if (error != nullptr) error->clear();
     return true;
   }
