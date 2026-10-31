@@ -1024,6 +1024,42 @@ class A64GuestRuntime::Impl final {
 
 
 
+
+  bool RegisterAndroidNativeWindowApi(std::string* error) {
+    auto register_one = [this, error](
+        const char* name, A64GuestHostCalls::Handler handler) {
+      return host_calls_.Register(name, "libandroid.so", "",
+                                  std::move(handler), error);
+    };
+    if (!register_one("ANativeWindow_fromSurface",
+        [](const A64GuestHostCalls::Arguments&) {
+          // A probe has no Android Activity/Surface or host renderer window.
+          // Return null rather than fabricating a window-shaped pointer.
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("ANativeWindow_acquire",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    if (!register_one("ANativeWindow_release",
+        [](const A64GuestHostCalls::Arguments&) {
+          return A64HostCallResult{true, 0, {}};
+        })) return false;
+    const char* query_apis[] = {
+        "ANativeWindow_getWidth",
+        "ANativeWindow_getHeight",
+        "ANativeWindow_getFormat",
+    };
+    for (const auto* name : query_apis) {
+      if (!register_one(name, [](const A64GuestHostCalls::Arguments&) {
+            // Null is the only window handle supplied by this headless probe.
+            return A64HostCallResult{true, 0, {}};
+          })) return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+  }
+
   bool RegisterAndroidLooperApi(std::string* error) {
     constexpr std::uint64_t kLooperHandle = 0x414C4F4F50455231ULL;
     constexpr int kAllowNonCallbacks = 1;
@@ -2080,6 +2116,10 @@ class A64GuestRuntime::Impl final {
     if (options_.register_builtin_libc &&
         !RegisterAndroidPlatformApi(&diagnostic)) {
       return fail("failed to register Android NDK platform API: " + diagnostic);
+    }
+    if (options_.register_builtin_libc &&
+        !RegisterAndroidNativeWindowApi(&diagnostic)) {
+      return fail("failed to register Android native-window API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
         !RegisterAndroidLooperApi(&diagnostic)) {
