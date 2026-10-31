@@ -433,6 +433,39 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
       VERBATIM
     )
 
+    set(MOCKTAIL_A64_ANDROID_EGL_DEPENDENCY_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libEGL.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_EGL_DEPENDENCY_FIXTURE}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -Wl,--hash-style=both
+              -Wl,-soname,libEGL.so
+              -o "${MOCKTAIL_A64_ANDROID_EGL_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      VERBATIM
+    )
+    set(MOCKTAIL_A64_ANDROID_GLES_DEPENDENCY_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libGLESv2.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_GLES_DEPENDENCY_FIXTURE}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -Wl,--hash-style=both
+              -Wl,-soname,libGLESv2.so
+              -o "${MOCKTAIL_A64_ANDROID_GLES_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      VERBATIM
+    )
+
     set(MOCKTAIL_A64_ANDROID_OPENSLES_DEPENDENCY_FIXTURE
       "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libOpenSLES.so")
     add_custom_command(
@@ -517,6 +550,7 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
               -l:libandroid.so -l:libjnigraphics.so -l:libmediandk.so
               -l:libOpenSLES.so -l:libOpenMAXAL.so
+              -l:libEGL.so -l:libGLESv2.so
       DEPENDS
         "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_android_asset_smoke.c"
         "${MOCKTAIL_A64_ANDROID_ASSET_DEPENDENCY_FIXTURE}"
@@ -524,6 +558,8 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
         "${MOCKTAIL_A64_ANDROID_MEDIA_DEPENDENCY_FIXTURE}"
         "${MOCKTAIL_A64_ANDROID_OPENSLES_DEPENDENCY_FIXTURE}"
         "${MOCKTAIL_A64_ANDROID_OPENMAXAL_DEPENDENCY_FIXTURE}"
+        "${MOCKTAIL_A64_ANDROID_EGL_DEPENDENCY_FIXTURE}"
+        "${MOCKTAIL_A64_ANDROID_GLES_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
     add_executable(mocktail_a64_android_asset_test
