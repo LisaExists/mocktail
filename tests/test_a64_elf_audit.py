@@ -383,7 +383,7 @@ class ELFReportTests(unittest.TestCase):
     def test_delta_android_platform_gaps_remain_explicit_requirements(self):
         consumer = {
             "source": "libroblox.so", "soname": "libroblox.so",
-            "needed": ["libandroid.so", "liblog.so"],
+            "needed": ["libandroid.so", "liblog.so", "libjnigraphics.so"],
             "imports": [
                 {"name": "ALooper_acquire", "version": "", "provider": "",
                  "binding": "GLOBAL", "tls": False},
@@ -394,6 +394,18 @@ class ELFReportTests(unittest.TestCase):
                 {"name": "AAssetManager_open", "version": "", "provider": "",
                  "binding": "GLOBAL", "tls": False},
                 {"name": "ANativeWindow_fromSurface", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "ANativeWindow_setBuffersGeometry", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "ANativeWindow_lock", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "ANativeWindow_unlockAndPost", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AndroidBitmap_getInfo", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AndroidBitmap_lockPixels", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AndroidBitmap_unlockPixels", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AConfiguration_getScreenSize", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
@@ -429,7 +441,15 @@ class ELFReportTests(unittest.TestCase):
             "AConfiguration_getScreenSize", "ANativeWindow_fromSurface",
             "ANativeWindow_getWidth", "ANativeWindow_getHeight",
             "ANativeWindow_getFormat", "ANativeWindow_release",
+            "ANativeWindow_setBuffersGeometry", "ANativeWindow_lock",
+            "ANativeWindow_unlockAndPost",
         }.issubset(registered))
+        self.assertTrue({
+            "AndroidBitmap_getInfo", "AndroidBitmap_lockPixels",
+            "AndroidBitmap_unlockPixels",
+        }.issubset(
+            catalog["prototype_registered_android_host_calls"]["libjnigraphics.so"]
+        ))
         self.assertFalse(any(
             item["symbol"] == "__libc_init" and item["prototype_host_call"]
             for item in catalog["platform_symbol_requirements"]
