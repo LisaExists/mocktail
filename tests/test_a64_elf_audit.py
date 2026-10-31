@@ -331,7 +331,10 @@ class ELFReportTests(unittest.TestCase):
     def test_catalogue_distinguishes_registered_android_stubs_from_missing_apis(self):
         consumer = {
             "source": "libconsumer.so", "soname": "libconsumer.so",
-            "needed": ["libmediandk.so", "liblog.so", "libandroid.so"],
+            "needed": [
+                "libmediandk.so", "liblog.so", "libandroid.so",
+                "libEGL.so", "libGLESv2.so",
+            ],
             "imports": [
                 {"name": "AMediaFormat_new", "version": "", "provider": "",
                  "binding": "GLOBAL", "tls": False},
@@ -353,6 +356,16 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AMediaCodec_createDecoderByType", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "eglGetDisplay", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "eglGetError", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "glGetString", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "glGenTextures", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "glGetIntegerv", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -363,6 +376,16 @@ class ELFReportTests(unittest.TestCase):
             "AMediaCodec_createDecoderByType",
             catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
         )
+        self.assertTrue({
+            "eglGetDisplay", "eglGetError",
+        }.issubset(
+            catalog["prototype_registered_android_host_calls"]["libEGL.so"]
+        ))
+        self.assertTrue({
+            "glGetString", "glGenTextures", "glGetIntegerv",
+        }.issubset(
+            catalog["prototype_registered_android_host_calls"]["libGLESv2.so"]
+        ))
         self.assertFalse(catalog["ready_to_launch"])
         self.assertIn(
             "AMediaFormat_new",
