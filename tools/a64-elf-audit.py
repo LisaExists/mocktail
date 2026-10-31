@@ -436,7 +436,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "AAssetManager_fromJava", "AAssetManager_open", "AAsset_close",
         "AAsset_getLength", "AAsset_getLength64",
         "AAsset_getRemainingLength", "AAsset_getRemainingLength64",
-        "AAsset_getBuffer", "AAsset_read", "AAsset_seek",
+        "AAsset_getBuffer", "AAsset_read", "AAsset_seek", "AAsset_seek64",
         "AConfiguration_new", "AConfiguration_delete",
         "AConfiguration_fromAssetManager", "AConfiguration_getLanguage",
         "AConfiguration_getCountry", "AConfiguration_getScreenSize",
