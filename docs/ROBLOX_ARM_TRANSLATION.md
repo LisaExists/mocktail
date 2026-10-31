@@ -191,3 +191,6 @@ This is a real API implementation for the documented subset, not a complete Andr
 The same guest platform layer now resolves the Delta audit's ALooper subset. It creates a per-runtime epoll/eventfd looper, supports wake, reference management, fd registration/removal, polling and output delivery for non-callback registrations. Guest callback-based fd registrations are rejected because the runtime does not yet provide safe nested guest callback dispatch. The looper smoke fixture checks both wake delivery and a readable host eventfd.
 
 The Delta surface helper imports are also resolvable in headless mode: `ANativeWindow_fromSurface` returns null when no Android Surface/host window is attached; dimension/format queries return zero, and buffer operations fail with `ENODEV`. The `libjnigraphics.so` bitmap imports similarly return `ANDROID_BITMAP_RESULT_BAD_PARAMETER` because this JNI bridge has no ART Bitmap object or pixel backing. These null/error results are deliberate and safe; they are not a graphics implementation. A real Roblox session still requires a host-window/surface bridge, bitmap backing, Android lifecycle integration, and the remaining runtime APIs.
+
+
+<!-- CI-only branch marker: validate the guest Android platform bridge. -->
