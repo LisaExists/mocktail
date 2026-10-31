@@ -92,7 +92,13 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] headless ANativeWindow behavior was not preserved\n";
     return 1;
   }
-  std::cout << "[PASS] guest AAssetManager read APK assets, ALooper delivered "
-               "a ready host fd, and headless ANativeWindow returned null\n";
+  const auto codec_result =
+      runtime.CallSymbol("guest_android_headless_codec_smoke");
+  if (!codec_result || codec_result.value != 42) {
+    std::cerr << "[FAIL] headless MediaCodec behavior was not preserved\n";
+    return 1;
+  }
+  std::cout << "[PASS] guest AAssetManager, ALooper, headless ANativeWindow, "
+               "and unavailable MediaCodec APIs exercised through guest ABI\n";
   return 0;
 }
