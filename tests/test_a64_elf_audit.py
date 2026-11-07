@@ -407,6 +407,8 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "__strlen_chk", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__register_atfork", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -448,6 +450,7 @@ class ELFReportTests(unittest.TestCase):
             "getpid", "gettid", "sysconf", "prctl", "clock_gettime",
             "clock_gettime64", "gettimeofday", "time", "sched_yield",
             "__memcpy_chk", "__memmove_chk", "__memset_chk", "__strlen_chk",
+            "__register_atfork",
         }.issubset(
             catalog["prototype_registered_android_host_calls"]["libc.so"]
         ))
