@@ -28,7 +28,6 @@
 #include <mutex>
 #include <utility>
 #include <unordered_map>
-#include <unordered_map>
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
@@ -1450,37 +1449,59 @@ class A64GuestRuntime::Impl final {
   }
 
   bool RegisterAndroidAudioApi(std::string* error) {
-    constexpr std::uint64_t kSlIidValues[] = {
-        0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007};
-    const char* const iid_names[] = {
-        "SL_IID_ANDROIDCONFIGURATION",
-        "SL_IID_ANDROIDSIMPLEBUFFERQUEUE",
-        "SL_IID_BUFFERQUEUE",
-        "SL_IID_ENGINE",
-        "SL_IID_PLAY",
-        "SL_IID_RECORD",
-        "SL_IID_VOLUME",
+    struct InterfaceIdSpec final {
+      const char* name;
+      const char* provider;
+      std::uint64_t tag;
     };
+    constexpr InterfaceIdSpec kInterfaceIds[] = {
+        {"SL_IID_ANDROIDCONFIGURATION", "libOpenSLES.so", 0x1001},
+        {"SL_IID_ANDROIDSIMPLEBUFFERQUEUE", "libOpenSLES.so", 0x1002},
+        {"SL_IID_BUFFERQUEUE", "libOpenSLES.so", 0x1003},
+        {"SL_IID_ENGINE", "libOpenSLES.so", 0x1004},
+        {"SL_IID_PLAY", "libOpenSLES.so", 0x1005},
+        {"SL_IID_RECORD", "libOpenSLES.so", 0x1006},
+        {"SL_IID_VOLUME", "libOpenSLES.so", 0x1007},
+        {"XA_IID_ENGINE", "libOpenMAXAL.so", 0x2001},
+    };
+    constexpr std::size_t kInterfaceIdCellSize =
+        sizeof(std::uint64_t) + 16U;
     std::uint64_t iid_storage = 0;
     std::string diagnostic;
     if (!memory_.MapAnywhere(
-            sizeof(kSlIidValues),
+            sizeof(kInterfaceIds) / sizeof(kInterfaceIds[0]) *
+                kInterfaceIdCellSize,
             A64GuestMemory::kRead | A64GuestMemory::kWrite,
             &iid_storage, &diagnostic)) {
       if (error != nullptr) {
-        *error = "failed to allocate OpenSL ES interface IDs: " + diagnostic;
+        *error = "failed to allocate OpenSL/OpenMAX interface IDs: " +
+                 diagnostic;
       }
       return false;
     }
-    for (std::size_t index = 0; index < sizeof(kSlIidValues) / sizeof(kSlIidValues[0]); ++index) {
-      const auto address = iid_storage + index * sizeof(std::uint64_t);
-      if (!memory_.Write(address, &kSlIidValues[index],
-                         sizeof(kSlIidValues[index]))) {
-        if (error != nullptr) *error = "failed to write OpenSL ES interface ID";
+    for (std::size_t index = 0;
+         index < sizeof(kInterfaceIds) / sizeof(kInterfaceIds[0]); ++index) {
+      const auto cell = iid_storage + index * kInterfaceIdCellSize;
+      const auto identifier = cell + sizeof(std::uint64_t);
+      std::array<std::uint8_t, 16> uuid{};
+      // The bridge only needs stable, valid guest interface-ID objects. The
+      // headless engine entry points reject object creation before interpreting
+      // implementation-specific UUID contents.
+      for (std::size_t byte = 0; byte < uuid.size(); ++byte) {
+        uuid[byte] = static_cast<std::uint8_t>(
+            (kInterfaceIds[index].tag >> ((byte % 8U) * 8U)) ^
+            (0x5AU + byte * 13U));
+      }
+      if (!memory_.Write(identifier, uuid.data(), uuid.size()) ||
+          !memory_.Write(cell, &identifier, sizeof(identifier))) {
+        if (error != nullptr) {
+          *error = "failed to write guest audio interface ID";
+        }
         return false;
       }
       if (!host_calls_.RegisterDataSymbol(
-              iid_names[index], "libOpenSLES.so", "", address, error)) {
+              kInterfaceIds[index].name, kInterfaceIds[index].provider, "",
+              cell, error)) {
         return false;
       }
     }
@@ -1500,7 +1521,7 @@ class A64GuestRuntime::Impl final {
           }, error);
     };
     if (!register_engine("slCreateEngine", "libOpenSLES.so") ||
-        !register_engine("alCreateEngine", "libOpenMAXAL.so")) {
+        !register_engine("xaCreateEngine", "libOpenMAXAL.so")) {
       return false;
     }
     if (error != nullptr) error->clear();
@@ -1947,8 +1968,11 @@ class A64GuestRuntime::Impl final {
           if (found == guest_assets_.end()) return {true, 0, {}};
           if (found->second.guest_buffer != 0) {
             std::string diagnostic;
-            const auto allocation_size =
+            const auto raw_allocation_size =
                 std::max<std::size_t>(found->second.bytes.size(), 1U);
+            const auto allocation_size =
+                (raw_allocation_size + A64GuestMemory::kPageSize - 1U) &
+                ~(A64GuestMemory::kPageSize - 1U);
             if (!memory_.Unmap(found->second.guest_buffer, allocation_size,
                                &diagnostic)) {
               return {false, 0, "cannot release guest AAsset buffer: " +
@@ -2002,8 +2026,11 @@ class A64GuestRuntime::Impl final {
           if (found == guest_assets_.end()) return {true, 0, {}};
           auto& asset = found->second;
           if (asset.guest_buffer == 0) {
-            const auto allocation_size =
+            const auto raw_allocation_size =
                 std::max<std::size_t>(asset.bytes.size(), 1U);
+            const auto allocation_size =
+                (raw_allocation_size + A64GuestMemory::kPageSize - 1U) &
+                ~(A64GuestMemory::kPageSize - 1U);
             std::string diagnostic;
             if (!memory_.MapAnywhere(
                     allocation_size,
@@ -2127,7 +2154,7 @@ class A64GuestRuntime::Impl final {
     if (!register_one("AConfiguration_getLanguage",
         [this](const A64GuestHostCalls::Arguments& args) {
           if (configurations_.count(args[0]) != 0 && args[1] != 0) {
-            const char language[] = {'e', 'n', '\0'};
+            const char language[] = {'e', 'n'};
             if (!memory_.Write(args[1], language, sizeof(language))) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
             }
@@ -2137,7 +2164,7 @@ class A64GuestRuntime::Impl final {
     if (!register_one("AConfiguration_getCountry",
         [this](const A64GuestHostCalls::Arguments& args) {
           if (configurations_.count(args[0]) != 0 && args[1] != 0) {
-            const char country[] = {'U', 'S', '\0'};
+            const char country[] = {'U', 'S'};
             if (!memory_.Write(args[1], country, sizeof(country))) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
             }
@@ -2259,30 +2286,52 @@ class A64GuestRuntime::Impl final {
         {"AMEDIAFORMAT_KEY_TEMPORAL_LAYERING", "ts-schema"},
         {"AMEDIAFORMAT_KEY_WIDTH", "width"},
     };
+    constexpr std::size_t kMediaFormatKeyCount =
+        sizeof(kMediaFormatKeys) / sizeof(kMediaFormatKeys[0]);
     std::size_t key_storage_size = 0;
     for (const auto& key : kMediaFormatKeys) {
-      key_storage_size += std::strlen(key.value) + 1;
+      const auto key_size = std::strlen(key.value) + 1;
+      if (key_storage_size >
+          std::numeric_limits<std::size_t>::max() - key_size) {
+        return fail("guest AMediaFormat key string storage size overflows");
+      }
+      key_storage_size += key_size;
+    }
+    if (kMediaFormatKeyCount >
+        std::numeric_limits<std::size_t>::max() / sizeof(std::uint64_t)) {
+      return fail("guest AMediaFormat key pointer table size overflows");
+    }
+    const auto key_pointer_table_size =
+        kMediaFormatKeyCount * sizeof(std::uint64_t);
+    if (key_storage_size >
+        std::numeric_limits<std::size_t>::max() - key_pointer_table_size) {
+      return fail("guest AMediaFormat key storage size overflows");
     }
     std::uint64_t key_storage_address = 0;
     std::string key_storage_error;
     if (!memory_.MapAnywhere(
-            key_storage_size,
+            key_pointer_table_size + key_storage_size,
             A64GuestMemory::kRead | A64GuestMemory::kWrite,
             &key_storage_address, &key_storage_error)) {
       return fail("failed to allocate guest AMediaFormat key strings: " +
                   key_storage_error);
     }
-    auto key_address = key_storage_address;
-    for (const auto& key : kMediaFormatKeys) {
+    auto key_string_address = key_storage_address + key_pointer_table_size;
+    for (std::size_t index = 0; index < kMediaFormatKeyCount; ++index) {
+      const auto& key = kMediaFormatKeys[index];
       const auto key_size = std::strlen(key.value) + 1;
-      if (!memory_.Write(key_address, key.value, key_size)) {
-        return fail("failed to write guest AMediaFormat key string");
+      const auto pointer_cell =
+          key_storage_address + index * sizeof(std::uint64_t);
+      if (!memory_.Write(key_string_address, key.value, key_size) ||
+          !memory_.Write(pointer_cell, &key_string_address,
+                         sizeof(key_string_address))) {
+        return fail("failed to write guest AMediaFormat key pointer/string");
       }
       if (!host_calls_.RegisterDataSymbol(
-              key.symbol, "libmediandk.so", "", key_address, error)) {
+              key.symbol, "libmediandk.so", "", pointer_cell, error)) {
         return false;
       }
-      key_address += key_size;
+      key_string_address += key_size;
     }
 
     // These setters are void in the NDK ABI. Getters return false because the
@@ -2749,7 +2798,7 @@ class A64GuestRuntime::Impl final {
       return fail("failed to register Android asset/configuration API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
-        !RegisterAndroidMediaNdkApi(&diagnostic))
+        !RegisterAndroidMediaNdkApi(&diagnostic)) {
       return fail("failed to register Android NDK media API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&

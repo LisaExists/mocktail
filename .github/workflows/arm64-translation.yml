@@ -34,7 +34,6 @@ on:
       - 'tests/test_roblox_arm_preflight.py'
       - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tests/test_a64_elf_audit.py'
-      - 'tests/mocktail_a64_apk_probe_test.py'
       - 'tools/roblox-arm-preflight.py'
       - 'tools/a64-elf-audit.py'
       - 'tools/mocktail-a64-apk-probe.py'
@@ -106,7 +105,7 @@ jobs:
       # split APK and runs its ARM64 library only inside the Dynarmic guest.
       # SHA-256 pins prevent a mutable external release URL changing the input.
       - name: Download pinned real Roblox APK splits
-        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]'))
+        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[real-apk-smoke]'))
         shell: bash
         run: |
           set -euo pipefail
@@ -125,7 +124,7 @@ jobs:
           printf 'Base APK: %s\\nARM64 split: %s\\n' "$base" "$arm64"
 
       - name: Audit real Roblox APK package
-        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]'))
+        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[real-apk-smoke]'))
         shell: bash
         run: |
           set -uo pipefail
@@ -149,7 +148,7 @@ jobs:
           exit 0
 
       - name: Attempt real Roblox native initialization in guest
-        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]'))
+        if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[real-apk-smoke]'))
         shell: bash
         run: |
           set -uo pipefail
@@ -180,7 +179,7 @@ jobs:
           exit 0
 
       - name: Preserve real Roblox probe diagnostics
-        if: always() && ((github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')))
+        if: always() && ((github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[real-apk-smoke]')))
         uses: actions/upload-artifact@v4
         with:
           name: real-roblox-arm64-probe

@@ -397,9 +397,12 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__memmove_chk": "libc.so",
     "__memset_chk": "libc.so",
     "__strlen_chk": "libc.so",
+    "__register_atfork": "libc.so",
+    "pthread_atfork": "libc.so",
     "SL_IID_": "libOpenSLES.so",
+    "XA_IID_": "libOpenMAXAL.so",
     "slCreateEngine": "libOpenSLES.so",
-    "alCreateEngine": "libOpenMAXAL.so",
+    "xaCreateEngine": "libOpenMAXAL.so",
     "egl": "libEGL.so",
     "glGet": "libGLESv2.so",
     "glGen": "libGLESv2.so",
@@ -445,6 +448,8 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "AKeyEvent_": "libandroid.so",
     "AMotionEvent_": "libandroid.so",
     "ASensor": "libandroid.so",
+    "AMedia": "libmediandk.so",
+    "AMEDIAFORMAT_KEY_": "libmediandk.so",
     "__android_log_": "liblog.so",
 }
 
@@ -463,7 +468,8 @@ def infer_android_symbol_provider(name: str) -> str:
     return ""
 
 PROTOTYPE_HOST_CALLS = {
-    "__cxa_atexit", "__cxa_finalize", "__errno", "__errno_location",
+    "__cxa_atexit", "__cxa_finalize", "__register_atfork", "pthread_atfork",
+    "__errno", "__errno_location",
     "__mocktail_tlsdesc_static", "__stack_chk_fail", "__tls_get_addr", "abort",
     "calloc", "fflush", "fputs", "free",
     "malloc", "memchr", "memcmp", "memcpy",
@@ -486,6 +492,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "getpid", "gettid", "getuid", "geteuid", "getgid", "getegid",
         "sysconf", "prctl", "clock_gettime", "clock_gettime64",
         "gettimeofday", "time", "sched_yield",
+        "__memcpy_chk", "__memmove_chk", "__memset_chk", "__strlen_chk",
     },
     "libandroid.so": {
         "android_get_device_api_level",
@@ -559,7 +566,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "SL_IID_BUFFERQUEUE", "SL_IID_ENGINE", "SL_IID_PLAY",
         "SL_IID_RECORD", "SL_IID_VOLUME",
     },
-    "libOpenMAXAL.so": {"alCreateEngine"},
+    "libOpenMAXAL.so": {"xaCreateEngine", "XA_IID_ENGINE"},
     "libmediandk.so": {
         "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
         "AMediaFormat_setInt32", "AMediaFormat_setInt64",

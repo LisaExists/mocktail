@@ -65,13 +65,14 @@ int guest_android_asset_smoke(void) {
   AConfiguration* config = AConfiguration_new();
   if (config == (AConfiguration*)0) return 2;
   AConfiguration_fromAssetManager(config, manager);
-  char language[3] = {0, 0, 0};
-  char country[3] = {0, 0, 0};
+  char language[3] = {0, 0, 'L'};
+  char country[3] = {0, 0, 'C'};
   AConfiguration_getLanguage(config, language);
   AConfiguration_getCountry(config, country);
   const int config_ok =
       language[0] == 'e' && language[1] == 'n' &&
       country[0] == 'U' && country[1] == 'S' &&
+      language[2] == 'L' && country[2] == 'C' &&
       AConfiguration_getScreenWidthDp(config) == 360;
   AConfiguration_delete(config);
   if (!config_ok) return 3;
@@ -177,6 +178,24 @@ extern int AMediaCodec_releaseOutputBuffer(AMediaCodec* codec,
                                            unsigned long index, int render);
 extern AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
 
+extern AMediaFormat* AMediaFormat_new(void);
+extern int AMediaFormat_delete(AMediaFormat* format);
+extern void AMediaFormat_setInt32(AMediaFormat* format, const char* key,
+                                  int value);
+extern const char* AMEDIAFORMAT_KEY_I_FRAME_INTERVAL;
+
+__attribute__((visibility("default")))
+int guest_android_media_format_smoke(void) {
+  AMediaFormat* format = AMediaFormat_new();
+  if (format == (AMediaFormat*)0) return 1;
+  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
+  const int valid_key =
+      AMEDIAFORMAT_KEY_I_FRAME_INTERVAL != (const char*)0 &&
+      AMEDIAFORMAT_KEY_I_FRAME_INTERVAL[0] == 'i';
+  const int deleted = AMediaFormat_delete(format);
+  return valid_key && deleted == 0 ? 42 : 2;
+}
+
 __attribute__((visibility("default")))
 int guest_android_headless_codec_smoke(void) {
   AMediaCodec* decoder = AMediaCodec_createDecoderByType("video/avc");
@@ -203,11 +222,12 @@ int guest_android_headless_codec_smoke(void) {
 }
 
 extern void* SL_IID_ENGINE;
+extern void* XA_IID_ENGINE;
 extern int slCreateEngine(void** engine, unsigned int option_count,
                           const void* options, unsigned int interface_count,
                           const void* const* interface_ids,
                           const unsigned int* required);
-extern int alCreateEngine(void** engine, unsigned int option_count,
+extern int xaCreateEngine(void** engine, unsigned int option_count,
                           const void* options, unsigned int interface_count,
                           const void* const* interface_ids,
                           const unsigned int* required);
@@ -215,14 +235,21 @@ extern int alCreateEngine(void** engine, unsigned int option_count,
 __attribute__((visibility("default")))
 int guest_android_headless_audio_smoke(void) {
   void* sl_engine = (void*)1;
-  void* al_engine = (void*)1;
+  void* xa_engine = (void*)1;
   const int sl_result =
       slCreateEngine(&sl_engine, 0, (void*)0, 0, (void*)0, (void*)0);
-  const int al_result =
-      alCreateEngine(&al_engine, 0, (void*)0, 0, (void*)0, (void*)0);
-  return sl_result == 12 && al_result == 12 &&
-         sl_engine == (void*)0 && al_engine == (void*)0 &&
-         SL_IID_ENGINE == (void*)0x1004 ? 42 : 1;
+  const int xa_result =
+      xaCreateEngine(&xa_engine, 0, (void*)0, 0, (void*)0, (void*)0);
+  const unsigned char* sl_iid =
+      (const unsigned char*)SL_IID_ENGINE;
+  const unsigned char* xa_iid =
+      (const unsigned char*)XA_IID_ENGINE;
+  return sl_result == 12 && xa_result == 12 &&
+         sl_engine == (void*)0 && xa_engine == (void*)0 &&
+         sl_iid != (const unsigned char*)0 &&
+         xa_iid != (const unsigned char*)0 &&
+         sl_iid[0] != 0 && xa_iid[0] != 0
+             ? 42 : 1;
 }
 
 extern void* eglGetDisplay(void* native_display);
@@ -274,6 +301,10 @@ extern unsigned int geteuid(void);
 extern unsigned int getgid(void);
 extern unsigned int getegid(void);
 extern int prctl(int option, ...);
+extern int __register_atfork(void (*prepare)(void), void (*parent)(void),
+                             void (*child)(void), void* dso_handle);
+extern int pthread_atfork(void (*prepare)(void), void (*parent)(void),
+                          void (*child)(void));
 
 __attribute__((visibility("default")))
 int guest_libc_process_smoke(void) {
@@ -289,6 +320,10 @@ int guest_libc_process_smoke(void) {
       gettimeofday(&wall_time, (void*)0) != 0 ||
       time(&seconds) <= 0 || seconds <= 0 || sched_yield() != 0 ||
       monotonic_time.tv_sec < 0 || wall_time.tv_sec <= 0) return 3;
+  if (__register_atfork((void (*)(void))0, (void (*)(void))0,
+                        (void (*)(void))0, (void*)0) != 0) return 4;
+  if (pthread_atfork((void (*)(void))0, (void (*)(void))0,
+                     (void (*)(void))0) != 0) return 5;
   return 42;
 }
 

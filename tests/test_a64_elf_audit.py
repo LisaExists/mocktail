@@ -357,6 +357,8 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AMediaCodec_createDecoderByType", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "eglGetDisplay", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "eglGetError", "version": "",
@@ -369,9 +371,11 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "slCreateEngine", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
-                {"name": "alCreateEngine", "version": "",
+                {"name": "xaCreateEngine", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "SL_IID_ENGINE", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "XA_IID_ENGINE", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "mmap", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
@@ -405,6 +409,10 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "__strlen_chk", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "__register_atfork", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "pthread_atfork", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
             ],
             "exports": [],
         }
@@ -413,6 +421,10 @@ class ELFReportTests(unittest.TestCase):
         self.assertEqual(requirements, [])
         self.assertIn(
             "AMediaCodec_createDecoderByType",
+            catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
+        )
+        self.assertIn(
+            "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL",
             catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
         )
         self.assertTrue({
@@ -430,12 +442,16 @@ class ELFReportTests(unittest.TestCase):
             catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
         )
         self.assertIn(
-            "alCreateEngine",
+            "xaCreateEngine",
             catalog["prototype_registered_android_host_calls"]["libOpenMAXAL.so"],
         )
         self.assertIn(
             "SL_IID_ENGINE",
             catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
+        )
+        self.assertIn(
+            "XA_IID_ENGINE",
+            catalog["prototype_registered_android_host_calls"]["libOpenMAXAL.so"],
         )
         self.assertTrue({
             "mmap", "munmap", "mprotect", "madvise",
@@ -630,14 +646,17 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
         required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
-        self.assertTrue({
+        property_symbols = {
             "__system_property_find", "__system_property_read",
             "__system_property_serial", "__system_property_area_serial",
-        }.issubset(required))
-        self.assertTrue({
-            "__system_property_find", "__system_property_read",
-            "__system_property_serial", "__system_property_area_serial",
-        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
+        }
+        self.assertTrue(property_symbols.isdisjoint(required))
+        self.assertTrue(property_symbols.issubset(
+            set(catalog["prototype_registered_android_host_calls"]["libc.so"])
+        ))
+        self.assertTrue(property_symbols.isdisjoint(
+            set(catalog["prototype_host_call_symbols"])
+        ))
 
     def test_android_liblog_thunks_are_in_the_known_runtime_set(self):
         consumer = {
@@ -656,14 +675,17 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
         required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
-        self.assertTrue({
+        log_symbols = {
             "__android_log_write", "__android_log_buf_write",
             "__android_log_is_loggable",
-        }.issubset(required))
-        self.assertTrue({
-            "__android_log_write", "__android_log_buf_write",
-            "__android_log_is_loggable",
-        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
+        }
+        self.assertTrue(log_symbols.isdisjoint(required))
+        self.assertTrue(log_symbols.issubset(
+            set(catalog["prototype_registered_android_host_calls"]["liblog.so"])
+        ))
+        self.assertTrue(log_symbols.isdisjoint(
+            set(catalog["prototype_host_call_symbols"])
+        ))
         self.assertTrue(all(
             item["provider"] == "liblog.so"
             for item in catalog["platform_symbol_requirements"]
@@ -792,9 +814,13 @@ class ELFReportTests(unittest.TestCase):
             "source": "libroblox.so",
             "needed": ["libandroid.so", "liblog.so", "libmediandk.so", "libEGL.so"],
             "imports": [
+                # These imports are registered by the current runtime and
+                # must not be reported as unresolved platform requirements.
                 {"name": "AMediaCodec_delete", "version": "", "provider": ""},
                 {"name": "AMediaFormat_new", "version": "", "provider": ""},
-                {"name": "ALooper_pollOnce", "version": "", "provider": ""},
+                # Known provider, but deliberately not registered by the runtime.
+                {"name": "AMediaCodec_setParameters", "version": "", "provider": ""},
+                {"name": "AInputQueue_attachLooper", "version": "", "provider": ""},
                 {"name": "unclassified_platform_symbol", "version": "", "provider": ""},
             ],
             "exports": [],
@@ -802,9 +828,16 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([report])
         requirements = {item["symbol"]: item
                         for item in catalog["platform_symbol_requirements"]}
-        self.assertEqual(requirements["AMediaCodec_delete"]["provider"], "libmediandk.so")
-        self.assertEqual(requirements["AMediaFormat_new"]["provider"], "libmediandk.so")
-        self.assertEqual(requirements["ALooper_pollOnce"]["provider"], "libandroid.so")
+        self.assertNotIn("AMediaCodec_delete", requirements)
+        self.assertNotIn("AMediaFormat_new", requirements)
+        self.assertEqual(
+            requirements["AMediaCodec_setParameters"]["provider"],
+            "libmediandk.so",
+        )
+        self.assertEqual(
+            requirements["AInputQueue_attachLooper"]["provider"],
+            "libandroid.so",
+        )
         self.assertEqual(requirements["unclassified_platform_symbol"]["provider"], "")
         self.assertEqual(
             requirements["unclassified_platform_symbol"]["provider_candidates"],
