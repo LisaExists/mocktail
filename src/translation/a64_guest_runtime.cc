@@ -28,7 +28,6 @@
 #include <mutex>
 #include <utility>
 #include <unordered_map>
-#include <unordered_map>
 
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/interface/A64/config.h"
