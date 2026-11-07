@@ -357,6 +357,8 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "AMediaCodec_createDecoderByType", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "eglGetDisplay", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "eglGetError", "version": "",
@@ -419,6 +421,10 @@ class ELFReportTests(unittest.TestCase):
         self.assertEqual(requirements, [])
         self.assertIn(
             "AMediaCodec_createDecoderByType",
+            catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
+        )
+        self.assertIn(
+            "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL",
             catalog["prototype_registered_android_host_calls"]["libmediandk.so"],
         )
         self.assertTrue({
