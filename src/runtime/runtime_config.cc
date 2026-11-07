@@ -16,6 +16,23 @@ namespace mocktail {
 namespace runtime {
 namespace {
 
+std::string EncodeProxyCredential(std::string_view value) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string encoded;
+  for (unsigned char byte : value) {
+    if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+        (byte >= '0' && byte <= '9') || byte == '-' || byte == '.' ||
+        byte == '_' || byte == '~') {
+      encoded += static_cast<char>(byte);
+    } else {
+      encoded += '%';
+      encoded += hex[byte >> 4];
+      encoded += hex[byte & 15];
+    }
+  }
+  return encoded;
+}
+
 constexpr std::array<std::string_view, 7> kUnsafeDetachedThreadOverrides = {
     "MOCKTAIL_APP_BRIDGE_APP_START_THREAD",
     "MOCKTAIL_CALL_REAL_APP_BRIDGE_INIT_THREAD",
@@ -112,6 +129,8 @@ int ReadPositiveInt(const Environment& environment, std::string_view name,
   return static_cast<int>(parsed);
 }
 
+}  // namespace
+
 std::optional<NetworkProxyConfig> ReadNetworkProxy(
     const Environment& environment) {
   const std::optional<std::string> host =
@@ -123,13 +142,15 @@ std::optional<NetworkProxyConfig> ReadNetworkProxy(
   if (!host.has_value() || host->empty() || !port.has_value()) {
     return std::nullopt;
   }
-  return ParseNetworkProxyConfig(*host, *port, scheme);
+  return ParseNetworkProxyConfig(
+      *host, *port, scheme,
+      environment.GetOr("MOCKTAIL_HTTP_PROXY_USERNAME", ""),
+      environment.GetOr("MOCKTAIL_HTTP_PROXY_PASSWORD", ""));
 }
 
-}  // namespace
-
 std::optional<NetworkProxyConfig> ParseNetworkProxyConfig(
-    std::string_view host, std::string_view port, std::string_view scheme) {
+    std::string_view host, std::string_view port, std::string_view scheme,
+    std::string_view username, std::string_view password) {
   std::string normalized_scheme;
   if (scheme == "http" || scheme == "https") {
     // Desktop resolvers commonly label the proxy selected for an HTTPS URL as
@@ -139,6 +160,13 @@ std::optional<NetworkProxyConfig> ParseNetworkProxyConfig(
              scheme == "socks5h") {
     normalized_scheme = "socks5h";
   } else {
+    return std::nullopt;
+  }
+  if ((username.empty() && !password.empty()) ||
+      username.find('\0') != std::string_view::npos ||
+      password.find('\0') != std::string_view::npos ||
+      (normalized_scheme == "socks5h" &&
+       (username.size() > 255 || password.size() > 255))) {
     return std::nullopt;
   }
   if (host.empty() || port.empty() || host.find("://") != std::string::npos ||
@@ -158,18 +186,26 @@ std::optional<NetworkProxyConfig> ParseNetworkProxyConfig(
     return std::nullopt;
   }
   return NetworkProxyConfig{std::move(normalized_scheme), std::string(host),
-                            parsed_port};
+                            parsed_port, std::string(username),
+                            std::string(password)};
 }
 
-std::string BuildNetworkProxyUrl(const NetworkProxyConfig& proxy) {
+std::string BuildNetworkProxyUrl(const NetworkProxyConfig& proxy,
+                                 bool include_credentials) {
   const bool ipv6 = proxy.host.find(':') != std::string::npos;
-  return proxy.scheme + "://" + std::string(ipv6 ? "[" : "") + proxy.host +
-         (ipv6 ? "]" : "") + ":" + std::to_string(proxy.port);
+  const std::string credentials =
+      include_credentials && !proxy.username.empty()
+          ? EncodeProxyCredential(proxy.username) + ":" +
+                EncodeProxyCredential(proxy.password) + "@"
+          : std::string();
+  return proxy.scheme + "://" + credentials + (ipv6 ? "[" : "") +
+         proxy.host + (ipv6 ? "]" : "") + ":" + std::to_string(proxy.port);
 }
 
 RuntimeConfig RuntimeConfig::FromEnvironment(const Environment& environment) {
   RuntimeConfig config;
   config.headless_ = LegacyEnabled(environment, "MOCKTAIL_HEADLESS");
+  config.use_libsecret_ = environment.GetOr("MOCKTAIL_USE_LIBSECRET", "0") == "1";
   config.roblox_library_path_ = environment.GetOr(
       "ROBLOX_LIB_PATH", config.roblox_library_path_.string());
   config.graphics_backend_name_ = environment.GetOr(
@@ -271,6 +307,7 @@ RuntimeConfig RuntimeConfig::FromEnvironment(const Environment& environment) {
   config.frame_rate_ = ParseFrameRatePolicy(
       environment.GetOr("MOCKTAIL_FRAME_RATE_LIMIT", "-1"));
   config.vsync_mode_ = environment.GetOr("MOCKTAIL_VSYNC", "auto");
+  config.present_mode_ = environment.GetOr("MOCKTAIL_PRESENT_MODE", "auto");
   config.performance_ = ParsePerformancePolicy(
       environment.GetOr("MOCKTAIL_MULTITHREADED_RENDERING", "0"),
       environment.GetOr("MOCKTAIL_MEMORY_LIMIT_MB", "0"),
@@ -309,7 +346,8 @@ RuntimeConfig RuntimeConfig::FromEnvironment(const Environment& environment) {
       if (config.network_proxy_ &&
           (config.network_proxy_->host != fleasion_proxy->host ||
            config.network_proxy_->port != fleasion_proxy->port ||
-           config.network_proxy_->scheme != "http"))
+           config.network_proxy_->scheme != "http" ||
+           !config.network_proxy_->username.empty()))
         config.fleasion_valid_ = false;
       config.network_proxy_ = fleasion_proxy;
     } else if (config.network_proxy_) {

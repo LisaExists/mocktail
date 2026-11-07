@@ -8,7 +8,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 project(Mocktail
-  VERSION 1.0.4
+  VERSION 1.0.5
   DESCRIPTION "Android Roblox compatibility runtime for Linux"
   LANGUAGES CXX
 )
@@ -59,6 +59,10 @@ set(MOCKTAIL_DEFAULT_SIGNING_TRUST_MANIFEST
   "${CMAKE_SOURCE_DIR}/config/roblox_signing_certificates.json"
   CACHE FILEPATH
   "Fallback signing trust manifest used outside an installed runtime"
+)
+set(MOCKTAIL_DEFAULT_DOWNLOAD_SOURCES_MANIFEST
+  "${CMAKE_SOURCE_DIR}/config/roblox_download_sources.json"
+  CACHE FILEPATH "Pinned Roblox APK download sources"
 )
 set(MOCKTAIL_DISCORD_APPLICATION_ID "1537088975720812655" CACHE STRING
   "Discord application ID baked into Mocktail Rich Presence releases"
@@ -989,6 +993,7 @@ pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 pkg_check_modules(MINIZIP REQUIRED IMPORTED_TARGET minizip)
 pkg_check_modules(CAPSTONE REQUIRED IMPORTED_TARGET capstone)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET "libadwaita-1>=1.6")
 pkg_check_modules(WEBKITGTK6 REQUIRED IMPORTED_TARGET webkitgtk-6.0)
@@ -1005,7 +1010,9 @@ add_library(mocktail_update STATIC
   src/update/host_abi_deriver.cc
   src/update/payload_integrity.cc
   src/update/payload_store.cc
+  src/update/pinned_apk_provider.cc
   src/update/readiness_canary.cc
+  src/update/state_file.cc
   src/update/unsafe_latest_runner.cc
   src/update/update_config.cc
   src/update/update_coordinator.cc
@@ -1030,6 +1037,7 @@ target_link_libraries(mocktail_updater PRIVATE Mocktail::Update)
 target_compile_definitions(mocktail_updater PRIVATE
   "MOCKTAIL_DEFAULT_COMPATIBILITY_MANIFEST=\"${MOCKTAIL_DEFAULT_COMPATIBILITY_MANIFEST}\""
   "MOCKTAIL_DEFAULT_SIGNING_TRUST_MANIFEST=\"${MOCKTAIL_DEFAULT_SIGNING_TRUST_MANIFEST}\""
+  "MOCKTAIL_DEFAULT_DOWNLOAD_SOURCES_MANIFEST=\"${MOCKTAIL_DEFAULT_DOWNLOAD_SOURCES_MANIFEST}\""
 )
 mocktail_apply_compile_options(mocktail_updater)
 
@@ -1075,6 +1083,7 @@ add_library(mocktail_runtime STATIC
   src/runtime/roblox_experience_launch_bridge.cc
   src/runtime/roblox_launch_uri.cc
   src/runtime/roblox_presence_resolver.cc
+  src/runtime/roblox_cookie_store.cc
   src/runtime/roblox_game_session_native_adapter.cc
   src/runtime/roblox_web_view_bridge.cc
   src/runtime/roblox_permissions_bridge.cc
@@ -1102,6 +1111,7 @@ target_include_directories(mocktail_runtime PUBLIC
 )
 target_compile_definitions(mocktail_runtime PRIVATE
   "MOCKTAIL_DISCORD_APPLICATION_ID=\"${MOCKTAIL_DISCORD_APPLICATION_ID}\""
+  "MOCKTAIL_INSTALL_LIBDIR=\"${CMAKE_INSTALL_LIBDIR}\""
 )
 set_property(SOURCE src/runtime/session_log.cc APPEND PROPERTY
   COMPILE_DEFINITIONS
@@ -1148,6 +1158,15 @@ add_executable(mocktail_failure_dialog
 )
 target_link_libraries(mocktail_failure_dialog PRIVATE PkgConfig::LIBADWAITA)
 mocktail_apply_compile_options(mocktail_failure_dialog)
+
+add_executable(mocktail_cookie_helper src/runtime/mocktail_cookie_helper.cc)
+if(LIBSECRET_FOUND)
+  target_link_libraries(mocktail_cookie_helper PRIVATE PkgConfig::LIBSECRET)
+  target_compile_definitions(mocktail_cookie_helper PRIVATE MOCKTAIL_HAVE_LIBSECRET=1)
+else()
+  message(WARNING "libsecret-1 headers missing: Roblox cookies will use private plaintext files")
+endif()
+mocktail_apply_compile_options(mocktail_cookie_helper)
 
 add_library(mocktail_services STATIC
   src/services/http_client.cc
@@ -1450,6 +1469,7 @@ install(TARGETS
     mocktail_updater
     mocktail_failure_dialog
     mocktail_webview_helper
+    mocktail_cookie_helper
     mocktail_audio_sdl
     mocktail_opensles
     stub_sys_m
@@ -1474,6 +1494,7 @@ endif()
 install(FILES
     config/roblox_compatibility.json
     config/roblox_bootstrap_sources.json
+    config/roblox_download_sources.json
     config/roblox_host_abi_reference.json
     config/roblox_signing_certificates.json
   DESTINATION "${MOCKTAIL_INSTALL_DATA_DIR}/metadata"
@@ -1575,7 +1596,7 @@ include(CPack)
 
 add_dependencies(mocktail all_stubs)
 add_dependencies(mocktail mocktail_failure_dialog)
-add_dependencies(mocktail mocktail_webview_helper)
+add_dependencies(mocktail mocktail_webview_helper mocktail_cookie_helper)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

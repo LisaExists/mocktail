@@ -44,6 +44,8 @@ struct NetworkProxyConfig {
   std::string scheme = "http";
   std::string host;
   int port = 0;
+  std::string username;
+  std::string password;
 };
 
 struct DiscordRpcTextConfig {
@@ -67,8 +69,11 @@ struct DiscordRpcConfig {
 
 std::optional<NetworkProxyConfig> ParseNetworkProxyConfig(
     std::string_view host, std::string_view port,
-    std::string_view scheme = "http");
-std::string BuildNetworkProxyUrl(const NetworkProxyConfig& proxy);
+    std::string_view scheme = "http", std::string_view username = {},
+    std::string_view password = {});
+std::optional<NetworkProxyConfig> ReadNetworkProxy(const Environment& environment);
+std::string BuildNetworkProxyUrl(const NetworkProxyConfig& proxy,
+                                 bool include_credentials = false);
 
 // Immutable, supported runtime options. Advanced MOCKTAIL_PATCH_* controls
 // intentionally do not belong here; they remain isolated in the legacy path.
@@ -77,6 +82,7 @@ class RuntimeConfig {
   static RuntimeConfig FromEnvironment(const Environment& environment);
 
   bool headless() const { return headless_; }
+  bool use_libsecret() const { return use_libsecret_; }
   const std::filesystem::path& roblox_library_path() const {
     return roblox_library_path_;
   }
@@ -103,6 +109,11 @@ class RuntimeConfig {
   }
   const FrameRatePolicy& frame_rate() const { return frame_rate_; }
   const std::string& vsync_mode() const { return vsync_mode_; }
+  const std::string& present_mode() const { return present_mode_; }
+  static bool IsValidPresentMode(std::string_view mode) {
+    return mode == "auto" || mode == "fifo" || mode == "mailbox" ||
+           mode == "immediate";
+  }
   const PerformancePolicy& performance() const { return performance_; }
   const std::string& audio_output_device() const {
     return audio_output_device_;
@@ -142,6 +153,7 @@ class RuntimeConfig {
 
  private:
   bool headless_ = false;
+  bool use_libsecret_ = false;
   std::filesystem::path roblox_library_path_ = "rbx_bin/libroblox.so";
   GraphicsBackend graphics_backend_ = GraphicsBackend::kVulkan;
   std::string graphics_backend_name_ = "direct-vulkan";
@@ -153,6 +165,7 @@ class RuntimeConfig {
   std::optional<std::string> roblox_http_user_agent_;
   FrameRatePolicy frame_rate_;
   std::string vsync_mode_ = "auto";
+  std::string present_mode_ = "auto";
   PerformancePolicy performance_;
   std::string audio_output_device_ = "default";
   bool audio_output_device_valid_ = true;
