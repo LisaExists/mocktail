@@ -1450,37 +1450,59 @@ class A64GuestRuntime::Impl final {
   }
 
   bool RegisterAndroidAudioApi(std::string* error) {
-    constexpr std::uint64_t kSlIidValues[] = {
-        0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007};
-    const char* const iid_names[] = {
-        "SL_IID_ANDROIDCONFIGURATION",
-        "SL_IID_ANDROIDSIMPLEBUFFERQUEUE",
-        "SL_IID_BUFFERQUEUE",
-        "SL_IID_ENGINE",
-        "SL_IID_PLAY",
-        "SL_IID_RECORD",
-        "SL_IID_VOLUME",
+    struct InterfaceIdSpec final {
+      const char* name;
+      const char* provider;
+      std::uint64_t tag;
     };
+    constexpr InterfaceIdSpec kInterfaceIds[] = {
+        {"SL_IID_ANDROIDCONFIGURATION", "libOpenSLES.so", 0x1001},
+        {"SL_IID_ANDROIDSIMPLEBUFFERQUEUE", "libOpenSLES.so", 0x1002},
+        {"SL_IID_BUFFERQUEUE", "libOpenSLES.so", 0x1003},
+        {"SL_IID_ENGINE", "libOpenSLES.so", 0x1004},
+        {"SL_IID_PLAY", "libOpenSLES.so", 0x1005},
+        {"SL_IID_RECORD", "libOpenSLES.so", 0x1006},
+        {"SL_IID_VOLUME", "libOpenSLES.so", 0x1007},
+        {"XA_IID_ENGINE", "libOpenMAXAL.so", 0x2001},
+    };
+    constexpr std::size_t kInterfaceIdCellSize =
+        sizeof(std::uint64_t) + 16U;
     std::uint64_t iid_storage = 0;
     std::string diagnostic;
     if (!memory_.MapAnywhere(
-            sizeof(kSlIidValues),
+            sizeof(kInterfaceIds) / sizeof(kInterfaceIds[0]) *
+                kInterfaceIdCellSize,
             A64GuestMemory::kRead | A64GuestMemory::kWrite,
             &iid_storage, &diagnostic)) {
       if (error != nullptr) {
-        *error = "failed to allocate OpenSL ES interface IDs: " + diagnostic;
+        *error = "failed to allocate OpenSL/OpenMAX interface IDs: " +
+                 diagnostic;
       }
       return false;
     }
-    for (std::size_t index = 0; index < sizeof(kSlIidValues) / sizeof(kSlIidValues[0]); ++index) {
-      const auto address = iid_storage + index * sizeof(std::uint64_t);
-      if (!memory_.Write(address, &kSlIidValues[index],
-                         sizeof(kSlIidValues[index]))) {
-        if (error != nullptr) *error = "failed to write OpenSL ES interface ID";
+    for (std::size_t index = 0;
+         index < sizeof(kInterfaceIds) / sizeof(kInterfaceIds[0]); ++index) {
+      const auto cell = iid_storage + index * kInterfaceIdCellSize;
+      const auto identifier = cell + sizeof(std::uint64_t);
+      std::array<std::uint8_t, 16> uuid{};
+      // The bridge only needs stable, valid guest interface-ID objects. The
+      // headless engine entry points reject object creation before interpreting
+      // implementation-specific UUID contents.
+      for (std::size_t byte = 0; byte < uuid.size(); ++byte) {
+        uuid[byte] = static_cast<std::uint8_t>(
+            (kInterfaceIds[index].tag >> ((byte % 8U) * 8U)) ^
+            (0x5AU + byte * 13U));
+      }
+      if (!memory_.Write(identifier, uuid.data(), uuid.size()) ||
+          !memory_.Write(cell, &identifier, sizeof(identifier))) {
+        if (error != nullptr) {
+          *error = "failed to write guest audio interface ID";
+        }
         return false;
       }
       if (!host_calls_.RegisterDataSymbol(
-              iid_names[index], "libOpenSLES.so", "", address, error)) {
+              kInterfaceIds[index].name, kInterfaceIds[index].provider, "",
+              cell, error)) {
         return false;
       }
     }
@@ -1500,7 +1522,7 @@ class A64GuestRuntime::Impl final {
           }, error);
     };
     if (!register_engine("slCreateEngine", "libOpenSLES.so") ||
-        !register_engine("alCreateEngine", "libOpenMAXAL.so")) {
+        !register_engine("xaCreateEngine", "libOpenMAXAL.so")) {
       return false;
     }
     if (error != nullptr) error->clear();
