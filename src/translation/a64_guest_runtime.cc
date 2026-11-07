@@ -2771,7 +2771,7 @@ class A64GuestRuntime::Impl final {
       return fail("failed to register Android asset/configuration API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
-        !RegisterAndroidMediaNdkApi(&diagnostic))
+        !RegisterAndroidMediaNdkApi(&diagnostic)) {
       return fail("failed to register Android NDK media API: " + diagnostic);
     }
     if (options_.register_builtin_libc &&
