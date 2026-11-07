@@ -815,9 +815,13 @@ class ELFReportTests(unittest.TestCase):
             "source": "libroblox.so",
             "needed": ["libandroid.so", "liblog.so", "libmediandk.so", "libEGL.so"],
             "imports": [
+                # These imports are registered by the current runtime and
+                # must not be reported as unresolved platform requirements.
                 {"name": "AMediaCodec_delete", "version": "", "provider": ""},
                 {"name": "AMediaFormat_new", "version": "", "provider": ""},
-                {"name": "ALooper_pollOnce", "version": "", "provider": ""},
+                # Known provider, but deliberately not registered by the runtime.
+                {"name": "AMediaCodec_setParameters", "version": "", "provider": ""},
+                {"name": "AInputQueue_attachLooper", "version": "", "provider": ""},
                 {"name": "unclassified_platform_symbol", "version": "", "provider": ""},
             ],
             "exports": [],
@@ -825,9 +829,16 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([report])
         requirements = {item["symbol"]: item
                         for item in catalog["platform_symbol_requirements"]}
-        self.assertEqual(requirements["AMediaCodec_delete"]["provider"], "libmediandk.so")
-        self.assertEqual(requirements["AMediaFormat_new"]["provider"], "libmediandk.so")
-        self.assertEqual(requirements["ALooper_pollOnce"]["provider"], "libandroid.so")
+        self.assertNotIn("AMediaCodec_delete", requirements)
+        self.assertNotIn("AMediaFormat_new", requirements)
+        self.assertEqual(
+            requirements["AMediaCodec_setParameters"]["provider"],
+            "libmediandk.so",
+        )
+        self.assertEqual(
+            requirements["AInputQueue_attachLooper"]["provider"],
+            "libandroid.so",
+        )
         self.assertEqual(requirements["unclassified_platform_symbol"]["provider"], "")
         self.assertEqual(
             requirements["unclassified_platform_symbol"]["provider_candidates"],
