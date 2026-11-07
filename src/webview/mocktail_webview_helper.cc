@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -59,6 +60,7 @@ enum class PendingRobloxCookieOperation {
 struct AppState {
   GtkApplication* application = nullptr;
   WebKitNetworkSession* network_session = nullptr;
+  std::optional<mocktail::runtime::NetworkProxyConfig> proxy;
   std::string initial_url;
   std::string pending_navigation_url;
   std::string pending_roblox_cookie;
@@ -240,19 +242,6 @@ bool EnsurePrivateDirectory(const char* path) {
   return g_chmod(path, 0700) == 0;
 }
 
-bool EnsurePrivateCookieDatabase(const char* path) {
-  const int descriptor =
-      open(path, O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_RDWR, 0600);
-  if (descriptor < 0) {
-    return false;
-  }
-  struct stat status = {};
-  const bool secured = fstat(descriptor, &status) == 0 &&
-                       S_ISREG(status.st_mode) && fchmod(descriptor, 0600) == 0;
-  close(descriptor);
-  return secured;
-}
-
 bool InitializeNetworkSession(AppState* state) {
   gchar* data_directory =
       g_build_filename(g_get_user_data_dir(), "mocktail", "webview", nullptr);
@@ -268,22 +257,11 @@ bool InitializeNetworkSession(AppState* state) {
     return false;
   }
 
-  gchar* cookie_database =
-      g_build_filename(data_directory, "cookies.sqlite", nullptr);
-  if (cookie_database == nullptr ||
-      !EnsurePrivateCookieDatabase(cookie_database)) {
-    std::cerr << "[webview] cannot secure persistent cookie database\n";
-    g_free(cookie_database);
-    g_free(data_directory);
-    g_free(cache_directory);
-    return false;
-  }
   state->network_session =
       webkit_network_session_new(data_directory, cache_directory);
   g_free(data_directory);
   g_free(cache_directory);
   if (state->network_session == nullptr) {
-    g_free(cookie_database);
     return false;
   }
 
@@ -291,51 +269,43 @@ bool InitializeNetworkSession(AppState* state) {
   const bool use_system_proxy =
       system_proxy != nullptr && system_proxy[0] != '\0' &&
       std::string_view(system_proxy) != "0";
-  const char* proxy_host = std::getenv("MOCKTAIL_HTTP_PROXY_HOST");
-  const char* proxy_port = std::getenv("MOCKTAIL_HTTP_PROXY_PORT");
-  const char* proxy_scheme = std::getenv("MOCKTAIL_HTTP_PROXY_SCHEME");
-  if (proxy_host != nullptr && proxy_port != nullptr) {
-    const std::optional<mocktail::runtime::NetworkProxyConfig> proxy =
-        mocktail::runtime::ParseNetworkProxyConfig(
-            proxy_host, proxy_port,
-            proxy_scheme != nullptr ? proxy_scheme : "http");
-    if (proxy.has_value()) {
-      const std::string proxy_url =
-          mocktail::runtime::BuildNetworkProxyUrl(*proxy);
-      WebKitNetworkProxySettings* settings =
-          webkit_network_proxy_settings_new(proxy_url.c_str(), nullptr);
-      if (settings == nullptr) {
-        g_object_unref(state->network_session);
-        state->network_session = nullptr;
-        g_free(cookie_database);
-        return false;
-      }
-      webkit_network_session_set_proxy_settings(
-          state->network_session, WEBKIT_NETWORK_PROXY_MODE_CUSTOM, settings);
-      webkit_network_proxy_settings_free(settings);
-      std::cerr << "[webview] "
-                << (use_system_proxy ? "normalized system" : "configured")
-                << " proxy applied: " << proxy_url << '\n';
+  state->proxy = mocktail::runtime::ReadNetworkProxy(
+      mocktail::runtime::ProcessEnvironment());
+  if (state->proxy.has_value()) {
+    auto proxy = *state->proxy;
+    if (proxy.scheme == "socks5h") proxy.scheme = "socks5";
+    const std::string proxy_url =
+        mocktail::runtime::BuildNetworkProxyUrl(proxy, true);
+    WebKitNetworkProxySettings* settings =
+        webkit_network_proxy_settings_new(proxy_url.c_str(), nullptr);
+    if (settings == nullptr) {
+      g_object_unref(state->network_session);
+      state->network_session = nullptr;
+      return false;
     }
+    webkit_network_session_set_proxy_settings(
+        state->network_session, WEBKIT_NETWORK_PROXY_MODE_CUSTOM, settings);
+    webkit_network_proxy_settings_free(settings);
+    std::cerr << "[webview] "
+              << (use_system_proxy ? "normalized system" : "configured")
+              << " proxy applied: "
+              << mocktail::runtime::BuildNetworkProxyUrl(proxy) << '\n';
   }
 
   WebKitCookieManager* cookies =
       webkit_network_session_get_cookie_manager(state->network_session);
-  webkit_cookie_manager_set_persistent_storage(
-      cookies, cookie_database, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
   webkit_cookie_manager_set_accept_policy(cookies,
                                           WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
   g_signal_connect(cookies, "changed", G_CALLBACK(OnCookiesChanged), state);
-  g_free(cookie_database);
 
   // Android WebView permits the third-party cookies used by Roblox login and
   // CAPTCHA providers. TLS failures remain fail-closed at the network layer.
   webkit_network_session_set_itp_enabled(state->network_session, FALSE);
   webkit_network_session_set_persistent_credential_storage_enabled(
-      state->network_session, TRUE);
+      state->network_session, FALSE);
   webkit_network_session_set_tls_errors_policy(state->network_session,
                                                WEBKIT_TLS_ERRORS_POLICY_FAIL);
-  std::cerr << "[webview] persistent XDG network session ready\n";
+  std::cerr << "[webview] network session ready; cookies stay in memory\n";
   return true;
 }
 
@@ -515,7 +485,7 @@ void ApplyPendingRobloxCookie(AppState* state) {
   if (state->pending_cookie_operation ==
       PendingRobloxCookieOperation::kRetainPersistent) {
     state->pending_cookie_operation = PendingRobloxCookieOperation::kNone;
-    std::cerr << "[webview] persistent Roblox cookies retained before guest "
+    std::cerr << "[webview] in-memory Roblox cookies retained before guest "
                  "navigation\n";
     StartInitialLoad(state);
     return;
@@ -1291,6 +1261,25 @@ gboolean OnReloadKeyPressed(GtkEventControllerKey*, guint keyval, guint,
   return FALSE;
 }
 
+gboolean OnProxyAuthenticate(WebKitWebView*, WebKitAuthenticationRequest* request,
+                             gpointer user_data) {
+  auto* app = static_cast<AppState*>(user_data);
+  if (!webkit_authentication_request_is_for_proxy(request) ||
+      !app->proxy.has_value() || app->proxy->username.empty()) {
+    return FALSE;
+  }
+  if (webkit_authentication_request_is_retry(request)) {
+    webkit_authentication_request_cancel(request);
+    return TRUE;
+  }
+  WebKitCredential* credential = webkit_credential_new(
+      app->proxy->username.c_str(), app->proxy->password.c_str(),
+      WEBKIT_CREDENTIAL_PERSISTENCE_NONE);
+  webkit_authentication_request_authenticate(request, credential);
+  webkit_credential_free(credential);
+  return TRUE;
+}
+
 WebKitWebView* CreateSurface(AppState* app, WebKitWebView* related_view) {
   WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
   WebKitWebView* web_view = nullptr;
@@ -1313,6 +1302,7 @@ WebKitWebView* CreateSurface(AppState* app, WebKitWebView* related_view) {
     return nullptr;
   }
 
+  g_signal_connect(web_view, "authenticate", G_CALLBACK(OnProxyAuthenticate), app);
   GtkWidget* window = gtk_application_window_new(app->application);
   gtk_window_set_title(GTK_WINDOW(window), "Roblox");
   GtkWidget* header = gtk_header_bar_new();
@@ -1511,8 +1501,10 @@ int main(int argc, char *argv[]) {
   g_weak_ref_init(&state.primary_web_view, nullptr);
   g_weak_ref_init(&state.primary_window, nullptr);
 
+  const char* flatpak_id = std::getenv("FLATPAK_ID");
   GtkApplication *application = gtk_application_new(
-      "org.mocktail.WebViewHelper", G_APPLICATION_NON_UNIQUE);
+      flatpak_id != nullptr ? flatpak_id : "org.mocktail.WebViewHelper",
+      G_APPLICATION_NON_UNIQUE);
   state.application = application;
   g_signal_connect(application, "activate", G_CALLBACK(Activate), &state);
   state.termination_source =
