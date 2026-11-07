@@ -2280,30 +2280,52 @@ class A64GuestRuntime::Impl final {
         {"AMEDIAFORMAT_KEY_TEMPORAL_LAYERING", "ts-schema"},
         {"AMEDIAFORMAT_KEY_WIDTH", "width"},
     };
+    constexpr std::size_t kMediaFormatKeyCount =
+        sizeof(kMediaFormatKeys) / sizeof(kMediaFormatKeys[0]);
     std::size_t key_storage_size = 0;
     for (const auto& key : kMediaFormatKeys) {
-      key_storage_size += std::strlen(key.value) + 1;
+      const auto key_size = std::strlen(key.value) + 1;
+      if (key_storage_size >
+          std::numeric_limits<std::size_t>::max() - key_size) {
+        return fail("guest AMediaFormat key string storage size overflows");
+      }
+      key_storage_size += key_size;
+    }
+    if (kMediaFormatKeyCount >
+        std::numeric_limits<std::size_t>::max() / sizeof(std::uint64_t)) {
+      return fail("guest AMediaFormat key pointer table size overflows");
+    }
+    const auto key_pointer_table_size =
+        kMediaFormatKeyCount * sizeof(std::uint64_t);
+    if (key_storage_size >
+        std::numeric_limits<std::size_t>::max() - key_pointer_table_size) {
+      return fail("guest AMediaFormat key storage size overflows");
     }
     std::uint64_t key_storage_address = 0;
     std::string key_storage_error;
     if (!memory_.MapAnywhere(
-            key_storage_size,
+            key_pointer_table_size + key_storage_size,
             A64GuestMemory::kRead | A64GuestMemory::kWrite,
             &key_storage_address, &key_storage_error)) {
       return fail("failed to allocate guest AMediaFormat key strings: " +
                   key_storage_error);
     }
-    auto key_address = key_storage_address;
-    for (const auto& key : kMediaFormatKeys) {
+    auto key_string_address = key_storage_address + key_pointer_table_size;
+    for (std::size_t index = 0; index < kMediaFormatKeyCount; ++index) {
+      const auto& key = kMediaFormatKeys[index];
       const auto key_size = std::strlen(key.value) + 1;
-      if (!memory_.Write(key_address, key.value, key_size)) {
-        return fail("failed to write guest AMediaFormat key string");
+      const auto pointer_cell =
+          key_storage_address + index * sizeof(std::uint64_t);
+      if (!memory_.Write(key_string_address, key.value, key_size) ||
+          !memory_.Write(pointer_cell, &key_string_address,
+                         sizeof(key_string_address))) {
+        return fail("failed to write guest AMediaFormat key pointer/string");
       }
       if (!host_calls_.RegisterDataSymbol(
-              key.symbol, "libmediandk.so", "", key_address, error)) {
+              key.symbol, "libmediandk.so", "", pointer_cell, error)) {
         return false;
       }
-      key_address += key_size;
+      key_string_address += key_size;
     }
 
     // These setters are void in the NDK ABI. Getters return false because the
