@@ -399,7 +399,7 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__strlen_chk": "libc.so",
     "SL_IID_": "libOpenSLES.so",
     "slCreateEngine": "libOpenSLES.so",
-    "alCreateEngine": "libOpenMAXAL.so",
+    "xaCreateEngine": "libOpenMAXAL.so",
     "egl": "libEGL.so",
     "glGet": "libGLESv2.so",
     "glGen": "libGLESv2.so",
@@ -559,7 +559,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "SL_IID_BUFFERQUEUE", "SL_IID_ENGINE", "SL_IID_PLAY",
         "SL_IID_RECORD", "SL_IID_VOLUME",
     },
-    "libOpenMAXAL.so": {"alCreateEngine"},
+    "libOpenMAXAL.so": {"xaCreateEngine", "XA_IID_ENGINE"},
     "libmediandk.so": {
         "AMediaFormat_new", "AMediaFormat_delete", "AMediaFormat_toString",
         "AMediaFormat_setInt32", "AMediaFormat_setInt64",
