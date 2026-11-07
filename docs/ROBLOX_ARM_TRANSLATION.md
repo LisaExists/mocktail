@@ -72,7 +72,7 @@ The optional native probe may then load the APK's supplied ARM64 shared-object d
 
 The branch CI workflow has an opt-in real-client probe for the pinned Roblox Android ARM64 split (versionCode 18934). To run it from GitHub, open **Actions → ARM64 translation prototype → Run workflow** and enable `run_real_roblox_apk_smoke`. The workflow verifies pinned SHA-256 hashes, audits the package, attempts constructors plus `JNI_OnLoad` under Dynarmic with a bounded instruction budget, and uploads `real-roblox-arm64-probe` diagnostics. A successful JNI probe is only an initialization milestone, not proof that the Roblox app can launch or render.
 
-For a push-triggered diagnostic run, a commit touching a path watched by `.github/workflows/arm64-translation.yml` can include `[real-apk-smoke]` in its message. This is intentionally non-gating: compatibility failures are preserved as logs instead of being reported as a successful app launch.
+For a push-triggered diagnostic run, a commit touching a path watched by `.github/workflows/arm64-translation.yml` can include `[real-apk-smoke]` in its message. This is intentionally non-gating: compatibility failures are preserved as logs instead of being reported as a successful app launch. A pull request targeting `experimental/roblox-arm-translation` can opt in by including `[real-apk-smoke]` in its title; the same pinned-package audit and bounded guest probe then run for that PR.
 
 ## Auditing an actual APK/APKS package
 
