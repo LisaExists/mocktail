@@ -448,6 +448,8 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "AKeyEvent_": "libandroid.so",
     "AMotionEvent_": "libandroid.so",
     "ASensor": "libandroid.so",
+    "AMedia": "libmediandk.so",
+    "AMEDIAFORMAT_KEY_": "libmediandk.so",
     "__android_log_": "liblog.so",
 }
 
