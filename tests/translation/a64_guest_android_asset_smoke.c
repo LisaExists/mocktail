@@ -65,8 +65,8 @@ int guest_android_asset_smoke(void) {
   AConfiguration* config = AConfiguration_new();
   if (config == (AConfiguration*)0) return 2;
   AConfiguration_fromAssetManager(config, manager);
-  char language[3] = {0, 0, 0};
-  char country[3] = {0, 0, 0};
+  char language[2] = {0, 0};
+  char country[2] = {0, 0};
   AConfiguration_getLanguage(config, language);
   AConfiguration_getCountry(config, country);
   const int config_ok =
