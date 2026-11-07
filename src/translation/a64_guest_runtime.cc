@@ -2127,7 +2127,7 @@ class A64GuestRuntime::Impl final {
     if (!register_one("AConfiguration_getLanguage",
         [this](const A64GuestHostCalls::Arguments& args) {
           if (configurations_.count(args[0]) != 0 && args[1] != 0) {
-            const char language[] = {'e', 'n', '\0'};
+            const char language[] = {'e', 'n'};
             if (!memory_.Write(args[1], language, sizeof(language))) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
             }
@@ -2137,7 +2137,7 @@ class A64GuestRuntime::Impl final {
     if (!register_one("AConfiguration_getCountry",
         [this](const A64GuestHostCalls::Arguments& args) {
           if (configurations_.count(args[0]) != 0 && args[1] != 0) {
-            const char country[] = {'U', 'S', '\0'};
+            const char country[] = {'U', 'S'};
             if (!memory_.Write(args[1], country, sizeof(country))) {
               static_cast<void>(host_calls_.SetGuestErrno(EFAULT));
             }
