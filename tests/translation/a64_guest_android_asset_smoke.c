@@ -65,13 +65,14 @@ int guest_android_asset_smoke(void) {
   AConfiguration* config = AConfiguration_new();
   if (config == (AConfiguration*)0) return 2;
   AConfiguration_fromAssetManager(config, manager);
-  char language[2] = {0, 0};
-  char country[2] = {0, 0};
+  char language[3] = {0, 0, 'L'};
+  char country[3] = {0, 0, 'C'};
   AConfiguration_getLanguage(config, language);
   AConfiguration_getCountry(config, country);
   const int config_ok =
       language[0] == 'e' && language[1] == 'n' &&
       country[0] == 'U' && country[1] == 'S' &&
+      language[2] == 'L' && country[2] == 'C' &&
       AConfiguration_getScreenWidthDp(config) == 360;
   AConfiguration_delete(config);
   if (!config_ok) return 3;
