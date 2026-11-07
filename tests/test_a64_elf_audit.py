@@ -373,6 +373,8 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "SL_IID_ENGINE", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
+                {"name": "XA_IID_ENGINE", "version": "",
+                 "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "mmap", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "munmap", "version": "",
@@ -436,6 +438,10 @@ class ELFReportTests(unittest.TestCase):
         self.assertIn(
             "SL_IID_ENGINE",
             catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
+        )
+        self.assertIn(
+            "XA_IID_ENGINE",
+            catalog["prototype_registered_android_host_calls"]["libOpenMAXAL.so"],
         )
         self.assertTrue({
             "mmap", "munmap", "mprotect", "madvise",
