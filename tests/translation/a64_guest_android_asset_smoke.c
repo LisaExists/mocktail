@@ -204,11 +204,12 @@ int guest_android_headless_codec_smoke(void) {
 }
 
 extern void* SL_IID_ENGINE;
+extern void* XA_IID_ENGINE;
 extern int slCreateEngine(void** engine, unsigned int option_count,
                           const void* options, unsigned int interface_count,
                           const void* const* interface_ids,
                           const unsigned int* required);
-extern int alCreateEngine(void** engine, unsigned int option_count,
+extern int xaCreateEngine(void** engine, unsigned int option_count,
                           const void* options, unsigned int interface_count,
                           const void* const* interface_ids,
                           const unsigned int* required);
@@ -216,14 +217,15 @@ extern int alCreateEngine(void** engine, unsigned int option_count,
 __attribute__((visibility("default")))
 int guest_android_headless_audio_smoke(void) {
   void* sl_engine = (void*)1;
-  void* al_engine = (void*)1;
+  void* xa_engine = (void*)1;
   const int sl_result =
       slCreateEngine(&sl_engine, 0, (void*)0, 0, (void*)0, (void*)0);
-  const int al_result =
-      alCreateEngine(&al_engine, 0, (void*)0, 0, (void*)0, (void*)0);
-  return sl_result == 12 && al_result == 12 &&
-         sl_engine == (void*)0 && al_engine == (void*)0 &&
-         SL_IID_ENGINE == (void*)0x1004 ? 42 : 1;
+  const int xa_result =
+      xaCreateEngine(&xa_engine, 0, (void*)0, 0, (void*)0, (void*)0);
+  return sl_result == 12 && xa_result == 12 &&
+         sl_engine == (void*)0 && xa_engine == (void*)0 &&
+         SL_IID_ENGINE != (void*)0 && XA_IID_ENGINE != (void*)0
+             ? 42 : 1;
 }
 
 extern void* eglGetDisplay(void* native_display);
