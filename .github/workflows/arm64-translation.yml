@@ -101,8 +101,8 @@ jobs:
         run: |
           ctest --test-dir build-translation-ci -R 'RobloxArmTranslation' --output-on-failure --timeout 60
 
-      # This is deliberately manual-only: it downloads a pinned, real Roblox
-      # split APK and runs its ARM64 library only inside the Dynarmic guest.
+      # This is an opt-in diagnostic: it downloads a pinned, real Roblox split
+      # APK and runs its ARM64 library only inside the Dynarmic guest.
       # SHA-256 pins prevent a mutable external release URL changing the input.
       - name: Download pinned real Roblox APK splits
         if: (github.event_name == 'workflow_dispatch' && inputs.run_real_roblox_apk_smoke) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[real-apk-smoke]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[real-apk-smoke]'))
