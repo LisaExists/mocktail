@@ -865,6 +865,15 @@ bool A64GuestHostCalls::RegisterBuiltinLibc(std::string* error) {
         return Failure("guest stack-protector check failed");
       })) return false;
 
+  // Forking and atfork callback execution are not implemented by the
+  // single-threaded guest. Bionic still imports this registration helper.
+  if (!register_one("__register_atfork", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+  if (!register_one("pthread_atfork", [](const Arguments&) {
+        return A64HostCallResult{true, 0, {}};
+      })) return false;
+
   // The probe does not unload DSOs. Accept these lifecycle calls without
   // re-entering the JIT from an active guest invocation.
   if (!register_one("__cxa_atexit", [](const Arguments&) {
