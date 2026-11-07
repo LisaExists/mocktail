@@ -178,6 +178,24 @@ extern int AMediaCodec_releaseOutputBuffer(AMediaCodec* codec,
                                            unsigned long index, int render);
 extern AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
 
+extern AMediaFormat* AMediaFormat_new(void);
+extern int AMediaFormat_delete(AMediaFormat* format);
+extern void AMediaFormat_setInt32(AMediaFormat* format, const char* key,
+                                  int value);
+extern const char* AMEDIAFORMAT_KEY_I_FRAME_INTERVAL;
+
+__attribute__((visibility("default")))
+int guest_android_media_format_smoke(void) {
+  AMediaFormat* format = AMediaFormat_new();
+  if (format == (AMediaFormat*)0) return 1;
+  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
+  const int valid_key =
+      AMEDIAFORMAT_KEY_I_FRAME_INTERVAL != (const char*)0 &&
+      AMEDIAFORMAT_KEY_I_FRAME_INTERVAL[0] == 'i';
+  const int deleted = AMediaFormat_delete(format);
+  return valid_key && deleted == 0 ? 42 : 2;
+}
+
 __attribute__((visibility("default")))
 int guest_android_headless_codec_smoke(void) {
   AMediaCodec* decoder = AMediaCodec_createDecoderByType("video/avc");
