@@ -492,6 +492,7 @@ PROTOTYPE_REGISTERED_ANDROID_HOST_CALLS = {
         "getpid", "gettid", "getuid", "geteuid", "getgid", "getegid",
         "sysconf", "prctl", "clock_gettime", "clock_gettime64",
         "gettimeofday", "time", "sched_yield",
+        "__memcpy_chk", "__memmove_chk", "__memset_chk", "__strlen_chk",
     },
     "libandroid.so": {
         "android_get_device_api_level",
