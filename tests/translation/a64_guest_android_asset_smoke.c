@@ -222,9 +222,15 @@ int guest_android_headless_audio_smoke(void) {
       slCreateEngine(&sl_engine, 0, (void*)0, 0, (void*)0, (void*)0);
   const int xa_result =
       xaCreateEngine(&xa_engine, 0, (void*)0, 0, (void*)0, (void*)0);
+  const unsigned char* sl_iid =
+      (const unsigned char*)SL_IID_ENGINE;
+  const unsigned char* xa_iid =
+      (const unsigned char*)XA_IID_ENGINE;
   return sl_result == 12 && xa_result == 12 &&
          sl_engine == (void*)0 && xa_engine == (void*)0 &&
-         SL_IID_ENGINE != (void*)0 && XA_IID_ENGINE != (void*)0
+         sl_iid != (const unsigned char*)0 &&
+         xa_iid != (const unsigned char*)0 &&
+         sl_iid[0] != 0 && xa_iid[0] != 0
              ? 42 : 1;
 }
 
