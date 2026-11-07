@@ -400,6 +400,7 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__register_atfork": "libc.so",
     "pthread_atfork": "libc.so",
     "SL_IID_": "libOpenSLES.so",
+    "XA_IID_": "libOpenMAXAL.so",
     "slCreateEngine": "libOpenSLES.so",
     "xaCreateEngine": "libOpenMAXAL.so",
     "egl": "libEGL.so",
