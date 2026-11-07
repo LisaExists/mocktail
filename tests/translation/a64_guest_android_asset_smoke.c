@@ -283,6 +283,8 @@ extern unsigned int geteuid(void);
 extern unsigned int getgid(void);
 extern unsigned int getegid(void);
 extern int prctl(int option, ...);
+extern int __register_atfork(void (*prepare)(void), void (*parent)(void),
+                             void (*child)(void), void* dso_handle);
 
 __attribute__((visibility("default")))
 int guest_libc_process_smoke(void) {
@@ -298,6 +300,8 @@ int guest_libc_process_smoke(void) {
       gettimeofday(&wall_time, (void*)0) != 0 ||
       time(&seconds) <= 0 || seconds <= 0 || sched_yield() != 0 ||
       monotonic_time.tv_sec < 0 || wall_time.tv_sec <= 0) return 3;
+  if (__register_atfork((void (*)(void))0, (void (*)(void))0,
+                        (void (*)(void))0, (void*)0) != 0) return 4;
   return 42;
 }
 
