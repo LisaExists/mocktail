@@ -98,6 +98,12 @@ int main(int argc, char** argv) {
     std::cerr << "[FAIL] headless MediaCodec behavior was not preserved\n";
     return 1;
   }
+  const auto media_format_result =
+      runtime.CallSymbol("guest_android_media_format_smoke");
+  if (!media_format_result || media_format_result.value != 42) {
+    std::cerr << "[FAIL] guest AMediaFormat key/data-symbol behavior failed\n";
+    return 1;
+  }
   const auto audio_result =
       runtime.CallSymbol("guest_android_headless_audio_smoke");
   if (!audio_result || audio_result.value != 42) {
