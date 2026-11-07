@@ -369,7 +369,7 @@ class ELFReportTests(unittest.TestCase):
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "slCreateEngine", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
-                {"name": "alCreateEngine", "version": "",
+                {"name": "xaCreateEngine", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
                 {"name": "SL_IID_ENGINE", "version": "",
                  "provider": "", "binding": "GLOBAL", "tls": False},
@@ -430,7 +430,7 @@ class ELFReportTests(unittest.TestCase):
             catalog["prototype_registered_android_host_calls"]["libOpenSLES.so"],
         )
         self.assertIn(
-            "alCreateEngine",
+            "xaCreateEngine",
             catalog["prototype_registered_android_host_calls"]["libOpenMAXAL.so"],
         )
         self.assertIn(
