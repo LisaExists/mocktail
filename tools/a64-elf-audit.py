@@ -398,6 +398,7 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__memset_chk": "libc.so",
     "__strlen_chk": "libc.so",
     "__register_atfork": "libc.so",
+    "pthread_atfork": "libc.so",
     "SL_IID_": "libOpenSLES.so",
     "slCreateEngine": "libOpenSLES.so",
     "xaCreateEngine": "libOpenMAXAL.so",
@@ -464,7 +465,7 @@ def infer_android_symbol_provider(name: str) -> str:
     return ""
 
 PROTOTYPE_HOST_CALLS = {
-    "__cxa_atexit", "__cxa_finalize", "__register_atfork",
+    "__cxa_atexit", "__cxa_finalize", "__register_atfork", "pthread_atfork",
     "__errno", "__errno_location",
     "__mocktail_tlsdesc_static", "__stack_chk_fail", "__tls_get_addr", "abort",
     "calloc", "fflush", "fputs", "free",
