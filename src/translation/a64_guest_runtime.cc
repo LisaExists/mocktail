@@ -1968,8 +1968,11 @@ class A64GuestRuntime::Impl final {
           if (found == guest_assets_.end()) return {true, 0, {}};
           if (found->second.guest_buffer != 0) {
             std::string diagnostic;
-            const auto allocation_size =
+            const auto raw_allocation_size =
                 std::max<std::size_t>(found->second.bytes.size(), 1U);
+            const auto allocation_size =
+                (raw_allocation_size + A64GuestMemory::kPageSize - 1U) &
+                ~(A64GuestMemory::kPageSize - 1U);
             if (!memory_.Unmap(found->second.guest_buffer, allocation_size,
                                &diagnostic)) {
               return {false, 0, "cannot release guest AAsset buffer: " +
@@ -2023,8 +2026,11 @@ class A64GuestRuntime::Impl final {
           if (found == guest_assets_.end()) return {true, 0, {}};
           auto& asset = found->second;
           if (asset.guest_buffer == 0) {
-            const auto allocation_size =
+            const auto raw_allocation_size =
                 std::max<std::size_t>(asset.bytes.size(), 1U);
+            const auto allocation_size =
+                (raw_allocation_size + A64GuestMemory::kPageSize - 1U) &
+                ~(A64GuestMemory::kPageSize - 1U);
             std::string diagnostic;
             if (!memory_.MapAnywhere(
                     allocation_size,
