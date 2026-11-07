@@ -647,14 +647,17 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
         required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
-        self.assertTrue({
+        property_symbols = {
             "__system_property_find", "__system_property_read",
             "__system_property_serial", "__system_property_area_serial",
-        }.issubset(required))
-        self.assertTrue({
-            "__system_property_find", "__system_property_read",
-            "__system_property_serial", "__system_property_area_serial",
-        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
+        }
+        self.assertTrue(property_symbols.isdisjoint(required))
+        self.assertTrue(property_symbols.issubset(
+            set(catalog["prototype_registered_android_host_calls"]["libc.so"])
+        ))
+        self.assertTrue(property_symbols.isdisjoint(
+            set(catalog["prototype_host_call_symbols"])
+        ))
 
     def test_android_liblog_thunks_are_in_the_known_runtime_set(self):
         consumer = {
@@ -673,14 +676,17 @@ class ELFReportTests(unittest.TestCase):
         catalog = MODULE.audit_catalog([consumer])
         self.assertEqual(catalog["unresolved_package_symbols"], [])
         required = {item["symbol"] for item in catalog["platform_symbol_requirements"]}
-        self.assertTrue({
+        log_symbols = {
             "__android_log_write", "__android_log_buf_write",
             "__android_log_is_loggable",
-        }.issubset(required))
-        self.assertTrue({
-            "__android_log_write", "__android_log_buf_write",
-            "__android_log_is_loggable",
-        }.isdisjoint(set(catalog["prototype_host_call_symbols"])))
+        }
+        self.assertTrue(log_symbols.isdisjoint(required))
+        self.assertTrue(log_symbols.issubset(
+            set(catalog["prototype_registered_android_host_calls"]["liblog.so"])
+        ))
+        self.assertTrue(log_symbols.isdisjoint(
+            set(catalog["prototype_host_call_symbols"])
+        ))
         self.assertTrue(all(
             item["provider"] == "liblog.so"
             for item in catalog["platform_symbol_requirements"]
