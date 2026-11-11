@@ -844,6 +844,48 @@ class ELFReportTests(unittest.TestCase):
             ["libandroid.so", "liblog.so", "libmediandk.so", "libEGL.so"],
         )
 
+    def test_libc_and_libdl_imports_get_exact_android_provider_classification(self):
+        report = {
+            "source": "libmocktail-android-jni-smoke.so",
+            "needed": ["libc.so", "libdl.so"],
+            "imports": [
+                {"name": "pthread_mutex_init", "version": "", "provider": ""},
+                {"name": "pthread_mutex_lock", "version": "", "provider": ""},
+                {"name": "pthread_mutex_trylock", "version": "", "provider": ""},
+                {"name": "pthread_mutex_timedlock", "version": "", "provider": ""},
+                {"name": "pthread_mutex_unlock", "version": "", "provider": ""},
+                {"name": "pthread_mutex_destroy", "version": "", "provider": ""},
+                {"name": "pthread_self", "version": "", "provider": ""},
+                {"name": "pthread_equal", "version": "", "provider": ""},
+                {"name": "__cxa_guard_abort", "version": "", "provider": ""},
+                {"name": "__cxa_guard_acquire", "version": "", "provider": ""},
+                {"name": "__cxa_guard_release", "version": "", "provider": ""},
+                {"name": "getauxval", "version": "", "provider": ""},
+                {"name": "dlopen", "version": "", "provider": ""},
+                {"name": "dlsym", "version": "", "provider": ""},
+                {"name": "dlerror", "version": "", "provider": ""},
+                {"name": "dladdr", "version": "", "provider": ""},
+                {"name": "dlclose", "version": "", "provider": ""},
+            ],
+            "exports": [],
+        }
+        catalog = MODULE.audit_catalog([report])
+        requirements = {item["symbol"]: item
+                        for item in catalog["platform_symbol_requirements"]}
+        self.assertEqual(set(requirements), set(item["name"] for item in report["imports"]))
+        for symbol in (
+            "pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_trylock",
+            "pthread_mutex_timedlock", "pthread_mutex_unlock",
+            "pthread_mutex_destroy", "pthread_self", "pthread_equal",
+            "__cxa_guard_abort", "__cxa_guard_acquire", "__cxa_guard_release",
+            "getauxval",
+        ):
+            self.assertEqual(requirements[symbol]["provider"], "libc.so")
+        for symbol in ("dlopen", "dlsym", "dlerror", "dladdr", "dlclose"):
+            self.assertEqual(requirements[symbol]["provider"], "libdl.so")
+        self.assertEqual(catalog["unresolved_package_symbols"], [])
+        self.assertEqual(catalog["unclassified_unresolved_symbols"], [])
+
     def test_media_ndk_symbols_are_not_claimed_as_prototype_host_calls(self):
         self.assertNotIn("AMediaCodec_delete", MODULE.PROTOTYPE_HOST_CALLS)
         self.assertNotIn("AMediaFormat_new", MODULE.PROTOTYPE_HOST_CALLS)
