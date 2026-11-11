@@ -68,7 +68,17 @@ jobs:
         shell: bash
         run: |
           python3 -m pip install --disable-pip-version-check requests
-          python3 -m unittest discover -s tests -p '*_test.py' -v
+          # Import only unittest modules here. The two *_test.py integration
+          # harnesses require positional executable arguments and are invoked
+          # by CTest instead of unittest discovery.
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          for test in \
+            a64_apk_probe_dex_test.py \
+            check_payload_source_drift_test.py \
+            derive_roblox_host_abi_profile_test.py \
+            mocktail_a64_apk_probe_test.py; do
+            python3 "tests/$test" -v
+          done
 
       - name: Verify build and packaging contracts
         shell: bash
