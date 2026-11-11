@@ -863,6 +863,16 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
                 "${MOCKTAIL_A64_MODULE_DEPENDENCY_FIXTURE}")
       find_program(MOCKTAIL_A64_PYTHON_EXECUTABLE NAMES python3)
       if(MOCKTAIL_A64_PYTHON_EXECUTABLE)
+        add_test(NAME RobloxArmTranslation.ApkProbeInputs
+          COMMAND "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
+                  "${CMAKE_SOURCE_DIR}/tests/mocktail_a64_apk_probe_test.py")
+        add_test(NAME RobloxArmTranslation.ApkProbeDexDiscovery
+          COMMAND "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
+                  "${CMAKE_SOURCE_DIR}/tests/a64_apk_probe_dex_test.py")
+        set_tests_properties(
+          RobloxArmTranslation.ApkProbeInputs
+          RobloxArmTranslation.ApkProbeDexDiscovery
+          PROPERTIES TIMEOUT 30)
         set(MOCKTAIL_A64_APK_PROBE_INTEGRATION_ARGS
           "${MOCKTAIL_A64_PYTHON_EXECUTABLE}"
           "${CMAKE_SOURCE_DIR}/tests/translation/a64_apk_probe_integration.py"
