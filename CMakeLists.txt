@@ -409,10 +409,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -o "${MOCKTAIL_A64_ANDROID_JNI_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
               "-L${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
-              -Wl,--no-as-needed -l:liblog.so
+              -Wl,--no-as-needed -l:liblog.so -l:libc.so
       DEPENDS
         "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_jni_smoke.c"
         "${MOCKTAIL_A64_ANDROID_LOG_DEPENDENCY_FIXTURE}"
+        "${MOCKTAIL_A64_ANDROID_LIBC_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
     add_custom_target(mocktail_a64_android_jni_fixture
@@ -449,6 +450,23 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -fvisibility=hidden -Wl,--hash-style=both
               -Wl,-soname,libc.so
               -o "${MOCKTAIL_A64_ANDROID_LIBC_DEPENDENCY_FIXTURE}"
+              "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
+      VERBATIM
+    )
+
+    set(MOCKTAIL_A64_ANDROID_DL_DEPENDENCY_FIXTURE
+      "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs/libdl.so")
+    add_custom_command(
+      OUTPUT "${MOCKTAIL_A64_ANDROID_DL_DEPENDENCY_FIXTURE}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+      COMMAND "${MOCKTAIL_ANDROID_CLANG_EXECUTABLE}"
+              --target=aarch64-linux-android24
+              -fuse-ld=lld -fPIC -shared -nostdlib
+              -fvisibility=hidden -Wl,--hash-style=both
+              -Wl,-soname,libdl.so
+              -o "${MOCKTAIL_A64_ANDROID_DL_DEPENDENCY_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
       DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_android_empty_dependency.c"
       VERBATIM
@@ -609,7 +627,11 @@ if(MOCKTAIL_ENABLE_ROBLOX_ARM_TRANSLATION)
               -Wl,-soname,libmocktail-android-dl-smoke.so
               -o "${MOCKTAIL_A64_ANDROID_DL_FIXTURE}"
               "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_dl_smoke.c"
-      DEPENDS "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_dl_smoke.c"
+              "-L${CMAKE_CURRENT_BINARY_DIR}/android-system-stubs"
+              -Wl,--no-as-needed -l:libdl.so
+      DEPENDS
+        "${CMAKE_SOURCE_DIR}/tests/translation/a64_guest_dl_smoke.c"
+        "${MOCKTAIL_A64_ANDROID_DL_DEPENDENCY_FIXTURE}"
       VERBATIM
     )
     add_custom_target(mocktail_a64_android_dl_fixture
