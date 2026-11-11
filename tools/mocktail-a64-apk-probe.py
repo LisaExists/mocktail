@@ -372,12 +372,16 @@ def extract_apk_assets(apk_paths: Iterable[Path], output_root: Path) -> int:
             if info.is_dir() or not info.filename.startswith("assets/"):
                 continue
             name = info.filename[len("assets/"):]
+            # Validate the raw ZIP member spelling before PurePosixPath can
+            # normalize away repeated separators or "." components. Keep the
+            # extracted tree canonical and reject path aliases explicitly.
+            raw_parts = name.split("/")
             relative = PurePosixPath(name)
             mode = (info.external_attr >> 16) & 0o170000
             if (
                 not name or relative.is_absolute()
                 or "\\" in name
-                or any(part in ("", ".", "..") for part in relative.parts)
+                or any(part in ("", ".", "..") for part in raw_parts)
                 or mode == 0o120000
             ):
                 raise ValueError(f"{label}:{info.filename}: unsafe APK asset path")
