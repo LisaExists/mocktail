@@ -1,7 +1,27 @@
-#include <unistd.h>
-#include <time.h>
-#include <sys/time.h>
-#include <sched.h>
+// Keep this fixture independent of host libc headers. It is compiled for
+// Android AArch64 without an NDK sysroot, so including glibc headers would
+// incorrectly pull x86_64 host ABI declarations into the guest object.
+typedef long time_t;
+
+struct timespec {
+  time_t tv_sec;
+  long tv_nsec;
+};
+
+struct timeval {
+  time_t tv_sec;
+  long tv_usec;
+};
+
+#define CLOCK_MONOTONIC 1
+#define _SC_PAGESIZE 30
+
+extern int getpid(void);
+extern long sysconf(int name);
+extern int clock_gettime(int clock_id, struct timespec* value);
+extern int gettimeofday(struct timeval* value, void* timezone);
+extern time_t time(time_t* value);
+extern int sched_yield(void);
 
 // Copyright 2026 Mocktail Project Authors
 // Licensed under the Apache License, Version 2.0.
