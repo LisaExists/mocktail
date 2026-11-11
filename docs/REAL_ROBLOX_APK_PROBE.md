@@ -1,6 +1,6 @@
 # Real Roblox ARM64 probe runbook
 
-The branch workflow can run a bounded diagnostic against the pinned Roblox Android package (version 2.743.1136, versionCode 18934).
+The branch workflow runs a bounded diagnostic against the pinned Roblox Android package (version 2.745.1142, versionCode 20136). The base APK and ARM64 split are SHA-256 verified against the published release assets.
 
 ## Triggering the diagnostic
 
@@ -9,9 +9,9 @@ The workflow's `workflow_dispatch` input `run_real_roblox_apk_smoke` enables the
 A push to `experimental/roblox-arm-translation` also enables the same diagnostic when all of the following are true:
 
 - The commit changes a path watched by `.github/workflows/arm64-translation.yml`.
-- The commit message contains the exact marker `[real-apk-smoke]`.
+Every watched push to `experimental/roblox-arm-translation` enables the diagnostic. The workflow does not require a commit-message marker.
 
-This push-trigger path is useful when a workflow-dispatch client is unavailable. It uses the normal branch push workflow and does not require changing workflow permissions.
+Manual dispatch also supports the `run_real_roblox_apk_smoke` input.
 
 ## What the diagnostic does
 
