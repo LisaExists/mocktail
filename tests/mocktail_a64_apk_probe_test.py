@@ -64,6 +64,16 @@ class ApkProbeInputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsafe APK asset path"):
                 MODULE.extract_apk_assets([apk_path], Path(directory) / "out")
 
+    def test_rejects_noncanonical_asset_path_components(self):
+        for member in ("assets/content/./config.json", "assets/content//config.json"):
+            with self.subTest(member=member), tempfile.TemporaryDirectory() as directory:
+                apk_path = self.make_apk(
+                    Path(directory) / "noncanonical.apk",
+                    {member: b"ambiguous"},
+                )
+                with self.assertRaisesRegex(ValueError, "unsafe APK asset path"):
+                    MODULE.extract_apk_assets([apk_path], Path(directory) / "out")
+
     def test_rejects_conflicting_assets_across_splits(self):
         with tempfile.TemporaryDirectory() as directory:
             first = self.make_apk(
