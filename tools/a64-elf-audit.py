@@ -367,6 +367,8 @@ ANDROID_PLATFORM_LIBRARIES = {
 # ELF imports do not encode a DT_VERNEED provider, so dependency order is not proof.
 ANDROID_SYMBOL_PROVIDER_PREFIXES = {
     "__system_property_": "libc.so",
+    "__cxa_guard_": "libc.so",
+    "pthread_": "libc.so",
     "AMediaCodec_": "libmediandk.so",
     "AMediaFormat_": "libmediandk.so",
     "AMediaExtractor_": "libmediandk.so",
@@ -455,6 +457,12 @@ ANDROID_SYMBOL_PROVIDER_PREFIXES = {
 
 ANDROID_SYMBOL_PROVIDER_EXACT = {
     "android_get_device_api_level": "libandroid.so",
+    "getauxval": "libc.so",
+    "dlopen": "libdl.so",
+    "dlsym": "libdl.so",
+    "dlerror": "libdl.so",
+    "dladdr": "libdl.so",
+    "dlclose": "libdl.so",
 }
 
 
